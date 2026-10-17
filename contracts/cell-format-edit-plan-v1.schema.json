@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:seoan:contracts:cell-format-edit-plan-v1",
+  "title": "Seoan HLT table-cell format edit plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source", "base_revision", "operation_count", "total_runs", "ready", "skipped", "decisions"
+  ],
+  "properties": {
+    "source": {"$ref": "#/$defs/fileName"},
+    "base_revision": {"$ref": "#/$defs/decimal"},
+    "operation_count": {"type": "integer", "minimum": 0, "maximum": 500},
+    "total_runs": {"type": "integer", "minimum": 0, "maximum": 5000},
+    "ready": {"type": "integer", "minimum": 0, "maximum": 500},
+    "skipped": {"type": "integer", "minimum": 0, "maximum": 500},
+    "decisions": {"type": "array", "maxItems": 500, "items": {"$ref": "#/$defs/decision"}}
+  },
+  "$defs": {
+    "decimal": {"type": "string", "pattern": "^[0-9]+$"},
+    "sha256": {"type": "string", "pattern": "^[0-9A-F]{64}$"},
+    "fileName": {"type": "string", "minLength": 1, "pattern": "^[^/\\\\]+$"},
+    "nullableSha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cell_id", "status", "reason", "source_text_sha256", "run_count"],
+      "properties": {
+        "cell_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "status": {"enum": ["ready", "skipped"]},
+        "reason": {
+          "type": ["string", "null"],
+          "enum": [
+            "cell_not_found", "duplicate_cell_id", "source_mismatch", "empty_run",
+            "run_out_of_range", "overlapping_runs", "duplicate_format",
+            "unverified_source_format", "image_marker_intersection", "style_unavailable",
+            "no_change", null
+          ]
+        },
+        "source_text_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "run_count": {"type": "integer", "minimum": 0, "maximum": 5000}
+      }
+    }
+  }
+}

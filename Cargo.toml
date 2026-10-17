@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["crates/hlt-core", "crates/hlt-cli", "apps/hlt-desktop/src-tauri"]
+
+# 테스트가 굽기와 재판독으로 값을 다 쓴다. deflate 와 inflate 를 디버그 빌드로 돌리면
+# 표 전수 훑기 한 번이 10초씩 걸린다. 우리 크레이트는 디버그로 두고 의존성만 최적화한다.
+[profile.dev.package."*"]
+opt-level = 2

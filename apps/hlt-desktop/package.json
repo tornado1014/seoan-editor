@@ -1,0 +1,26 @@
+{
+  "name": "seoan-desktop",
+  "version": "0.6.4",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "build": "node scripts/vendor.mjs && tsc --noEmit && vite build",
+    "dev": "node scripts/vendor.mjs && vite",
+    "tauri": "tauri",
+    "vendor": "node scripts/vendor.mjs"
+  },
+  "dependencies": {
+    "@rdkit/rdkit": "^2026.9.1",
+    "@tauri-apps/api": "2",
+    "jsme-editor": "^2024.4.29",
+    "mathjax-full": "^3.2.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2",
+    "jsdom": "26",
+    "typescript": "5",
+    "vite": "7",
+    "vitest": "3"
+  }
+}

@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:seoan:contracts:table-edit-plan-v1",
+  "title": "Seoan HLT table structure edit plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source",
+    "operation_count",
+    "ready",
+    "skipped",
+    "decisions"
+  ],
+  "properties": {
+    "source": {
+      "$ref": "#/$defs/fileName"
+    },
+    "operation_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 500
+    },
+    "ready": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 500
+    },
+    "skipped": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 500
+    },
+    "decisions": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "$ref": "#/$defs/decision"
+      }
+    }
+  },
+  "$defs": {
+    "fileName": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^/\\\\]+$"
+    },
+    "operation": {
+      "description": "표 구조 편집 연산 하나.",
+      "type": "object",
+      "oneOf": [
+        {
+          "required": [
+            "kind",
+            "paragraph_id",
+            "rows",
+            "columns"
+          ],
+          "properties": {
+            "kind": {
+              "const": "new_table"
+            }
+          }
+        },
+        {
+          "required": [
+            "kind",
+            "table_id",
+            "index"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "insert_row",
+                "delete_row",
+                "insert_column",
+                "delete_column"
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "kind",
+            "table_id",
+            "row",
+            "column",
+            "row_end",
+            "column_end"
+          ],
+          "properties": {
+            "kind": {
+              "const": "merge"
+            }
+          }
+        },
+        {
+          "required": [
+            "kind",
+            "table_id",
+            "row",
+            "column"
+          ],
+          "properties": {
+            "kind": {
+              "const": "split"
+            }
+          }
+        }
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "new_table",
+            "insert_row",
+            "delete_row",
+            "insert_column",
+            "delete_column",
+            "merge",
+            "split"
+          ]
+        },
+        "table_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "paragraph_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200
+        },
+        "row": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 40
+        },
+        "row_end": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200
+        },
+        "column_end": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 40
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "columns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 40
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_index",
+        "table_id",
+        "status",
+        "reason",
+        "row_count",
+        "column_count",
+        "discarded_text_cells"
+      ],
+      "properties": {
+        "operation_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500
+        },
+        "table_id": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "ready",
+            "skipped"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "table_not_found",
+            "paragraph_not_found",
+            "paragraph_not_empty",
+            "index_out_of_range",
+            "last_row",
+            "last_column",
+            "cell_contains_image",
+            "not_merged",
+            "merge_crosses_boundary",
+            "size_limit",
+            "no_change",
+            null
+          ]
+        },
+        "row_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200
+        },
+        "column_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 40
+        },
+        "discarded_text_cells": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8000
+        }
+      }
+    }
+  }
+}

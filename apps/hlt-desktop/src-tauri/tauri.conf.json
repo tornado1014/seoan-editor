@@ -1,0 +1,93 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "서안 통특기",
+  "version": "0.6.4",
+  "identifier": "kr.co.envision.seoan",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "서안 통특기",
+        "width": 1120,
+        "height": 780,
+        "minWidth": 720,
+        "minHeight": 620,
+        "tabbingIdentifier": "seoan"
+      }
+    ],
+    "security": {
+      "csp": null,
+      "capabilities": [
+        "default"
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app",
+      "dmg",
+      "nsis"
+    ],
+    "createUpdaterArtifacts": true,
+    "category": "Productivity",
+    "shortDescription": "통특기 명세서(.HLT) 편집기",
+    "longDescription": "특허 명세서 .HLT 를 열어 쪽 위에서 바로 고치고, 제출파일(.hlz · .fin) · 보정서 · 인쇄 PDF 를 만든다.",
+    "copyright": "© 2026 Envision",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": [
+          "HLT",
+          "hlt"
+        ],
+        "name": "통특기 명세서",
+        "description": "HAN Lite 명세서",
+        "role": "Editor",
+        "mimeType": "application/x-hlt"
+      },
+      {
+        "ext": [
+          "fin"
+        ],
+        "name": "통특기 제출파일(최종본)",
+        "description": "KIPO 제출파일",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "hlz"
+        ],
+        "name": "통특기 제출파일(명세서)",
+        "description": "KIPO 제출 명세서 묶음",
+        "role": "Viewer"
+      }
+    ],
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQxNkQ5QzE1RjVCOEZDRDkKUldUWi9MajFGWnh0UWVVTHd6cHl5WkE4MjlQVUFac3FGdnpXUVp5eUJxa043di9wczlpVG56Vk8K",
+      "endpoints": [
+        "https://github.com/tornado1014/seoan-editor/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

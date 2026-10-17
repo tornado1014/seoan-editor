@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:seoan:contracts:command-v1",
+  "title": "Seoan HLT Phase 1 command envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "request_id",
+    "command",
+    "ok",
+    "document_id",
+    "revision",
+    "result",
+    "warnings",
+    "error"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "command": {
+      "enum": [
+        "verify",
+        "inspect",
+        "repack-as-new",
+        "edit-plan",
+        "save-as-new",
+        "edit-plan-variable",
+        "save-variable-as-new",
+        "inspect-formats",
+        "format-plan",
+        "save-formats-as-new",
+        "inspect-cell-formats",
+        "cell-format-plan",
+        "save-cell-formats-as-new",
+        "inspect-hml",
+        "inspect-kipo-xml",
+        "inspect-docx",
+        "table-plan",
+        "save-table-as-new"
+      ]
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "document_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "revision": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "result": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "error": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/error"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "nullableDecimal": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "nullableString": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "phase",
+        "source",
+        "offset",
+        "expected",
+        "actual",
+        "retryable",
+        "details"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "io_error",
+            "permission_denied",
+            "path_not_allowed",
+            "not_hlt",
+            "header_truncated",
+            "header_invalid",
+            "deflate_invalid",
+            "deflate_trailing_data",
+            "footer_truncated",
+            "footer_crc_mismatch",
+            "footer_size_mismatch",
+            "window_not_proven",
+            "cp949_invalid",
+            "structure_invalid",
+            "geometry_invalid",
+            "revision_conflict",
+            "output_exists",
+            "output_same_as_input",
+            "resource_too_large",
+            "size_limit_exceeded",
+            "disk_full",
+            "cancelled",
+            "unsupported_format",
+            "conversion_failed",
+            "verification_failed"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "offset": {
+          "$ref": "#/$defs/nullableDecimal"
+        },
+        "expected": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "actual": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "details": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "result": {
+          "type": "object"
+        },
+        "error": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "properties": {
+        "ok": {
+          "const": false
+        },
+        "result": {
+          "type": "null"
+        },
+        "error": {
+          "$ref": "#/$defs/error"
+        }
+      }
+    }
+  ]
+}

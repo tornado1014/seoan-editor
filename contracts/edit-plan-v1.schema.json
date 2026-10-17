@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:seoan:contracts:edit-plan-v1",
+  "title": "Seoan HLT exact text edit plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source", "base_revision", "operation_count", "ready", "skipped", "decisions"
+  ],
+  "properties": {
+    "source": {"$ref": "#/$defs/fileName"},
+    "base_revision": {"$ref": "#/$defs/decimal"},
+    "operation_count": {"type": "integer", "minimum": 0, "maximum": 500},
+    "ready": {"type": "integer", "minimum": 0, "maximum": 500},
+    "skipped": {"type": "integer", "minimum": 0, "maximum": 500},
+    "decisions": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {"$ref": "#/$defs/decision"}
+    }
+  },
+  "$defs": {
+    "decimal": {"type": "string", "pattern": "^[0-9]+$"},
+    "sha256": {"type": "string", "pattern": "^[0-9A-F]{64}$"},
+    "fileName": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^/\\\\]+$"
+    },
+    "nullableDecimal": {
+      "oneOf": [
+        {"$ref": "#/$defs/decimal"},
+        {"type": "null"}
+      ]
+    },
+    "nullableSha256": {
+      "oneOf": [
+        {"$ref": "#/$defs/sha256"},
+        {"type": "null"}
+      ]
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "paragraph_id", "status", "reason", "source_text_sha256",
+        "replacement_sha256", "source_bytes", "replacement_bytes"
+      ],
+      "properties": {
+        "paragraph_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "status": {"enum": ["ready", "skipped"]},
+        "reason": {
+          "type": ["string", "null"],
+          "enum": [
+            "paragraph_not_found", "duplicate_paragraph_id", "preview_truncated",
+            "multiline_unsupported", "hidden_controls_unsupported", "source_mismatch",
+            "cp949_unrepresentable", "byte_length_changed", "image_marker_changed",
+            "no_change", "plain_code_unavailable", "char_span_invalid",
+            "section_anchor_unsupported", "automatic_break_mismatch", null
+          ]
+        },
+        "source_text_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "replacement_sha256": {"$ref": "#/$defs/sha256"},
+        "source_bytes": {"$ref": "#/$defs/nullableDecimal"},
+        "replacement_bytes": {"$ref": "#/$defs/nullableDecimal"}
+      }
+    }
+  }
+}

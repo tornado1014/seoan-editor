@@ -1,0 +1,29 @@
+[package]
+name = "hlt-desktop"
+version = "0.6.4"
+edition = "2024"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+hlt-core = { path = "../../../crates/hlt-core", features = ["pdf"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
+uuid = { version = "1", features = ["v4"] }
+
+# 새 창을 탭으로 붙인다(AppKit) — tauri 가 이미 쓰는 판.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSWindow"] }
+# Dock · 로그아웃의 「종료」(Apple Event quit)를 받아 저장을 묻는다.
+objc2 = "0.6"
+
+[features]
+# 앱 안에 묶은 화면(dist)을 쓴다. 없으면 tauri 가 개발 서버(localhost:1420)를 찾아 흰 화면이 된다 — `cargo build` 로 직접 구울 때 켠다.
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

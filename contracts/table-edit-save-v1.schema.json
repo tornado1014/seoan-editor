@@ -1,0 +1,599 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:seoan:contracts:table-edit-save-v1",
+  "title": "Seoan HLT table structure edit save result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "input_source",
+    "output_source",
+    "input_file_size",
+    "output_file_size",
+    "input_sha256",
+    "output_sha256",
+    "writer",
+    "verification",
+    "summary",
+    "edit_plan"
+  ],
+  "properties": {
+    "input_source": {
+      "$ref": "#/$defs/fileName"
+    },
+    "output_source": {
+      "$ref": "#/$defs/fileName"
+    },
+    "input_file_size": {
+      "$ref": "#/$defs/decimal"
+    },
+    "output_file_size": {
+      "$ref": "#/$defs/decimal"
+    },
+    "input_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "output_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "writer": {
+      "$ref": "#/$defs/writer"
+    },
+    "verification": {
+      "$ref": "#/$defs/verification"
+    },
+    "summary": {
+      "$ref": "#/$defs/summary"
+    },
+    "edit_plan": {
+      "$ref": "#/$defs/editPlan"
+    }
+  },
+  "$defs": {
+    "decimal": {
+      "type": "string",
+      "pattern": "^[0-9]+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9A-F]{64}$"
+    },
+    "fileName": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^/\\\\]+$"
+    },
+    "firstBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "final_block",
+        "kind",
+        "hlit",
+        "hdist",
+        "hclen",
+        "window_ok"
+      ],
+      "properties": {
+        "final_block": {
+          "type": "boolean"
+        },
+        "kind": {
+          "enum": [
+            "stored",
+            "fixed",
+            "dynamic"
+          ]
+        },
+        "hlit": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "hdist": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "hclen": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "window_ok": {
+          "type": "boolean"
+        }
+      }
+    },
+    "writer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "compressed_bytes",
+        "inflated_bytes",
+        "crc32"
+      ],
+      "properties": {
+        "compressed_bytes": {
+          "$ref": "#/$defs/decimal"
+        },
+        "inflated_bytes": {
+          "$ref": "#/$defs/decimal"
+        },
+        "crc32": {
+          "$ref": "#/$defs/decimal"
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "file_size",
+        "input_sha256",
+        "header_ok",
+        "magic_ok",
+        "header_len",
+        "stream_start",
+        "stream_end",
+        "footer_offset",
+        "footer_crc",
+        "computed_crc",
+        "footer_size",
+        "computed_size",
+        "footer_crc_ok",
+        "footer_size_ok",
+        "inflate_ok",
+        "inflated",
+        "compressed_bytes",
+        "window_ok",
+        "first_block"
+      ],
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/fileName"
+        },
+        "file_size": {
+          "$ref": "#/$defs/decimal"
+        },
+        "input_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "header_ok": {
+          "type": "boolean"
+        },
+        "magic_ok": {
+          "type": "boolean"
+        },
+        "header_len": {
+          "$ref": "#/$defs/decimal"
+        },
+        "stream_start": {
+          "$ref": "#/$defs/decimal"
+        },
+        "stream_end": {
+          "$ref": "#/$defs/decimal"
+        },
+        "footer_offset": {
+          "$ref": "#/$defs/decimal"
+        },
+        "footer_crc": {
+          "$ref": "#/$defs/decimal"
+        },
+        "computed_crc": {
+          "$ref": "#/$defs/decimal"
+        },
+        "footer_size": {
+          "$ref": "#/$defs/decimal"
+        },
+        "computed_size": {
+          "$ref": "#/$defs/decimal"
+        },
+        "footer_crc_ok": {
+          "type": "boolean"
+        },
+        "footer_size_ok": {
+          "type": "boolean"
+        },
+        "inflate_ok": {
+          "type": "boolean"
+        },
+        "inflated": {
+          "$ref": "#/$defs/decimal"
+        },
+        "compressed_bytes": {
+          "$ref": "#/$defs/decimal"
+        },
+        "window_ok": {
+          "type": "boolean"
+        },
+        "window_proof": {
+          "oneOf": [
+            {
+              "const": "first_block"
+            },
+            {
+              "const": "stored"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "decoded"
+              ],
+              "properties": {
+                "decoded": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "max_distance"
+                  ],
+                  "properties": {
+                    "max_distance": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 4096
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "first_block": {
+          "$ref": "#/$defs/firstBlock"
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "document_title",
+        "document_type_raw",
+        "document_tree_kind",
+        "document_tree_label",
+        "fixed_blocks",
+        "inflated_bytes",
+        "section_count",
+        "paragraph_count",
+        "line_count",
+        "span_count",
+        "table_count",
+        "cell_count",
+        "image_count",
+        "paragraph_wipoid_nonzero",
+        "paragraph_wipoid_distinct",
+        "text_index_bytes",
+        "text_index_truncated"
+      ],
+      "properties": {
+        "document_title": {
+          "type": "string"
+        },
+        "document_type_raw": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "document_tree_kind": {
+          "enum": [
+            "pct_patent",
+            "patent_specification_ko",
+            "unknown"
+          ]
+        },
+        "document_tree_label": {
+          "enum": [
+            "PCT특허",
+            "특허 명세서등(국어)",
+            "unknown"
+          ]
+        },
+        "fixed_blocks": {
+          "$ref": "#/$defs/fixedBlocks"
+        },
+        "inflated_bytes": {
+          "$ref": "#/$defs/decimal"
+        },
+        "section_count": {
+          "$ref": "#/$defs/decimal"
+        },
+        "paragraph_count": {
+          "$ref": "#/$defs/decimal"
+        },
+        "line_count": {
+          "$ref": "#/$defs/decimal"
+        },
+        "span_count": {
+          "$ref": "#/$defs/decimal"
+        },
+        "table_count": {
+          "$ref": "#/$defs/decimal"
+        },
+        "cell_count": {
+          "$ref": "#/$defs/decimal"
+        },
+        "image_count": {
+          "$ref": "#/$defs/decimal"
+        },
+        "text_index_bytes": {
+          "$ref": "#/$defs/decimal"
+        },
+        "text_index_truncated": {
+          "type": "boolean"
+        },
+        "paragraph_wipoid_nonzero": {
+          "$ref": "#/$defs/decimal"
+        },
+        "paragraph_wipoid_distinct": {
+          "$ref": "#/$defs/decimal"
+        }
+      }
+    },
+    "fixedBlocks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "shapes_sha256",
+        "shape_order_sha256",
+        "second_shape_order_sha256",
+        "style_table_sha256"
+      ],
+      "properties": {
+        "shapes_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "shape_order_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "second_shape_order_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "style_table_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "operation": {
+      "description": "표 구조 편집 연산 하나.",
+      "type": "object",
+      "oneOf": [
+        {
+          "required": [
+            "kind",
+            "paragraph_id",
+            "rows",
+            "columns"
+          ],
+          "properties": {
+            "kind": {
+              "const": "new_table"
+            }
+          }
+        },
+        {
+          "required": [
+            "kind",
+            "table_id",
+            "index"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "insert_row",
+                "delete_row",
+                "insert_column",
+                "delete_column"
+              ]
+            }
+          }
+        },
+        {
+          "required": [
+            "kind",
+            "table_id",
+            "row",
+            "column",
+            "row_end",
+            "column_end"
+          ],
+          "properties": {
+            "kind": {
+              "const": "merge"
+            }
+          }
+        },
+        {
+          "required": [
+            "kind",
+            "table_id",
+            "row",
+            "column"
+          ],
+          "properties": {
+            "kind": {
+              "const": "split"
+            }
+          }
+        }
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "new_table",
+            "insert_row",
+            "delete_row",
+            "insert_column",
+            "delete_column",
+            "merge",
+            "split"
+          ]
+        },
+        "table_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "paragraph_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200
+        },
+        "row": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 40
+        },
+        "row_end": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200
+        },
+        "column_end": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 40
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "columns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 40
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation_index",
+        "table_id",
+        "status",
+        "reason",
+        "row_count",
+        "column_count",
+        "discarded_text_cells"
+      ],
+      "properties": {
+        "operation_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500
+        },
+        "table_id": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "ready",
+            "skipped"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "table_not_found",
+            "paragraph_not_found",
+            "paragraph_not_empty",
+            "index_out_of_range",
+            "last_row",
+            "last_column",
+            "cell_contains_image",
+            "not_merged",
+            "merge_crosses_boundary",
+            "size_limit",
+            "no_change",
+            null
+          ]
+        },
+        "row_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200
+        },
+        "column_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 40
+        },
+        "discarded_text_cells": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8000
+        }
+      }
+    },
+    "editPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "operation_count",
+        "ready",
+        "skipped",
+        "decisions"
+      ],
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/fileName"
+        },
+        "operation_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500
+        },
+        "ready": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500
+        },
+        "decisions": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "$ref": "#/$defs/decision"
+          }
+        }
+      }
+    }
+  }
+}

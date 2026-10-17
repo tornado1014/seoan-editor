@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:seoan:contracts:format-edit-save-v1",
+  "title": "Seoan HLT paragraph format edit save result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "input_source", "output_source", "input_file_size", "output_file_size",
+    "base_revision", "next_revision", "input_sha256", "output_sha256",
+    "expected_inflated_delta", "writer", "verification", "edit_plan", "structure"
+  ],
+  "properties": {
+    "input_source": {"$ref": "#/$defs/fileName"},
+    "output_source": {"$ref": "#/$defs/fileName"},
+    "input_file_size": {"$ref": "#/$defs/decimal"},
+    "output_file_size": {"$ref": "#/$defs/decimal"},
+    "base_revision": {"$ref": "#/$defs/decimal"},
+    "next_revision": {"$ref": "#/$defs/decimal"},
+    "input_sha256": {"$ref": "#/$defs/sha256"},
+    "output_sha256": {"$ref": "#/$defs/sha256"},
+    "expected_inflated_delta": {"$ref": "#/$defs/signedDecimal"},
+    "writer": {"$ref": "#/$defs/writer"},
+    "verification": {"$ref": "#/$defs/verification"},
+    "edit_plan": {"$ref": "#/$defs/editPlan"},
+    "structure": {"$ref": "#/$defs/formatEditStructure"}
+  },
+  "$defs": {
+    "decimal": {"type": "string", "pattern": "^[0-9]+$"},
+    "signedDecimal": {"type": "string", "pattern": "^-?[0-9]+$"},
+    "sha256": {"type": "string", "pattern": "^[0-9A-F]{64}$"},
+    "fileName": {"type": "string", "minLength": 1, "pattern": "^[^/\\\\]+$"},
+    "nullableDecimal": {"oneOf": [{"$ref": "#/$defs/decimal"}, {"type": "null"}]},
+    "nullableSha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "nullableAlign": {"type": ["string", "null"], "enum": ["left", "center", "justified", null]},
+    "writer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compressed_bytes", "inflated_bytes", "crc32"],
+      "properties": {
+        "compressed_bytes": {"$ref": "#/$defs/decimal"},
+        "inflated_bytes": {"$ref": "#/$defs/decimal"},
+        "crc32": {"$ref": "#/$defs/decimal"}
+      }
+    },
+    "firstBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["final_block", "kind", "hlit", "hdist", "hclen", "window_ok"],
+      "properties": {
+        "final_block": {"type": "boolean"},
+        "kind": {"enum": ["stored", "fixed", "dynamic"]},
+        "hlit": {"type": ["integer", "null"], "minimum": 0},
+        "hdist": {"type": ["integer", "null"], "minimum": 0},
+        "hclen": {"type": ["integer", "null"], "minimum": 0},
+        "window_ok": {"type": "boolean"}
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source", "file_size", "input_sha256", "header_ok", "magic_ok", "header_len",
+        "stream_start", "stream_end", "footer_offset", "footer_crc", "computed_crc",
+        "footer_size", "computed_size", "footer_crc_ok", "footer_size_ok", "inflate_ok",
+        "inflated", "compressed_bytes", "window_ok", "first_block"
+      ],
+      "properties": {
+        "source": {"$ref": "#/$defs/fileName"},
+        "file_size": {"$ref": "#/$defs/decimal"},
+        "input_sha256": {"$ref": "#/$defs/sha256"},
+        "header_ok": {"type": "boolean"},
+        "magic_ok": {"type": "boolean"},
+        "header_len": {"$ref": "#/$defs/decimal"},
+        "stream_start": {"$ref": "#/$defs/decimal"},
+        "stream_end": {"$ref": "#/$defs/decimal"},
+        "footer_offset": {"$ref": "#/$defs/decimal"},
+        "footer_crc": {"$ref": "#/$defs/decimal"},
+        "computed_crc": {"$ref": "#/$defs/decimal"},
+        "footer_size": {"$ref": "#/$defs/decimal"},
+        "computed_size": {"$ref": "#/$defs/decimal"},
+        "footer_crc_ok": {"type": "boolean"},
+        "footer_size_ok": {"type": "boolean"},
+        "inflate_ok": {"type": "boolean"},
+        "inflated": {"$ref": "#/$defs/decimal"},
+        "compressed_bytes": {"$ref": "#/$defs/decimal"},
+        "window_ok": {"type": "boolean"},
+        "window_proof": {"oneOf": [{"const": "first_block"}, {"const": "stored"}, {"type": "object", "additionalProperties": false, "required": ["decoded"], "properties": {"decoded": {"type": "object", "additionalProperties": false, "required": ["max_distance"], "properties": {"max_distance": {"type": "integer", "minimum": 0, "maximum": 4096}}}}}]},
+        "first_block": {"$ref": "#/$defs/firstBlock"}
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["paragraph_id", "status", "reason", "source_text_sha256", "align", "run_count"],
+      "properties": {
+        "paragraph_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "status": {"enum": ["ready", "skipped"]},
+        "reason": {
+          "type": ["string", "null"],
+          "enum": [
+            "paragraph_not_found", "duplicate_paragraph_id", "preview_truncated",
+            "source_mismatch", "empty_run", "run_out_of_range", "overlapping_runs",
+            "duplicate_format", "unverified_source_format", "image_marker_intersection",
+            "style_unavailable", "shape_unavailable", "table_paragraph_requires_cell_id",
+            "no_change", null
+          ]
+        },
+        "source_text_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "align": {"$ref": "#/$defs/nullableAlign"},
+        "run_count": {"type": "integer", "minimum": 0, "maximum": 5000}
+      }
+    },
+    "editPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "base_revision", "operation_count", "total_runs", "ready", "skipped", "decisions"],
+      "properties": {
+        "source": {"$ref": "#/$defs/fileName"},
+        "base_revision": {"$ref": "#/$defs/decimal"},
+        "operation_count": {"type": "integer", "minimum": 0, "maximum": 500},
+        "total_runs": {"type": "integer", "minimum": 0, "maximum": 5000},
+        "ready": {"type": "integer", "minimum": 0, "maximum": 500},
+        "skipped": {"type": "integer", "minimum": 0, "maximum": 500},
+        "decisions": {"type": "array", "maxItems": 500, "items": {"$ref": "#/$defs/decision"}}
+      }
+    },
+    "formatEditStructure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "header_equal", "body_size_delta_equal", "counts_equal", "fixed_blocks_equal",
+        "target_formats_equal", "non_target_formats_equal", "paragraph_text_equal",
+        "paragraph_shapes_equal", "tables_equal", "images_equal", "wipo_equal",
+        "char_spans_valid", "body_changed"
+      ],
+      "properties": {
+        "header_equal": {"type": "boolean"},
+        "body_size_delta_equal": {"type": "boolean"},
+        "counts_equal": {"type": "boolean"},
+        "fixed_blocks_equal": {"type": "boolean"},
+        "target_formats_equal": {"type": "boolean"},
+        "non_target_formats_equal": {"type": "boolean"},
+        "paragraph_text_equal": {"type": "boolean"},
+        "paragraph_shapes_equal": {"type": "boolean"},
+        "tables_equal": {"type": "boolean"},
+        "images_equal": {"type": "boolean"},
+        "wipo_equal": {"type": "boolean"},
+        "char_spans_valid": {"type": "boolean"},
+        "body_changed": {"type": "boolean"}
+      }
+    }
+  }
+}

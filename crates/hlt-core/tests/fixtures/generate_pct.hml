@@ -1,0 +1,12 @@
+<!DOCTYPE HWPML SYSTEM>
+<HWPML VER="HWPML1.1" CODE=KS>
+<HEAD><information><summation><title>&#xD2B9;&#xD5C8; &#xCD9C;&#xC6D0;&#xC11C;&#xC758; &#xBA85;&#xC138;&#xC11C;&#xB4F1; &#xC11C;&#xC2DD;</title></summation></information></HEAD>
+<BODY>
+<p styleid=0><pstyle indent=0 lspace=280 align=justified><text>&#x3010;&#xD45C; 1&#x3011;</text></p>
+<p styleid=0><pstyle indent=1000 lspace=280 align=justified><ctrlcode id=box><box type=table maxcol=2><tr>
+<CELL CSTART=0 CWIDTH=1800 COLBEGIN=1 COLSPAN=1 ROWBEGIN=1 ROWSPAN=1 ALIGN="LEFT" PINDENT=0 LSPACE=130><p styleid=0><pstyle indent=0 lspace=130 align=left><text><b>A</b></text></P></cell>
+<CELL CSTART=1800 CWIDTH=1800 COLBEGIN=2 COLSPAN=1 ROWBEGIN=1 ROWSPAN=1 ALIGN="LEFT" PINDENT=0 LSPACE=130><p styleid=0><pstyle indent=0 lspace=130 align=left><text>B</text></P></cell>
+</tr></box></ctrlcode><tail indent=1000 lspace=280 align=justified><text>after table.</text></tail></p>
+<p styleid=0><pstyle indent=0 lspace=280 align=center><text>&#x3010;&#xCCAD;&#xAD6C;&#xBC94;&#xC704;&#x3011;</text></p>
+<p styleid=0><pstyle indent=1000 lspace=280 align=justified><text>claim 1.</text></p>
+</BODY></HWPML>

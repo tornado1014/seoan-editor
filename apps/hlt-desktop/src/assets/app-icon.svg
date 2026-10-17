@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="서안 통특기">
+  <rect width="512" height="512" rx="72" fill="#f8f5ed"/>
+  <path d="M72 96h368v320H72z" fill="none" stroke="#23211d" stroke-width="16"/>
+  <path d="M138 346V166h42l76 98 76-98h42v180h-48V239l-70 88-70-88v107z" fill="#a63d2d"/>
+  <path d="M96 120h320" stroke="#23211d" stroke-width="8"/>
+</svg>

@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:seoan:contracts:hml-inspect-v1",
+  "title": "Seoan bounded HWPML input inspection page",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source", "source_sha256", "encoding", "title", "fonts", "summary", "kind",
+    "cursor", "limit", "next_cursor", "has_more", "items"
+  ],
+  "properties": {
+    "source": {"type": "string", "minLength": 1},
+    "source_sha256": {"$ref": "#/$defs/sha256"},
+    "encoding": {"enum": ["cp949", "utf-8", "utf-16le", "utf-16be"]},
+    "title": {"type": "string"},
+    "fonts": {"type": "array", "items": {"type": "string"}},
+    "summary": {"$ref": "#/$defs/summary"},
+    "kind": {"enum": ["summary", "sections", "paragraphs", "tables", "cells", "images"]},
+    "cursor": {"$ref": "#/$defs/decimal"},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+    "next_cursor": {
+      "oneOf": [
+        {"$ref": "#/$defs/decimal"},
+        {"type": "null"}
+      ]
+    },
+    "has_more": {"type": "boolean"},
+    "items": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "oneOf": [
+          {"$ref": "#/$defs/section"},
+          {"$ref": "#/$defs/paragraph"},
+          {"$ref": "#/$defs/table"},
+          {"$ref": "#/$defs/cell"},
+          {"$ref": "#/$defs/image"}
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "decimal": {"type": "string", "pattern": "^[0-9]+$"},
+    "sha256": {"type": "string", "pattern": "^[0-9A-F]{64}$"},
+    "nullableString": {"type": ["string", "null"]},
+    "nullableInteger": {"type": ["integer", "null"], "minimum": 0, "maximum": 4294967295},
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "section_count", "top_level_paragraph_count", "content_paragraph_count",
+        "table_count", "row_count", "cell_count", "image_count"
+      ],
+      "properties": {
+        "section_count": {"$ref": "#/$defs/decimal"},
+        "top_level_paragraph_count": {"$ref": "#/$defs/decimal"},
+        "content_paragraph_count": {"$ref": "#/$defs/decimal"},
+        "table_count": {"$ref": "#/$defs/decimal"},
+        "row_count": {"$ref": "#/$defs/decimal"},
+        "cell_count": {"$ref": "#/$defs/decimal"},
+        "image_count": {"$ref": "#/$defs/decimal"}
+      }
+    },
+    "formats": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"enum": ["underline", "bold", "italic", "superscript", "subscript"]}
+    },
+    "inline": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "text", "formats"],
+          "properties": {
+            "kind": {"const": "text"},
+            "text": {"type": "string", "maxLength": 4194304},
+            "formats": {"$ref": "#/$defs/formats"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "image_id"],
+          "properties": {
+            "kind": {"const": "image"},
+            "image_id": {"type": "string", "pattern": "^image:[0-9]+$"}
+          }
+        }
+      ]
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "index", "title", "kind", "level", "paragraph_ids"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^section:[1-9][0-9]*$"},
+        "index": {"type": "integer", "minimum": 1},
+        "title": {"type": "string"},
+        "kind": {"enum": ["section", "table", "figure", "claim"]},
+        "level": {"type": "integer", "minimum": 0},
+        "paragraph_ids": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^paragraph:[1-9][0-9]*$"}
+        }
+      }
+    },
+    "paragraph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "section_id", "marker", "text", "tail_text", "align", "indent_raw",
+        "lmargin_raw", "rmargin_raw", "lspace", "page_break", "table_id", "image_ids",
+        "inlines"
+      ],
+      "properties": {
+        "id": {"type": "string", "pattern": "^paragraph:[1-9][0-9]*$"},
+        "section_id": {"$ref": "#/$defs/nullableString"},
+        "marker": {"$ref": "#/$defs/nullableString"},
+        "text": {"type": "string", "maxLength": 4194304},
+        "tail_text": {"type": "string", "maxLength": 4194304},
+        "align": {"enum": ["left", "center", "right", "justified", "distribute"]},
+        "indent_raw": {"type": "integer"},
+        "lmargin_raw": {"type": "integer"},
+        "rmargin_raw": {"type": "integer"},
+        "lspace": {"type": "integer", "minimum": 0},
+        "page_break": {"type": "boolean"},
+        "table_id": {"$ref": "#/$defs/nullableString"},
+        "image_ids": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^image:[0-9]+$"}
+        },
+        "inlines": {"type": "array", "items": {"$ref": "#/$defs/inline"}}
+      }
+    },
+    "table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "occurrence", "paragraph_id", "max_columns", "row_count", "cell_ids"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^table:[1-9][0-9]*$"},
+        "occurrence": {"type": "integer", "minimum": 1},
+        "paragraph_id": {"type": "string", "pattern": "^paragraph:[1-9][0-9]*$"},
+        "max_columns": {"type": "integer", "minimum": 1},
+        "row_count": {"type": "integer", "minimum": 1},
+        "cell_ids": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^cell:[1-9][0-9]*:[1-9][0-9]*:[1-9][0-9]*$"}
+        }
+      }
+    },
+    "cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "table_id", "row", "occurrence", "text", "start_raw", "width_raw",
+        "hwidth_raw", "column_begin", "row_begin", "rowspan", "colspan",
+        "merge_continuation", "align", "indent_raw", "lspace", "image_ids", "inlines"
+      ],
+      "properties": {
+        "id": {"type": "string", "pattern": "^cell:[1-9][0-9]*:[1-9][0-9]*:[1-9][0-9]*$"},
+        "table_id": {"type": "string", "pattern": "^table:[1-9][0-9]*$"},
+        "row": {"type": "integer", "minimum": 1},
+        "occurrence": {"type": "integer", "minimum": 1},
+        "text": {"type": "string", "maxLength": 4194304},
+        "start_raw": {"$ref": "#/$defs/nullableInteger"},
+        "width_raw": {"$ref": "#/$defs/nullableInteger"},
+        "hwidth_raw": {"$ref": "#/$defs/nullableInteger"},
+        "column_begin": {"$ref": "#/$defs/nullableInteger"},
+        "row_begin": {"$ref": "#/$defs/nullableInteger"},
+        "rowspan": {"type": "integer", "minimum": 1},
+        "colspan": {"type": "integer", "minimum": 1},
+        "merge_continuation": {"type": "boolean"},
+        "align": {"enum": ["left", "center", "right", "justified", "distribute"]},
+        "indent_raw": {"type": "integer"},
+        "lspace": {"type": "integer", "minimum": 0},
+        "image_ids": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^image:[0-9]+$"}
+        },
+        "inlines": {"type": "array", "items": {"$ref": "#/$defs/inline"}}
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "occurrence", "name", "width", "height", "secondary_width",
+        "secondary_height", "paragraph_id", "cell_id"
+      ],
+      "properties": {
+        "id": {"type": "string", "pattern": "^image:[0-9]+$"},
+        "occurrence": {"type": "integer", "minimum": 0},
+        "name": {"type": "string"},
+        "width": {"$ref": "#/$defs/nullableInteger"},
+        "height": {"$ref": "#/$defs/nullableInteger"},
+        "secondary_width": {"$ref": "#/$defs/nullableInteger"},
+        "secondary_height": {"$ref": "#/$defs/nullableInteger"},
+        "paragraph_id": {"$ref": "#/$defs/nullableString"},
+        "cell_id": {"$ref": "#/$defs/nullableString"}
+      }
+    }
+  }
+}

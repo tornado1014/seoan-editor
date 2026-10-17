@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:seoan:contracts:kipo-xml-inspect-v1",
+  "title": "Seoan KIPO XML provenance wrapper around a bounded HML semantic page",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source", "source_sha256", "input_encoding", "document_root", "dialect",
+    "invention_title", "semantic_sha256", "page"
+  ],
+  "properties": {
+    "source": {"type": "string", "minLength": 1},
+    "source_sha256": {"$ref": "#/$defs/sha256"},
+    "input_encoding": {"enum": ["cp949", "utf-8", "utf-16le", "utf-16be"]},
+    "document_root": {"enum": ["PCTPatentCAFDOC", "PatentCAFDOC"]},
+    "dialect": {"enum": ["pct_patent_cafdoc", "patent_cafdoc"]},
+    "invention_title": {"type": "string"},
+    "semantic_sha256": {"$ref": "#/$defs/sha256"},
+    "page": {"type": "object"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9A-F]{64}$"}
+  }
+}

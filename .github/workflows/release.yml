@@ -1,0 +1,51 @@
+# 릴리스: `vX.Y.Z` 태그를 올리면 맥(유니버설)·윈도 설치 파일과 업데이트 파일(latest.json · 서명)을 만들어 Release 에 올린다.
+# 앱은 latest.json 을 읽어 새 판을 알린다. 태그 판 = tauri.conf.json 의 version.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            args: --target universal-apple-darwin --bundles app,dmg
+          - os: windows-latest
+            args: --bundles nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/hlt-desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci
+        working-directory: apps/hlt-desktop
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/hlt-desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: 서안 ${{ github.ref_name }}
+          releaseBody: 설치 파일은 아래 Assets 에서 받으세요. 이미 설치했다면 앱이 새 판을 알려 줍니다.
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
+          # 한글 앱 이름은 Release 자산 이름에서 깨진다 — 영문 이름으로 올린다.
+          assetNamePattern: seoan_[version]_[platform]_[arch][_setup][ext]
+          args: ${{ matrix.args }}

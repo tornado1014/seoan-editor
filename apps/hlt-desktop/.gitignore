@@ -1,0 +1,6 @@
+public/mathjax/*.js
+public/rdkit/*.js
+public/rdkit/*.wasm
+node_modules/
+dist/
+public/jsme/

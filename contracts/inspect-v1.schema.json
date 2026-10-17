@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:seoan:contracts:inspect-v1",
+  "title": "Seoan HLT Phase 2 bounded inspect page",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["source", "summary", "kind", "cursor", "limit", "next_cursor", "has_more", "items"],
+  "properties": {
+    "source": {"type": "string", "minLength": 1},
+    "summary": {"$ref": "#/$defs/summary"},
+    "kind": {"enum": ["summary", "sections", "paragraphs", "tables", "images"]},
+    "cursor": {"$ref": "#/$defs/decimal"},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+    "next_cursor": {
+      "oneOf": [
+        {"$ref": "#/$defs/decimal"},
+        {"type": "null"}
+      ]
+    },
+    "has_more": {"type": "boolean"},
+    "items": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "oneOf": [
+          {"$ref": "#/$defs/section"},
+          {"$ref": "#/$defs/paragraph"},
+          {"$ref": "#/$defs/table"},
+          {"$ref": "#/$defs/image"}
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "decimal": {"type": "string", "pattern": "^[0-9]+$"},
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "document_title", "document_type_raw", "document_tree_kind", "document_tree_label",
+        "fixed_blocks",
+        "inflated_bytes", "section_count", "paragraph_count", "line_count", "span_count",
+        "table_count", "cell_count", "image_count", "paragraph_wipoid_nonzero",
+        "paragraph_wipoid_distinct", "text_index_bytes", "text_index_truncated"
+      ],
+      "properties": {
+        "document_title": {"type": "string"},
+        "document_type_raw": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+        "document_tree_kind": {
+          "enum": ["pct_patent", "patent_specification_ko", "unknown"]
+        },
+        "document_tree_label": {
+          "enum": ["PCT특허", "특허 명세서등(국어)", "unknown"]
+        },
+        "fixed_blocks": {"$ref": "#/$defs/fixedBlocks"},
+        "inflated_bytes": {"$ref": "#/$defs/decimal"},
+        "section_count": {"$ref": "#/$defs/decimal"},
+        "paragraph_count": {"$ref": "#/$defs/decimal"},
+        "line_count": {"$ref": "#/$defs/decimal"},
+        "span_count": {"$ref": "#/$defs/decimal"},
+        "table_count": {"$ref": "#/$defs/decimal"},
+        "cell_count": {"$ref": "#/$defs/decimal"},
+        "image_count": {"$ref": "#/$defs/decimal"},
+        "text_index_bytes": {"$ref": "#/$defs/decimal"},
+        "text_index_truncated": {"type": "boolean"},
+        "paragraph_wipoid_nonzero": {"$ref": "#/$defs/decimal"},
+        "paragraph_wipoid_distinct": {"$ref": "#/$defs/decimal"}
+      }
+    },
+    "fixedBlocks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["shapes_sha256", "shape_order_sha256", "second_shape_order_sha256", "style_table_sha256"],
+      "properties": {
+        "shapes_sha256": {"$ref": "#/$defs/sha256"},
+        "shape_order_sha256": {"$ref": "#/$defs/sha256"},
+        "second_shape_order_sha256": {"$ref": "#/$defs/sha256"},
+        "style_table_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "sourceRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_byte", "end_byte"],
+      "properties": {
+        "start_byte": {"$ref": "#/$defs/decimal"},
+        "end_byte": {"$ref": "#/$defs/decimal"}
+      }
+    },
+    "nullableString": {"type": ["string", "null"]},
+    "sha256": {"type": "string", "pattern": "^[0-9A-F]{64}$"},
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "index", "title", "table_range", "source_range", "anchor_line_id", "anchor_paragraph_id"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^section:[1-9][0-9]*$"},
+        "index": {"type": "integer", "minimum": 1},
+        "title": {"type": "string"},
+        "table_range": {"$ref": "#/$defs/sourceRange"},
+        "source_range": {"$ref": "#/$defs/sourceRange"},
+        "anchor_line_id": {"$ref": "#/$defs/nullableString"},
+        "anchor_paragraph_id": {"$ref": "#/$defs/nullableString"}
+      }
+    },
+    "paragraph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "part", "section_id", "text", "text_truncated", "shape_id", "indent_raw", "lspace", "align", "line_ids", "source_range", "wipo_id"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^paragraph:[0-9]+$"},
+        "part": {"$ref": "#/$defs/decimal"},
+        "section_id": {"$ref": "#/$defs/nullableString"},
+        "text": {"type": "string", "maxLength": 16384},
+        "text_truncated": {"type": "boolean"},
+        "shape_id": {"$ref": "#/$defs/nullableString"},
+        "indent_raw": {"type": "integer", "minimum": 0},
+        "lspace": {"type": "integer", "minimum": 0},
+        "align": {"enum": ["left", "center", "justified", "unknown"]},
+        "line_ids": {"type": "array", "items": {"type": "string"}},
+        "source_range": {"$ref": "#/$defs/sourceRange"},
+        "wipo_id": {"type": ["integer", "null"], "minimum": 1}
+      }
+    },
+    "table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "occurrence", "anchor_section_id", "anchor_paragraph_id", "row_count", "column_count", "cell_ids", "source_range"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^table:[0-9]+$"},
+        "occurrence": {"$ref": "#/$defs/decimal"},
+        "anchor_section_id": {"$ref": "#/$defs/nullableString"},
+        "anchor_paragraph_id": {"$ref": "#/$defs/nullableString"},
+        "row_count": {"type": "integer", "minimum": 1},
+        "column_count": {"type": "integer", "minimum": 1},
+        "cell_ids": {"type": "array", "items": {"type": "string"}},
+        "source_range": {"$ref": "#/$defs/sourceRange"}
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "occurrence", "object_code", "payload_sha256", "paragraph_id", "line_id", "table_id", "cell_id", "source_range"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^image:[0-9]+$"},
+        "occurrence": {"$ref": "#/$defs/decimal"},
+        "object_code": {"type": "integer", "minimum": 0},
+        "payload_sha256": {"$ref": "#/$defs/sha256"},
+        "paragraph_id": {"type": "string"},
+        "line_id": {"type": "string"},
+        "table_id": {"$ref": "#/$defs/nullableString"},
+        "cell_id": {"$ref": "#/$defs/nullableString"},
+        "source_range": {"$ref": "#/$defs/sourceRange"}
+      }
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:seoan:contracts:docx-inspect-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["source", "source_sha256", "semantic_sha256", "package", "page_break_count", "kind", "cursor", "limit", "next_cursor", "has_more", "page", "media_items"],
+  "properties": {
+    "source": {"type": "string", "minLength": 1},
+    "source_sha256": {"$ref": "#/$defs/sha"},
+    "semantic_sha256": {"$ref": "#/$defs/sha"},
+    "package": {
+      "type": "object", "additionalProperties": false,
+      "required": ["entry_count", "main_document_bytes", "styles_bytes", "relationships_bytes", "media_count", "media_bytes"],
+      "properties": {
+        "entry_count": {"type": "integer"}, "main_document_bytes": {"$ref": "#/$defs/dec"},
+        "styles_bytes": {"type": ["string", "null"], "pattern": "^[0-9]+$"},
+        "relationships_bytes": {"$ref": "#/$defs/dec"}, "media_count": {"type": "integer"},
+        "media_bytes": {"$ref": "#/$defs/dec"}
+      }
+    },
+    "page_break_count": {"type": "integer"},
+    "kind": {"enum": ["summary", "sections", "paragraphs", "tables", "cells", "images", "media"]},
+    "cursor": {"$ref": "#/$defs/dec"}, "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+    "next_cursor": {"type": ["string", "null"], "pattern": "^[0-9]+$"}, "has_more": {"type": "boolean"},
+    "page": {"type": ["object", "null"]},
+    "media_items": {"type": "array", "maxItems": 500, "items": {"$ref": "#/$defs/media"}}
+  },
+  "$defs": {
+    "sha": {"type": "string", "pattern": "^[0-9A-F]{64}$"}, "dec": {"type": "string", "pattern": "^[0-9]+$"},
+    "media": {"type": "object", "additionalProperties": false,
+      "required": ["relationship_id", "target", "media_name", "byte_size", "sha256", "pixel_width", "pixel_height"],
+      "properties": {"relationship_id": {"type": "string"}, "target": {"type": "string"}, "media_name": {"type": "string"}, "byte_size": {"$ref": "#/$defs/dec"}, "sha256": {"$ref": "#/$defs/sha"}, "pixel_width": {"type": "integer"}, "pixel_height": {"type": "integer"}}
+    }
+  }
+}

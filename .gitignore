@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+out/
+.omc/
+
+# 로컬 작업 자료 — 저장소에 넣지 않는다
+/work
+fixtures/*
+!fixtures/phase2/
+fixtures/phase2/*
+!fixtures/phase2/*_probe.HLT.hex
+context/
+probes/
+# 빌드 · 도구 산출물
+target/
+apps/hlt-desktop/node_modules
+apps/hlt-desktop/dist/
+apps/hlt-desktop/src-tauri/gen/
+.worktrees/
+.DS_Store
+# 로컬 전용 테스트 · 작업 지침(저장소 밖 파일의 심링크)
+crates/*/tests/local_*.rs
+AGENTS.md
