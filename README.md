@@ -47,8 +47,8 @@
 
 | 운영체제 | 파일 | 설치 |
 |---|---|---|
-| macOS 12 이상 (Apple Silicon · Intel) | `seoan_<버전>_….dmg` | 열어서 앱을 「응용 프로그램」으로 끌어 놓습니다 |
-| Windows 10/11 (x64) | `seoan_<버전>_…-setup.exe` | 실행하면 사용자 계정에 설치됩니다(관리자 권한 불필요) |
+| macOS 12 이상 (Apple Silicon · Intel) | `seoan_<버전>_darwin_universal.dmg` | 열어서 앱을 「응용 프로그램」으로 끌어 놓습니다 |
+| Windows 10/11 (x64) | `seoan_<버전>_windows_x64_setup.exe` | 실행하면 사용자 계정에 설치됩니다(관리자 권한 불필요) |
 
 - **macOS:** 애플 공증을 받지 않은 앱이라 처음 열 때 경고가 뜹니다. 앱을 **우클릭 → 열기**로 한 번 열면 그다음부터는 그냥 열립니다.
 - **Windows:** SmartScreen 경고가 뜨면 **추가 정보 → 실행**을 누르세요.
