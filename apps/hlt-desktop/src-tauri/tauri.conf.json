@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "서안 통특기",
   "version": "0.6.4",
-  "identifier": "kr.co.envision.seoan",
+  "identifier": "io.github.tornado1014.seoan",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
@@ -39,7 +39,7 @@
     "category": "Productivity",
     "shortDescription": "통특기 명세서(.HLT) 편집기",
     "longDescription": "특허 명세서 .HLT 를 열어 쪽 위에서 바로 고치고, 제출파일(.hlz · .fin) · 보정서 · 인쇄 PDF 를 만든다.",
-    "copyright": "© 2026 Envision",
+    "publisher": "Seoan",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -8,7 +8,7 @@ npx tauri build --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":
 NAME="서안 통특기.app"
 SRC="../../target/release/bundle/macos/$NAME"
 DST="/Applications/$NAME"
-osascript -e 'quit app id "kr.co.envision.seoan"' 2>/dev/null || true  # 경로로 찾는 pkill 은 한글(NFD) 경로에서 못 찾는다
+osascript -e 'quit app id "io.github.tornado1014.seoan"' 2>/dev/null || true  # 경로로 찾는 pkill 은 한글(NFD) 경로에서 못 찾는다
 rm -rf "$DST"
 ditto "$SRC" "$DST"
 codesign --force --deep -s - "$DST"
