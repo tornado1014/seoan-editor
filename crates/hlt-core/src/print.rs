@@ -440,11 +440,14 @@ impl TableRow<'_> {
     }
 }
 
+/// 행 하나에 든 칸 줄 묶음: 칸 · 줄 차례들 · 덮인 자리인가.
+type RowPart<'a> = (&'a crate::CellRecord, Vec<usize>, bool);
+
 /// 판독 모델 `CellRecord` 는 세로 병합에 덮인 칸의 줄을 위 칸에 합친다. 쪽 매기기(`line_heights`)는 행마다 첫 줄에만
 /// 높이를 싣으므로(`heights > 0`) 그 줄들로 칸 줄을 제 행에 되돌린다.
 fn table_rows<'a>(document: &'a InspectDocument, heights: &[i64]) -> BTreeMap<usize, TableRow<'a>> {
     let index = |id: &str| id.rsplit(':').next().and_then(|n| n.parse::<usize>().ok());
-    let mut grouped: BTreeMap<usize, Vec<(&crate::CellRecord, Vec<usize>, bool)>> = BTreeMap::new();
+    let mut grouped: BTreeMap<usize, Vec<RowPart<'_>>> = BTreeMap::new();
     for cell in &document.cells {
         let mut lines: Vec<usize> = cell.line_ids.iter().filter_map(|id| index(id)).collect();
         lines.sort_unstable();
