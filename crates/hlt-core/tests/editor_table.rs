@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use hlt_core::{
-    EditorSession, GenerationDialect, TableOperation, WriteOptions, inspect_hml_path,
-    save_generated_hlt_as_new,
+    inspect_hml_path, save_generated_hlt_as_new, EditorSession, GenerationDialect, TableOperation,
+    WriteOptions,
 };
 
 fn session_with_table(dir: &tempfile::TempDir) -> EditorSession {
@@ -149,12 +149,10 @@ fn deletes_a_table() {
     let table = session.document.tables[0].id.clone();
     session.delete_table(&table).unwrap();
     assert!(reopen(&mut session, &dir, "지움").is_empty());
-    assert!(
-        session
-            .paragraphs()
-            .iter()
-            .any(|p| p.text.contains("claim 1."))
-    );
+    assert!(session
+        .paragraphs()
+        .iter()
+        .any(|p| p.text.contains("claim 1.")));
 }
 
 fn session_op(session: &mut EditorSession, operation: TableOperation) {
@@ -319,4 +317,49 @@ fn cell_lines_carry_caret_stops_that_add_up_to_the_cell_text() {
         .filter(|l| l.cell.as_deref() == Some(first.as_str()))
         .count();
     assert!(wrapped >= 2, "긴 칸 글은 여러 줄: {wrapped}");
+}
+
+/// 세로 병합 칸의 상자는 걸친 행들의 높이를 합친다 — 그 행 높이만 쓰면 아래 행에 테두리가 빈다.
+#[test]
+fn vertically_merged_cell_box_spans_its_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = session_with_table(&dir);
+    let heading = paragraph_id(&session, "【표 1】");
+    let first = session.insert_table(&heading, 3, 2).unwrap();
+    let table = session.cell_position(&first).unwrap().table_id;
+    session_op(
+        &mut session,
+        TableOperation::Merge {
+            table_id: table,
+            row: 0,
+            column: 0,
+            row_end: 1,
+            column_end: 0,
+        },
+    );
+    let boxes: Vec<_> = session
+        .plan
+        .pages
+        .iter()
+        .flat_map(|p| p.cells.iter())
+        .collect();
+    let merged = boxes.iter().find(|b| b.cell == boxes[0].cell).unwrap();
+    let right: Vec<_> = boxes
+        .iter()
+        .filter(|b| (b.x - (merged.x + merged.width)).abs() < 0.01)
+        .take(3)
+        .collect();
+    assert_eq!(right.len(), 3, "오른쪽 열 3칸");
+    assert!((right[0].top - merged.top).abs() < 0.01);
+    assert!(
+        (merged.top + merged.height - (right[1].top + right[1].height)).abs() < 0.01,
+        "병합 칸 아랫변 = 둘째 행 아랫변: {merged:?} {:?}",
+        right[1]
+    );
+    assert!(
+        (right[1].height - right[2].height).abs() < 0.01,
+        "덮인 행도 보통 행 높이(첫 행만 위 여백): {:?} {:?}",
+        right[1],
+        right[2]
+    );
 }

@@ -10,9 +10,9 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    InspectDocument,
-    paginate::{BREAK, PrintedLine, TEXT_ASCENT, line_heights, paginate},
+    paginate::{line_heights, paginate, PrintedLine, BREAK, TEXT_ASCENT},
     reflow::{self, Item},
+    InspectDocument,
 };
 
 pub const PAGE_WIDTH: f64 = 595.32;
@@ -164,7 +164,9 @@ pub fn page_plan(document: &InspectDocument, inflated: &[u8], options: PrintOpti
             cells: Vec::new(),
         })
         .collect();
-    let rows = table_rows(document);
+    let rows = table_rows(document, &heights);
+    // 칸 글 안 자리는 덮인 행으로 이어진다(세로 병합 칸).
+    let mut cell_offsets: BTreeMap<String, u32> = BTreeMap::new();
     // 쪽 나누기는 정수 u(paginate)로, 그리기는 표 행의 실제 높이(118.27u × 줄)로 쌓는다 — 반올림이 행마다 0.03pt 씩 밀린다.
     let (mut current, mut used) = (0_usize, 0.0_f64);
     for (line, &height) in heights.iter().enumerate() {
@@ -225,19 +227,21 @@ pub fn page_plan(document: &InspectDocument, inflated: &[u8], options: PrintOpti
                     let pad = if row.first { TABLE_PAD_TOP } else { 0.0 };
                     let top = first_top + (used + pad + CELL_TEXT_OFFSET) * PT_PER_UNIT;
                     // 칸 상자: 행 윗변(첫 행은 위 여백 포함)부터 행 높이만큼 · 왼쪽 = 행 들여쓰기 + 칸 시작.
-                    for (cell, _) in &row.cells {
+                    for (cell, _, height) in &row.cells {
+                        let Some(height) = height else { continue };
                         plan[page - 1].cells.push(PlannedCellBox {
                             cell: cell.id.clone(),
                             x: row.border_left + f64::from(cell.start) / 20.0,
                             top: first_top + used * PT_PER_UNIT,
                             width: f64::from(cell.width) / 20.0,
-                            height: (pad + ROW_UNIT * row.lines as f64) * PT_PER_UNIT,
+                            height: height * PT_PER_UNIT,
                         });
                     }
-                    let (lines, images) = place_row(row, top, inflated, document);
+                    let (lines, images) =
+                        place_row(row, top, inflated, document, &mut cell_offsets);
                     plan[page - 1].lines.extend(lines);
                     plan[page - 1].images.extend(images);
-                    used += pad + ROW_UNIT * row.lines as f64;
+                    used += row.height();
                 } else {
                     used += height as f64;
                 }
@@ -417,49 +421,58 @@ fn place_line(
     (line, images)
 }
 
-/// 표 행 하나: 칸들(칸 시작 pt · 줄 차례들 · 세로 가운데인가)과 행 줄 수. 행 첫 줄(높이가 실린 줄)로 찾는다.
+/// 표 행 하나(세로 병합에 덮인 행도 제 행): 칸들(칸 · 이 행의 줄 차례들 · 상자 높이 = 걸친 행 합, 덮인 자리면 None)과 행 줄 수.
+/// 행 첫 줄(높이가 실린 줄)로 찾는다.
 struct TableRow<'a> {
     left: f64,
     /// 칸 테두리 왼쪽 기준(pt) = 쪽 왼쪽 + 행 들여쓰기(칸 안 여백 빼고).
     border_left: f64,
-    cells: Vec<(&'a crate::CellRecord, Vec<usize>)>,
+    cells: Vec<(&'a crate::CellRecord, Vec<usize>, Option<f64>)>,
     lines: usize,
     first: bool,
 }
 
-fn table_rows(document: &InspectDocument) -> BTreeMap<usize, TableRow<'_>> {
-    let index = |id: &str| id.rsplit(':').next().and_then(|n| n.parse::<usize>().ok());
-    let mut grouped: BTreeMap<(&str, u32), Vec<&crate::CellRecord>> = BTreeMap::new();
-    for cell in &document.cells {
-        grouped
-            .entry((cell.table_id.as_str(), cell.row))
-            .or_default()
-            .push(cell);
+impl TableRow<'_> {
+    /// 이 행이 쪽에서 먹는 높이(단위) — 첫 행은 위 여백 포함.
+    fn height(&self) -> f64 {
+        let pad = if self.first { TABLE_PAD_TOP } else { 0.0 };
+        pad + ROW_UNIT * self.lines as f64
     }
-    let mut rows = BTreeMap::new();
-    for cells in grouped.values() {
-        let cells: Vec<_> = cells
-            .iter()
-            .map(|cell| {
-                (
-                    *cell,
-                    cell.line_ids
-                        .iter()
-                        .filter_map(|id| index(id))
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect();
-        let Some(first) = cells
-            .iter()
-            .flat_map(|(_, lines)| lines.iter().copied())
-            .min()
-        else {
-            continue;
-        };
+}
+
+/// 판독 모델 `CellRecord` 는 세로 병합에 덮인 칸의 줄을 위 칸에 합친다. 쪽 매기기(`line_heights`)는 행마다 첫 줄에만
+/// 높이를 싣으므로(`heights > 0`) 그 줄들로 칸 줄을 제 행에 되돌린다.
+fn table_rows<'a>(document: &'a InspectDocument, heights: &[i64]) -> BTreeMap<usize, TableRow<'a>> {
+    let index = |id: &str| id.rsplit(':').next().and_then(|n| n.parse::<usize>().ok());
+    let mut grouped: BTreeMap<usize, Vec<(&crate::CellRecord, Vec<usize>, bool)>> = BTreeMap::new();
+    for cell in &document.cells {
+        let mut lines: Vec<usize> = cell.line_ids.iter().filter_map(|id| index(id)).collect();
+        lines.sort_unstable();
+        let mut parts: Vec<(usize, Vec<usize>)> = Vec::new();
+        for line in lines {
+            let starts = heights.get(line).is_some_and(|h| *h > 0);
+            match parts.last_mut() {
+                Some((_, part)) if !starts => part.push(line),
+                _ => parts.push((line, vec![line])),
+            }
+        }
+        for (k, (_, part)) in parts.into_iter().enumerate() {
+            // 칸 줄 묶음의 행 = 그 줄 이하에서 가장 가까운 행 첫 줄.
+            let row_start = (0..=part[0])
+                .rev()
+                .find(|l| heights.get(*l).is_some_and(|h| *h > 0))
+                .unwrap_or(part[0]);
+            grouped
+                .entry(row_start)
+                .or_default()
+                .push((cell, part, k > 0));
+        }
+    }
+    let mut rows: BTreeMap<usize, TableRow<'_>> = BTreeMap::new();
+    for (first, cells) in grouped {
         let lines = cells
             .iter()
-            .map(|(_, lines)| lines.len())
+            .map(|(_, lines, _)| lines.len())
             .max()
             .unwrap_or(1);
         let (indent, margin) = document
@@ -472,11 +485,30 @@ fn table_rows(document: &InspectDocument) -> BTreeMap<usize, TableRow<'_>> {
             TableRow {
                 left: LEFT + f64::from(indent.saturating_add(margin)) / 20.0,
                 border_left: LEFT + f64::from(indent) / 20.0,
-                first: cells.iter().all(|(cell, _)| cell.row == 0),
-                cells,
+                first: cells
+                    .iter()
+                    .all(|(cell, _, covered)| cell.row == 0 && !covered),
+                cells: cells
+                    .into_iter()
+                    .map(|(cell, lines, covered)| (cell, lines, (!covered).then_some(0.0)))
+                    .collect(),
                 lines,
             },
         );
+    }
+    // 상자 높이 = 그 칸이 걸친 행들의 높이 합.
+    let mut spans: BTreeMap<&str, f64> = BTreeMap::new();
+    for row in rows.values() {
+        for (cell, _, _) in &row.cells {
+            *spans.entry(cell.id.as_str()).or_default() += row.height();
+        }
+    }
+    for row in rows.values_mut() {
+        for (cell, _, height) in &mut row.cells {
+            if let Some(height) = height {
+                *height = spans[cell.id.as_str()];
+            }
+        }
     }
     rows
 }
@@ -486,10 +518,11 @@ fn place_row(
     top: f64,
     inflated: &[u8],
     document: &InspectDocument,
+    offsets: &mut BTreeMap<String, u32>,
 ) -> (Vec<PlannedLine>, Vec<PlannedImage>) {
     let mut out = Vec::new();
     let mut images = Vec::new();
-    for (cell, lines) in &row.cells {
+    for (cell, lines, _) in &row.cells {
         // 세로 가운데(1)면 남는 줄의 반만큼 내린다.
         let shift = if cell.vertical_align == 1 {
             (row.lines - lines.len()) as f64 * CELL_PITCH / 2.0
@@ -497,7 +530,7 @@ fn place_row(
             0.0
         };
         // 칸 글 안 자리(그림 = 한 글자) — 칸 줄들에 걸쳐 센다(쪽 위 칸 편집의 커서).
-        let mut offset = 0_u32;
+        let offset = offsets.entry(cell.id.clone()).or_default();
         for (k, &line) in lines.iter().enumerate() {
             let range = &document.lines[line].source_range;
             let raw = inflated
@@ -519,7 +552,7 @@ fn place_row(
             let mut x = row.left + f64::from(cell.start) / 20.0 + indent;
             let mut glyphs = Vec::new();
             let mut stops = Vec::new();
-            let start = offset;
+            let start = *offset;
             // 칸 안 그림: 그림 자리표(원문 1바이트)를 만나면 그 자리에 놓는다. 윗변 = 칸 글자 윗변 + CELL_IMAGE_DROP.
             let mut marks: Vec<&crate::ImageOccurrence> = document
                 .images
@@ -567,7 +600,7 @@ fn place_row(
                 x += width;
             }
             stops.push(x);
-            offset += stops.len() as u32 - 1;
+            *offset += stops.len() as u32 - 1;
             // 빈 칸 줄도 내보낸다(글자 없이 자리 하나) — 빈 칸에도 커서를 둔다.
             out.push(PlannedLine {
                 top: top + shift + k as f64 * CELL_PITCH,
