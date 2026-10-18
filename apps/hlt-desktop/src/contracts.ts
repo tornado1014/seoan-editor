@@ -186,6 +186,7 @@ export const editorSave = () => invoke<string | null>('editor_save');
 /** 문서 닫기: 고친 것이 있으면 저장을 묻는다. `false` = 취소. */
 export const editorCloseDocument = () => invoke<boolean>('editor_close_document');
 export const editorPrintPdf = () => invoke<string | null>('editor_print_pdf');
+export const editorExportDocx = () => invoke<string | null>('editor_export_docx');
 export const editorInsertFigure = (
   after: string,
   kind: 'math' | 'chemistry',

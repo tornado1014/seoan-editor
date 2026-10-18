@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use hlt_core::{
-    inspect_hml_path, save_generated_hlt_as_new, EditorSession, GenerationDialect, TableOperation,
-    WriteOptions,
+    EditorSession, GenerationDialect, TableOperation, WriteOptions, inspect_hml_path,
+    save_generated_hlt_as_new,
 };
 
 fn session_with_table(dir: &tempfile::TempDir) -> EditorSession {
@@ -149,10 +149,12 @@ fn deletes_a_table() {
     let table = session.document.tables[0].id.clone();
     session.delete_table(&table).unwrap();
     assert!(reopen(&mut session, &dir, "지움").is_empty());
-    assert!(session
-        .paragraphs()
-        .iter()
-        .any(|p| p.text.contains("claim 1.")));
+    assert!(
+        session
+            .paragraphs()
+            .iter()
+            .any(|p| p.text.contains("claim 1."))
+    );
 }
 
 fn session_op(session: &mut EditorSession, operation: TableOperation) {

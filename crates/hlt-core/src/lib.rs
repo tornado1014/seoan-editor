@@ -6,6 +6,7 @@ mod claim_check;
 mod codec;
 mod container;
 mod docx;
+mod docx_write;
 mod drawmark;
 mod edit;
 mod editor;
@@ -63,6 +64,7 @@ pub use docx::{
     DocxDocument, DocxMediaAsset, DocxPackageSummary, DocxPageBreak, inspect_docx_path,
     load_docx_image_payloads,
 };
+pub use docx_write::docx_bytes;
 pub use drawmark::{DrawMark, read_drf, write_drf};
 pub use edit::{
     EditDecision, EditDecisionStatus, EditPlan, EditSaveResult, EditSkipReason,

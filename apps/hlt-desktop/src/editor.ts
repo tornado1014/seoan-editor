@@ -38,6 +38,7 @@ import {
   editorOpenPending,
   editorPage,
   editorPrintPdf,
+  editorExportDocx,
   editorRedo,
   editorReplaceText,
   editorReplaceTextPageBreak,
@@ -147,6 +148,7 @@ export function mountEditor(root: HTMLElement): void {
         </div>
         <div class="tb-group" role="group" aria-label="내보내기">
           <button type="button" data-action="pdf" disabled title="인쇄 PDF">${icon('print')}<span>PDF</span></button>
+          <button type="button" data-action="docx" disabled title="Word 파일로 저장(표제 포함 · 식별번호 없음)">${icon('save')}<span>Word</span></button>
           <button type="button" data-action="fin" disabled title="제출파일(.hlz · .fin) 만들기">${icon('send')}<span>제출파일</span></button>
           <button type="button" data-action="amend" disabled title="보정서 만들기">${icon('amend')}<span>보정서</span></button>
         </div>
@@ -320,7 +322,7 @@ export function mountEditor(root: HTMLElement): void {
     void editorLog(`${label} 실패 ${JSON.stringify(error)}`).catch(() => {});
   };
   const enable = () => {
-    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'fin', 'amend', 'math', 'chem', 'table', 'align-justified', 'align-center', 'align-left', 'indent', 'outdent']) {
+    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'docx', 'fin', 'amend', 'math', 'chem', 'table', 'align-justified', 'align-center', 'align-left', 'indent', 'outdent']) {
       q<HTMLButtonElement>(`[data-action="${action}"]`).disabled = !view;
     }
   };
@@ -1624,6 +1626,15 @@ export function mountEditor(root: HTMLElement): void {
           if (path) say(`PDF: ${path}`);
         } catch (error) {
           fail(`PDF`, error);
+        }
+        break;
+      }
+      case 'docx': {
+        try {
+          const path = await editorExportDocx();
+          if (path) say(`Word: ${path}`);
+        } catch (error) {
+          fail(`Word`, error);
         }
         break;
       }

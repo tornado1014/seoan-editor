@@ -983,6 +983,29 @@ pub async fn editor_print_pdf(
     Ok(Some(path.display().to_string()))
 }
 
+/// Word(.docx)로 저장 — 표제는 나오고 식별번호는 안 나온다. 있는 파일은 덮지 않는다.
+#[tauri::command]
+pub async fn editor_export_docx(
+    window: Window,
+    app: AppHandle,
+    state: State<'_, EditorState>,
+) -> Result<Option<String>, CoreError> {
+    let Some(path) = pick_save(&app, "편집본.docx", "docx") else {
+        return Ok(None);
+    };
+    if path.exists() {
+        return Err(CoreError::new(
+            ErrorCode::OutputExists,
+            "export_docx",
+            false,
+        ));
+    }
+    let docx = with_session(&state, &window, |session| session.docx())?;
+    std::fs::write(&path, docx)
+        .map_err(|_| CoreError::new(ErrorCode::IoError, "export_docx", false))?;
+    Ok(Some(path.display().to_string()))
+}
+
 /// 제출파일 만들기(통특기 「제출파일 생성」): 지금 판 → KIPO XML + 도면 → `.hlz` → `.fin`. 이름 = 고른 파일 이름.
 #[tauri::command]
 pub async fn editor_export_fin(

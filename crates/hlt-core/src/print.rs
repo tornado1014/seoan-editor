@@ -10,9 +10,9 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    paginate::{line_heights, paginate, PrintedLine, BREAK, TEXT_ASCENT},
-    reflow::{self, Item},
     InspectDocument,
+    paginate::{BREAK, PrintedLine, TEXT_ASCENT, line_heights, paginate},
+    reflow::{self, Item},
 };
 
 pub const PAGE_WIDTH: f64 = 595.32;

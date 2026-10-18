@@ -9,13 +9,13 @@ mod update;
 use commands::{AppState, cancel_verify, select_hlt, verify_file};
 use editor::{
     EditorState, editor_cell_position, editor_cell_text, editor_close, editor_close_document,
-    editor_delete_range, editor_delete_table, editor_export_amendment, editor_export_fin,
-    editor_find, editor_image, editor_import, editor_insert_figure, editor_insert_item,
-    editor_insert_table, editor_log, editor_merge_paragraph, editor_new_opinion, editor_new_tab,
-    editor_number_paragraphs, editor_open, editor_open_pending, editor_page, editor_print_pdf,
-    editor_redo, editor_remove_items, editor_replace, editor_replace_cell_text,
-    editor_replace_text, editor_replace_text_page_break, editor_save, editor_save_as,
-    editor_set_alignment, editor_set_indent, editor_set_size, editor_table_edit,
+    editor_delete_range, editor_delete_table, editor_export_amendment, editor_export_docx,
+    editor_export_fin, editor_find, editor_image, editor_import, editor_insert_figure,
+    editor_insert_item, editor_insert_table, editor_log, editor_merge_paragraph,
+    editor_new_opinion, editor_new_tab, editor_number_paragraphs, editor_open, editor_open_pending,
+    editor_page, editor_print_pdf, editor_redo, editor_remove_items, editor_replace,
+    editor_replace_cell_text, editor_replace_text, editor_replace_text_page_break, editor_save,
+    editor_save_as, editor_set_alignment, editor_set_indent, editor_set_size, editor_table_edit,
     editor_toggle_format, editor_toggle_format_spans, editor_undo, editor_view,
 };
 
@@ -273,6 +273,7 @@ fn main() {
             editor_number_paragraphs,
             editor_save_as,
             editor_print_pdf,
+            editor_export_docx,
             editor_export_fin,
             editor_export_amendment,
             editor_remove_items,

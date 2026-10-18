@@ -1488,6 +1488,28 @@ impl EditorSession {
         Some(out.into_inner())
     }
 
+    /// Word(.docx) — 지금 판을 진짜 HLT 로 굽고 의미 모델로 되돌려 쓴다. 식별번호는 싣지 않는다.
+    pub fn docx(&mut self) -> Result<Vec<u8>, CoreError> {
+        let real = self.materialize()?;
+        let (model, _) = crate::hml_document_from_hlt(&real)?;
+        let (document, _) = load(&real, self.print)?;
+        let mut pngs = std::collections::BTreeMap::new();
+        for image in &document.images {
+            let Some(rgba) = document
+                .image_payloads
+                .get(&image.object_code)
+                .and_then(crate::print::payload_rgba)
+            else {
+                continue;
+            };
+            let mut out = std::io::Cursor::new(Vec::new());
+            if rgba.write_to(&mut out, image::ImageFormat::Png).is_ok() {
+                pngs.insert(image.id.clone(), out.into_inner());
+            }
+        }
+        crate::docx_bytes(&model, &pngs)
+    }
+
     /// 인쇄 PDF — 그림 본문이 있어야 해서 진짜 파일을 판독한다(배치는 화면과 같다).
     #[cfg(feature = "pdf")]
     pub fn print_pdf(&mut self, font: Vec<u8>, font_index: u32) -> Result<Vec<u8>, CoreError> {
