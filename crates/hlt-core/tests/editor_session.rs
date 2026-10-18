@@ -91,3 +91,37 @@ fn reopens_an_opinion_hlz_it_wrote() {
     let (_, xml_again) = hlz_of(&again);
     assert_eq!(xml_again, xml, "hlz → 열기 → hlz 왕복");
 }
+
+/// 수식·화학식 넣기: 【수학식 N】 표제와 그림 문단은 앞 본문 문단의 첫 줄 들여쓰기를 물려받지 않는다
+/// (식별항목 넣기와 같이 표제 = 들여쓰기 0 · 왼쪽 정렬 · 그림 문단 = 들여쓰기 0).
+#[test]
+fn inserted_figure_heading_and_image_are_not_indented() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("의견서.HLT");
+    hlt_core::save_new_opinion_as_new(&path, hlt_core::WriteOptions::default()).unwrap();
+    let mut session = EditorSession::open(&path).unwrap();
+    let body = session.paragraphs()[1].id.clone();
+    let mut png = Vec::new();
+    image::RgbImage::from_pixel(8, 4, image::Rgb([255, 255, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    for kind in [hlt_core::FigureKind::Math, hlt_core::FigureKind::Chemistry] {
+        session
+            .insert_figure(&body, kind, png.clone(), 40.0, 20.0)
+            .unwrap();
+    }
+    let out = temp.path().join("수식.HLT");
+    session.save_as(&out).unwrap();
+    let saved = EditorSession::open(&out).unwrap();
+    let paragraphs = &saved.document.paragraphs;
+    for label in ["【수학식 1】", "【화학식 1】"] {
+        let at = paragraphs
+            .iter()
+            .position(|p| p.text.trim() == label)
+            .expect(label);
+        let (heading, image) = (&paragraphs[at], &paragraphs[at + 1]);
+        assert_eq!(heading.indent_raw, 0, "{label} 표제 들여쓰기");
+        assert_eq!(heading.align, "left", "{label} 표제 정렬");
+        assert_eq!(image.indent_raw, 0, "{label} 그림 문단 들여쓰기");
+    }
+}

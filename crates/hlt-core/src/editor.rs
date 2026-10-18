@@ -1088,7 +1088,9 @@ impl EditorSession {
                 .find(|id| model.images.iter().all(|image| &image.id != id))
                 .expect("unbounded");
             let template = model.paragraphs[index].clone();
+            // 앞 문단의 첫 줄 들여쓰기를 물려받지 않는다(표제 · 그림이 오른쪽으로 밀려 들어갔다).
             let base = crate::HmlParagraph {
+                indent_raw: 0,
                 marker: None,
                 page_break: false,
                 table_id: None,
@@ -1110,6 +1112,8 @@ impl EditorSession {
                     formats: Vec::new(),
                     size: None,
                 }],
+                // 식별항목 넣기(`insert_item`)의 표제와 같은 모양.
+                align: "left".into(),
                 ..base.clone()
             };
             let body = crate::HmlParagraph {
