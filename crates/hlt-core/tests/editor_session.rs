@@ -125,3 +125,55 @@ fn inserted_figure_heading_and_image_are_not_indented() {
         assert_eq!(image.indent_raw, 0, "{label} 그림 문단 들여쓰기");
     }
 }
+
+/// 들여쓰기 · 들여쓰기 취소(통특기처럼 누를 때마다 더하지 않고 정해진 값으로 켜고 0 으로 끈다).
+#[test]
+fn sets_and_clears_first_line_indent() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("의견서.HLT");
+    hlt_core::save_new_opinion_as_new(&path, hlt_core::WriteOptions::default()).unwrap();
+    let mut session = EditorSession::open(&path).unwrap();
+    let body = session.paragraphs()[1].id.clone();
+    let indent_of = |session: &mut EditorSession, name: &str| {
+        let out = temp.path().join(name);
+        session.save_as(&out).unwrap();
+        let saved = EditorSession::open(&out).unwrap();
+        saved.document.paragraphs[1].indent_raw
+    };
+    session.set_indent(&body, 800).unwrap();
+    assert_eq!(indent_of(&mut session, "켬.HLT"), 800);
+    session.set_indent(&body, 800).unwrap();
+    assert_eq!(
+        indent_of(&mut session, "또켬.HLT"),
+        800,
+        "두 번 눌러도 더하지 않는다"
+    );
+    session.set_indent(&body, 0).unwrap();
+    assert_eq!(indent_of(&mut session, "끔.HLT"), 0);
+    let error = session.set_indent(&body, -1).unwrap_err();
+    assert_eq!(
+        error.details.get("reason").map(String::as_str),
+        Some("indent")
+    );
+}
+
+/// 식별항목 표제(절 닻)는 생성기가 들여쓰기 0 으로 굽는다 — 켜도 저장 때 조용히 사라지므로 켜기를 거절한다(끄기는 된다).
+#[test]
+fn refuses_to_indent_an_item_heading() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("의견서.HLT");
+    hlt_core::save_new_opinion_as_new(&path, hlt_core::WriteOptions::default()).unwrap();
+    let mut session = EditorSession::open(&path).unwrap();
+    let heading = session
+        .document
+        .sections
+        .iter()
+        .find_map(|section| section.anchor_paragraph_id.clone())
+        .expect("표제");
+    let error = session.set_indent(&heading, 800).unwrap_err();
+    assert_eq!(
+        error.details.get("reason").map(String::as_str),
+        Some("heading_indent")
+    );
+    session.set_indent(&heading, 0).unwrap();
+}

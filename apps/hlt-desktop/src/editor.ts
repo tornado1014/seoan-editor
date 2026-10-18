@@ -42,6 +42,8 @@ import {
   editorReplaceText,
   editorReplaceTextPageBreak,
   editorSetAlignment,
+  editorSetIndent,
+  BODY_INDENT,
   editorSave,
   editorSaveAs,
   editorCloseDocument,
@@ -91,6 +93,8 @@ const ICONS: Record<string, string[]> = {
   justify: ['M3 6h18', 'M3 12h18', 'M3 18h18'],
   center: ['M21 6H3', 'M17 12H7', 'M19 18H5'],
   left: ['M21 6H3', 'M15 12H3', 'M17 18H3'],
+  indent: ['M21 6H11', 'M21 12H11', 'M21 18H3', 'm3 8 4 4-4 4'],
+  outdent: ['M21 6H11', 'M21 12H11', 'M21 18H3', 'm7 8-4 4 4 4'],
   math: ['M18 7V4H6l6 8-6 8h12v-3'],
   chem: ['M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2', 'M8.5 2h7', 'M7 16h10'],
   table: ['M3 3h18v18H3z', 'M3 9h18', 'M3 15h18', 'M9 3v18', 'M15 3v18'],
@@ -131,6 +135,8 @@ export function mountEditor(root: HTMLElement): void {
           <button type="button" data-action="align-justified" disabled title="양쪽 정렬 (커서가 있는 문단)">${icon('justify')}</button>
           <button type="button" data-action="align-center" disabled title="가운데 정렬 (커서가 있는 문단)">${icon('center')}</button>
           <button type="button" data-action="align-left" disabled title="왼쪽 정렬 (커서가 있는 문단)">${icon('left')}</button>
+          <button type="button" data-action="indent" disabled title="들여쓰기 — 첫 줄 들여쓰기 (커서가 있는 문단)">${icon('indent')}</button>
+          <button type="button" data-action="outdent" disabled title="들여쓰기 취소 (커서가 있는 문단)">${icon('outdent')}</button>
         </div>
         <div class="tb-group" role="group" aria-label="넣기">
           <button type="button" data-action="math" disabled title="수식 넣기(LaTeX)">${icon('math')}<span>수식</span></button>
@@ -312,7 +318,7 @@ export function mountEditor(root: HTMLElement): void {
     void editorLog(`${label} 실패 ${JSON.stringify(error)}`).catch(() => {});
   };
   const enable = () => {
-    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'fin', 'amend', 'math', 'chem', 'table', 'align-justified', 'align-center', 'align-left']) {
+    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'fin', 'amend', 'math', 'chem', 'table', 'align-justified', 'align-center', 'align-left', 'indent', 'outdent']) {
       q<HTMLButtonElement>(`[data-action="${action}"]`).disabled = !view;
     }
   };
@@ -1259,6 +1265,9 @@ export function mountEditor(root: HTMLElement): void {
         format('위첨자', undefined, 'superscript'),
         format('아래첨자', undefined, 'subscript'),
         { item: 'Separator' },
+        { text: '들여쓰기', enabled: caret !== null && editable, action: button('indent') },
+        { text: '들여쓰기 취소', enabled: caret !== null && editable, action: button('outdent') },
+        { item: 'Separator' },
         { text: '되돌리기', accelerator: 'CmdOrCtrl+Z', action: () => void history('undo') },
         { text: '다시 하기', accelerator: 'Shift+CmdOrCtrl+Z', action: () => void history('redo') },
         { item: 'Separator' },
@@ -1625,6 +1634,20 @@ export function mountEditor(root: HTMLElement): void {
         await structural('정렬', async () => ({ next: await editorSetAlignment(at.paragraph, align), caret: at }));
         break;
       }
+      case 'indent':
+      case 'outdent': {
+        if (!caret || !canEdit()) {
+          say('들여쓰기: 쪽에서 문단을 먼저 누르세요.');
+          break;
+        }
+        const at = caret;
+        const indent = action === 'indent' ? BODY_INDENT : 0;
+        await structural(action === 'indent' ? '들여쓰기' : '들여쓰기 취소', async () => ({
+          next: await editorSetIndent(at.paragraph, indent),
+          caret: at,
+        }));
+        break;
+      }
       case 'apply':
         if (selectedCell) {
           const cell = selectedCell;
@@ -1768,6 +1791,7 @@ function describe(error: unknown): string {
     const plain: Record<string, string> = {
       heading_paragraph: '표제(【 】) 문단이 걸려 있어 할 수 없습니다',
       table_paragraph: '표 문단이 걸려 있어 할 수 없습니다',
+      heading_indent: '식별항목 표제는 들여쓸 수 없습니다(저장할 때 들여쓰기 0 으로 맞춰집니다)',
       'table_skipped:last_row': '표의 마지막 줄은 지울 수 없습니다(표를 없애려면 「표 지우기」)',
       'table_skipped:last_column': '표의 마지막 칸은 지울 수 없습니다(표를 없애려면 「표 지우기」)',
       'table_skipped:cell_contains_image': '그림이 든 칸은 지울 수 없습니다',

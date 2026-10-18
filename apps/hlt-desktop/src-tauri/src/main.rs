@@ -15,8 +15,8 @@ use editor::{
     editor_number_paragraphs, editor_open, editor_open_pending, editor_page, editor_print_pdf,
     editor_redo, editor_remove_items, editor_replace, editor_replace_cell_text,
     editor_replace_text, editor_replace_text_page_break, editor_save, editor_save_as,
-    editor_set_alignment, editor_set_size, editor_table_edit, editor_toggle_format,
-    editor_toggle_format_spans, editor_undo, editor_view,
+    editor_set_alignment, editor_set_indent, editor_set_size, editor_table_edit,
+    editor_toggle_format, editor_toggle_format_spans, editor_undo, editor_view,
 };
 
 /// 그 창 화면에 「닫으려 한다」를 알린다(화면이 친 글을 보낸 뒤 `editor_close`).
@@ -250,6 +250,7 @@ fn main() {
             editor_replace_text,
             editor_replace_text_page_break,
             editor_set_alignment,
+            editor_set_indent,
             editor_merge_paragraph,
             editor_new_tab,
             editor_close,

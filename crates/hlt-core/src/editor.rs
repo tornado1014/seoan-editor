@@ -473,6 +473,36 @@ impl EditorSession {
         })
     }
 
+    /// 문단 첫 줄 들여쓰기(편집기 「들여쓰기」 · 「들여쓰기 취소」 단추 — 통특기처럼 정해진 값으로 켜고 0 으로 끈다).
+    pub fn set_indent(&mut self, paragraph_id: &str, indent_raw: i32) -> Result<(), CoreError> {
+        if !(0..=4000).contains(&indent_raw) {
+            return Err(editor_error("indent"));
+        }
+        self.edit_model(|model| {
+            let anchor = model.sections.iter().any(|section| {
+                section.paragraph_ids.first().map(String::as_str) == Some(paragraph_id)
+            });
+            let paragraph = model
+                .paragraphs
+                .iter_mut()
+                .find(|paragraph| paragraph.id == paragraph_id)
+                .ok_or_else(|| editor_error("paragraph"))?;
+            if paragraph.table_id.is_some() {
+                return Err(editor_error("table_paragraph"));
+            }
+            // 생성기가 고친 식별항목 표제(절 닻)를 들여쓰기 0 으로 굽는다(`generate_body.rs` is_anchor) — 켜면 저장 때 조용히 사라진다.
+            // ponytail: 표제 들여쓰기가 필요해지면 「모양을 아는 표제」를 모델에 실어 생성기 규칙에서 빼라.
+            if anchor && paragraph.marker.is_some() && indent_raw != 0 {
+                return Err(editor_error("heading_indent"));
+            }
+            if paragraph.indent_raw != indent_raw {
+                paragraph.indent_raw = indent_raw;
+                paragraph.source_line_bytes.clear();
+            }
+            Ok(())
+        })
+    }
+
     /// 문단을 앞 문단 끝에 붙인다(쪽 위 편집의 문단 첫머리 Backspace · 끝 Delete). 표 문단 · 표제(절 닻)는 붙이지 않는다.
     pub fn merge_with_previous(&mut self, paragraph_id: &str) -> Result<(), CoreError> {
         self.edit_model(|model| {

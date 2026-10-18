@@ -620,6 +620,21 @@ pub async fn editor_set_alignment(
     })
 }
 
+/// 문단 첫 줄 들여쓰기(「들여쓰기」 800 · 「들여쓰기 취소」 0) — 커서가 있는 문단.
+#[tauri::command]
+pub async fn editor_set_indent(
+    window: Window,
+    state: State<'_, EditorState>,
+    paragraph_id: String,
+    indent: i32,
+) -> Result<EditorViewDto, CoreError> {
+    with_session(&state, &window, |session| {
+        session.set_indent(&paragraph_id, indent)?;
+        let title = title(session);
+        Ok(view(session, title))
+    })
+}
+
 /// 강제 쪽나눔(⌘/Ctrl+Enter): 문단 나누기와 같되 둘째 조각이 새 쪽에서 시작한다.
 #[tauri::command]
 pub async fn editor_replace_text_page_break(
