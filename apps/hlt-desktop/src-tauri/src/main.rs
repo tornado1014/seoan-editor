@@ -39,6 +39,70 @@ fn quit(app: &tauri::AppHandle) {
     }
 }
 
+const BUG_REPORT_TO: &str = "tornado1014@gmail.com";
+
+/// `mailto:` 에 넣을 글: 영숫자 · `-_.~` 말고 전부 `%XX`(공백도 `+` 가 아니라 `%20` — 메일 앱이 `+` 를 그대로 보인다).
+fn mailto_escape(text: &str) -> String {
+    text.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// 「버그 신고…」: 메일 앱에 받는 사람 · 제목 · 판/OS 를 채운 새 메일을 연다(파일은 첨부하지 않는다).
+/// 오류 기록 위치는 일반형으로 적는다 — 실제 경로를 넣으면 신고자의 사용자 이름이 실린다.
+fn report_bug(app: &tauri::AppHandle) {
+    use tauri_plugin_dialog::DialogExt;
+    let version = app.package_info().version.to_string();
+    let id = &app.config().identifier;
+    let log = if cfg!(windows) {
+        format!("%LOCALAPPDATA%\\{id}\\logs\\editor.log")
+    } else {
+        format!("~/Library/Logs/{id}/editor.log")
+    };
+    let subject = format!("[서안 {version}] 버그 신고");
+    let body = format!(
+        "어떤 일이 있었나요?\n\n\n어떻게 하면 다시 생기나요?\n\n\n---\n서안 {version} · {} {}\n오류 기록: {log} (첨부해 주시면 도움이 됩니다)\n",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+    let url = format!(
+        "mailto:{BUG_REPORT_TO}?subject={}&body={}",
+        mailto_escape(&subject),
+        mailto_escape(&body)
+    );
+    // 셸을 거치지 않는다(인자 하나로 넘김).
+    let opened = if cfg!(windows) {
+        std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", &url])
+            .status()
+    } else {
+        std::process::Command::new("open").arg(&url).status()
+    };
+    if !opened.is_ok_and(|status| status.success()) {
+        app.dialog()
+            .message(format!(
+                "메일 앱을 열지 못했습니다.\n{BUG_REPORT_TO} 로 보내 주세요."
+            ))
+            .title("서안 버그 신고")
+            .show(|_| {});
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn mailto_escape_keeps_only_unreserved() {
+        assert_eq!(super::mailto_escape("aZ9-_.~"), "aZ9-_.~");
+        assert_eq!(super::mailto_escape("a b&c\n"), "a%20b%26c%0A");
+        assert_eq!(super::mailto_escape("서"), "%EC%84%9C");
+    }
+}
+
 /// Dock · 로그아웃의 「종료」: macOS 가 보내는 Apple Event(aevt/quit)를 받는 처리기를 우리 것으로 바꿔 끼운다
 /// (기본 처리기는 묻지 않고 `terminate:` 로 바로 끝낸다 — 이 판의 tao 는 그 사이에 끼어들 틈을 안 준다).
 #[cfg(target_os = "macos")]
@@ -137,6 +201,16 @@ fn main() {
                     )?,
                     1,
                 )?;
+                first.insert(
+                    &tauri::menu::MenuItem::with_id(
+                        app,
+                        "report-bug",
+                        "버그 신고…",
+                        true,
+                        None::<&str>,
+                    )?,
+                    2,
+                )?;
             }
             #[cfg(target_os = "macos")]
             if let Some(tauri::menu::MenuItemKind::Submenu(app_menu)) = menu.items()?.first() {
@@ -158,6 +232,8 @@ fn main() {
                 quit(app);
             } else if event.id() == "check-update" {
                 tauri::async_runtime::spawn(update::check(app.clone(), true));
+            } else if event.id() == "report-bug" {
+                report_bug(app);
             }
         })
         .invoke_handler(tauri::generate_handler![
