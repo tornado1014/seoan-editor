@@ -990,7 +990,29 @@ pub async fn editor_export_docx(
     app: AppHandle,
     state: State<'_, EditorState>,
 ) -> Result<Option<String>, CoreError> {
-    let Some(path) = pick_save(&app, "편집본.docx", "docx") else {
+    // 기본 이름 · 자리 = 연 HLT 와 같게(이름.docx).
+    let source = state
+        .slot(window.label())
+        .lock()
+        .ok()
+        .and_then(|slot| slot.source.clone());
+    let name = source
+        .as_deref()
+        .and_then(|path| path.file_stem())
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("편집본");
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_file_name(format!("{name}.docx"))
+        .add_filter("docx", &["docx"]);
+    if let Some(folder) = source.as_deref().and_then(|path| path.parent()) {
+        dialog = dialog.set_directory(folder);
+    }
+    let Some(path) = dialog
+        .blocking_save_file()
+        .and_then(|path| path.into_path().ok())
+    else {
         return Ok(None);
     };
     if path.exists() {
