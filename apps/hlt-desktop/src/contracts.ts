@@ -143,6 +143,8 @@ export interface EditorViewDto {
   paragraphs: EditorParagraphDto[];
   paragraph_pages: Record<string, number>;
   preparing: boolean;
+  /** 표 칸 글(칸 id → 글 · 그림 `_`). 모델 준비 전이면 비어 있다(칸마다 `editorCellText`). */
+  cells?: Record<string, string>;
 }
 
 /** 열기: 이 탭에 문서가 있으면 새 탭에서 열고 `null`(이 탭은 그대로). */

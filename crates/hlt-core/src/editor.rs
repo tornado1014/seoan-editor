@@ -766,6 +766,30 @@ impl EditorSession {
         )
     }
 
+    /// 표 칸 글 전부(그림 = `_`) — 쪽 위 칸 편집이 쓴다. 편집 모델이 아직 없으면(열자마자 · 준비 중) 비어 있다
+    /// (그때 화면은 칸 하나씩 `cell_text` 로 묻는다 — 큰 문서를 화면마다 다시 판독하지 않게).
+    pub fn cell_texts(&self) -> std::collections::BTreeMap<String, String> {
+        let Some(model) = &self.versions[self.current].model else {
+            return Default::default();
+        };
+        model
+            .document
+            .cells
+            .iter()
+            .filter(|cell| !cell.merge_continuation)
+            .map(|cell| {
+                let text = cells(&cell.inlines)
+                    .iter()
+                    .map(|value| match value {
+                        Cell::Char(ch, ..) => *ch,
+                        Cell::Image(_) => '_',
+                    })
+                    .collect();
+                (cell.id.clone(), text)
+            })
+            .collect()
+    }
+
     /// 찾기 — 문단 글(그림 = `_`)에서 글·서식 조건이 맞는 구간들(문서 차례).
     pub fn find(&mut self, query: &FindQuery) -> Vec<FindMatch> {
         // 서식 조건은 모델의 서식 구간을 본다 — 뒤에서 만들던 모델을 기다린다.

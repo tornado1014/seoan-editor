@@ -496,6 +496,8 @@ fn place_row(
         } else {
             0.0
         };
+        // 칸 글 안 자리(그림 = 한 글자) — 칸 줄들에 걸쳐 센다(쪽 위 칸 편집의 커서).
+        let mut offset = 0_u32;
         for (k, &line) in lines.iter().enumerate() {
             let range = &document.lines[line].source_range;
             let raw = inflated
@@ -516,6 +518,8 @@ fn place_row(
             };
             let mut x = row.left + f64::from(cell.start) / 20.0 + indent;
             let mut glyphs = Vec::new();
+            let mut stops = Vec::new();
+            let start = offset;
             // 칸 안 그림: 그림 자리표(원문 1바이트)를 만나면 그 자리에 놓는다. 윗변 = 칸 글자 윗변 + CELL_IMAGE_DROP.
             let mut marks: Vec<&crate::ImageOccurrence> = document
                 .images
@@ -529,6 +533,7 @@ fn place_row(
                 let len = if ch.is_ascii() { 1 } else { 2 };
                 if let Some(image) = marks.next_if(|image| image.source_range.start_byte == byte) {
                     let width = (f64::from(image.display_width) - DRAW_INSET_WIDTH).max(0.0);
+                    stops.push(x);
                     images.push(PlannedImage {
                         object_code: image.object_code,
                         x,
@@ -544,6 +549,7 @@ fn place_row(
                 if ch < ' ' {
                     continue;
                 }
+                stops.push(x);
                 let width = if ch.is_ascii() {
                     CELL_SIZE / 2.0
                 } else {
@@ -560,17 +566,18 @@ fn place_row(
                 }
                 x += width;
             }
-            if !glyphs.is_empty() {
-                out.push(PlannedLine {
-                    top: top + shift + k as f64 * CELL_PITCH,
-                    glyphs,
-                    paragraph: Some(document.lines[line].paragraph_id.clone()),
-                    cell: Some(cell.id.clone()),
-                    start: None,
-                    stops: Vec::new(),
-                    underlines: Vec::new(),
-                });
-            }
+            stops.push(x);
+            offset += stops.len() as u32 - 1;
+            // 빈 칸 줄도 내보낸다(글자 없이 자리 하나) — 빈 칸에도 커서를 둔다.
+            out.push(PlannedLine {
+                top: top + shift + k as f64 * CELL_PITCH,
+                glyphs,
+                paragraph: Some(document.lines[line].paragraph_id.clone()),
+                cell: Some(cell.id.clone()),
+                start: Some(start),
+                stops,
+                underlines: Vec::new(),
+            });
         }
     }
     (out, images)

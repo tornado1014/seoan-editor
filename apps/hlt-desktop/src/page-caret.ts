@@ -2,10 +2,17 @@
 // 클릭 → 자리, 자리 → 그릴 곳, 위아래 이동, 그리고 다시 굽기 전에 보이는 임시 고침(글자를 끼우고 뒤 글자를 민다).
 import type { PlannedLineDto, PlannedPageDto } from './contracts';
 
+/** `paragraph` = 본문 문단 id, 또는 표 칸이면 칸 id(`cell:…`) — 칸 줄의 열쇠는 칸이다(`key`). */
 export interface Caret {
   paragraph: string;
   offset: number;
 }
+
+/** 칸 id 인가(본문 문단 id 는 `paragraph:…`). */
+export const isCell = (id: string) => id.startsWith('cell:');
+
+/** 줄의 커서 열쇠: 표 칸 줄은 칸 id, 본문 줄은 문단 id. */
+const key = (line: PlannedLineDto) => line.cell ?? line.paragraph;
 
 export interface CaretLine {
   page: number;
@@ -17,7 +24,7 @@ export function caretLines(pages: Map<number, PlannedPageDto>): CaretLine[] {
   const out: CaretLine[] = [];
   for (const index of [...pages.keys()].sort((a, b) => a - b)) {
     for (const line of pages.get(index)!.lines) {
-      if (line.paragraph && line.start !== undefined && line.stops?.length) out.push({ page: index, line });
+      if (key(line) && line.start !== undefined && line.stops?.length) out.push({ page: index, line });
     }
   }
   return out;
@@ -29,7 +36,7 @@ const size = (line: PlannedLineDto) => line.stops!.length - 1;
 export function lineAt(lines: CaretLine[], caret: Caret): CaretLine | null {
   let fallback: CaretLine | null = null;
   for (const item of lines) {
-    if (item.line.paragraph !== caret.paragraph) continue;
+    if (key(item.line) !== caret.paragraph) continue;
     const start = item.line.start!;
     if (caret.offset >= start && caret.offset < start + size(item.line)) return item;
     if (caret.offset === start + size(item.line)) fallback = item;
@@ -56,17 +63,21 @@ function nearestIndex(line: PlannedLineDto, x: number): number {
 export function hit(lines: CaretLine[], page: number, x: number, y: number): Caret | null {
   let best: CaretLine | null = null;
   let distance = Infinity;
+  let across = Infinity;
   for (const item of lines) {
     if (item.page !== page) continue;
-    const { top } = item.line;
+    const { top, stops } = item.line;
     const d = y >= top - 3 && y <= top + 15 ? 0 : Math.abs(y - (top + 6));
-    if (d < distance) {
+    // 같은 높이 줄이 여럿(표 한 행의 칸들)이면 가로로 가까운 줄 — 줄 글자 범위 밖으로 떨어진 거리.
+    const h = Math.max(0, stops![0] - x, x - stops!.at(-1)!);
+    if (d < distance || (d === distance && h < across)) {
       distance = d;
+      across = h;
       best = item;
     }
   }
   if (!best) return null;
-  return { paragraph: best.line.paragraph!, offset: best.line.start! + nearestIndex(best.line, x) };
+  return { paragraph: key(best.line)!, offset: best.line.start! + nearestIndex(best.line, x) };
 }
 
 /** 위(-1) · 아래(+1) 줄로. `goalX` = 처음 움직이기 시작한 x(짧은 줄을 지나도 열이 유지된다). */
@@ -75,7 +86,7 @@ export function vertical(lines: CaretLine[], caret: Caret, direction: -1 | 1, go
   if (!item) return caret;
   const target = lines[lines.indexOf(item) + direction];
   if (!target) return caret;
-  return { paragraph: target.line.paragraph!, offset: target.line.start! + nearestIndex(target.line, goalX) };
+  return { paragraph: key(target.line)!, offset: target.line.start! + nearestIndex(target.line, goalX) };
 }
 
 /** 줄 처음 · 끝 자리. 끝은 같은 문단 다음 줄이 있으면 그 줄 처음 앞 글자(줄 끝 공백 앞)다. */
@@ -85,7 +96,7 @@ export function lineEdge(lines: CaretLine[], caret: Caret, end: boolean): Caret 
   const start = item.line.start!;
   if (!end) return { ...caret, offset: start };
   const next = lines[lines.indexOf(item) + 1];
-  const continues = next?.line.paragraph === caret.paragraph && size(item.line) > 0;
+  const continues = next !== undefined && key(next.line) === caret.paragraph && size(item.line) > 0;
   return { ...caret, offset: start + size(item.line) - (continues ? 1 : 0) };
 }
 
@@ -98,7 +109,7 @@ export function selectionBoxes(
 ): { page: number; x: number; top: number; width: number }[] {
   const out = [];
   for (const item of lines) {
-    if (item.line.paragraph !== paragraph) continue;
+    if (key(item.line) !== paragraph) continue;
     const start = item.line.start!;
     const from = Math.max(a, start);
     const to = Math.min(b, start + size(item.line));
@@ -144,7 +155,7 @@ export function previewInsert(pages: Map<number, PlannedPageDto>, caret: Caret, 
   line.glyphs.sort((a, b) => a.x - b.x);
   line.stops = [...line.stops!.slice(0, i), ...starts, ...line.stops!.slice(i).map((x) => x + total)];
   for (const other of lines) {
-    if (other.line !== line && other.line.paragraph === caret.paragraph && other.line.start! > line.start!) {
+    if (other.line !== line && key(other.line) === caret.paragraph && other.line.start! > line.start!) {
       other.line.start! += chars.length;
     }
   }
@@ -171,7 +182,7 @@ export function previewDelete(
   for (const glyph of line.glyphs) if (glyph.x >= x1 - 1e-6) glyph.x -= shift;
   line.stops = [...line.stops!.slice(0, a - start), ...line.stops!.slice(b - start).map((x) => x - shift)];
   for (const other of lines) {
-    if (other.line !== line && other.line.paragraph === paragraph && other.line.start! > start) {
+    if (other.line !== line && key(other.line) === paragraph && other.line.start! > start) {
       other.line.start! -= b - a;
     }
   }

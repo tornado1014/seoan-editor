@@ -67,6 +67,7 @@ import {
   previewInsert,
   selectionBoxes,
   vertical,
+  isCell,
 } from './page-caret';
 import {
   type Figure,
@@ -263,6 +264,7 @@ export function mountEditor(root: HTMLElement): void {
   });
 
   function openFigure(kind: 'math' | 'chemistry') {
+    if (inCell(selected)) return;
     if (!selected) {
       say('넣을 자리를 먼저 고르세요 — 쪽에서 문단을 누르면 그 뒤에 넣습니다.');
       return;
@@ -346,7 +348,7 @@ export function mountEditor(root: HTMLElement): void {
 
   /** 식별번호(최종본을 연 문서): 통특기처럼 문단 첫 줄 왼쪽 여백에 [0001](본문 왼쪽 끝 바로 앞에 오른쪽 맞춤). */
   function drawNumbers(host: HTMLElement, page: PlannedPageDto) {
-    const lines = page.lines.filter((line) => line.paragraph && line.stops?.length);
+    const lines = page.lines.filter((line) => line.paragraph && !line.cell && line.stops?.length);
     if (lines.length === 0) return;
     const margin = Math.min(...lines.map((line) => line.stops![0]));
     for (const line of lines) {
@@ -369,7 +371,7 @@ export function mountEditor(root: HTMLElement): void {
   function drawMarks(host: HTMLElement, page: PlannedPageDto) {
     if (!showMarks) return;
     for (const line of page.lines) {
-      if (!line.paragraph || line.start === undefined || !line.stops?.length) continue;
+      if (!line.paragraph || line.cell || line.start === undefined || !line.stops?.length) continue;
       if (line.start + line.stops.length - 1 !== charsOf(line.paragraph).length) continue;
       // ↵ 를 그림으로 그린다(글꼴 글자는 화살표가 글줄 가운데에 떠 있다) — 바닥이 글자 바닥선(마침표 높이)에 닿게.
       const mark = document.createElement('span');
@@ -383,9 +385,14 @@ export function mountEditor(root: HTMLElement): void {
     }
   }
 
+  /** 표 칸 글(쪽 위 칸 편집) — 화면 판마다 바탕이 실어 준다. 모델 준비 전이면 칸을 누를 때 묻는다(`loadCell`). */
+  const cellTexts = new Map<string, string>();
+
   function layout(next: EditorViewDto, keepScroll: boolean) {
     const scroll = pagesRoot.scrollTop;
     view = next;
+    cellTexts.clear();
+    for (const [id, text] of Object.entries(next.cells ?? {})) cellTexts.set(id, text);
     pages = new Map();
     observer.disconnect();
     // 쪽 수가 같으면 쪽 상자를 그대로 두고 새 쪽이 오면 바꿔 그린다(다시 굽고 빈 쪽이 깜박이지 않게).
@@ -545,30 +552,7 @@ export function mountEditor(root: HTMLElement): void {
     panelText.focus();
   }
 
-  // 표 칸은 아직 칸 창으로 고친다(쪽 위 커서는 본문 문단만).
-  pagesRoot.addEventListener('click', (event) => {
-    const line = (event.target as HTMLElement).closest<HTMLElement>('[data-cell]');
-    if (line?.dataset.cell) void openCell(line.dataset.cell, line.dataset.paragraph ?? null);
-  });
 
-  async function openCell(cellId: string, paragraphId: string | null) {
-    if (!view) return;
-    try {
-      setPanel(await editorCellText(cellId));
-    } catch (error) {
-      fail(`칸 읽기`, error);
-      return;
-    }
-    selected = paragraphId;
-    selectedCell = cellId;
-    panel.hidden = false;
-    panelTitle.textContent = `표 칸 ${cellId}`;
-    panelText.contentEditable = view.editable ? 'plaintext-only' : 'false';
-    for (const line of pagesRoot.querySelectorAll<HTMLElement>('.nk-line, .nk-cell')) {
-      line.classList.toggle('selected', line.dataset.cell === cellId);
-    }
-    panelText.focus();
-  }
 
   // ── 쪽 위 편집(WYSIWYG) ────────────────────────────────────
   // 쪽 그림이 곧 편집 화면이다. 커서 · 고른 구간은 쪽 계획의 글자 경계(`stops`)로 그리고, 키 입력은 숨은 입력 칸
@@ -590,8 +574,10 @@ export function mountEditor(root: HTMLElement): void {
   const backlog: (() => void)[] = [];
 
   const paragraphOf = (id: string) => view?.paragraphs.find((item) => item.id === id);
-  const charsOf = (id: string) => Array.from(paragraphOf(id)?.text ?? '');
+  const charsOf = (id: string) => Array.from((isCell(id) ? cellTexts.get(id) : paragraphOf(id)?.text) ?? '');
+  /** 앞뒤 문단(표 칸은 칸 밖으로 안 나간다 — 가장자리에서 멈춘다). */
   const neighbour = (id: string, step: -1 | 1) => {
+    if (isCell(id)) return null;
     const list = view?.paragraphs ?? [];
     return list[list.findIndex((item) => item.id === id) + step]?.id ?? null;
   };
@@ -605,6 +591,9 @@ export function mountEditor(root: HTMLElement): void {
   };
   /** 고른 구간을 문단마다 [id, start, end) 로. */
   const pieces = (selection: { from: Caret; to: Caret }): [string, number, number][] => {
+    if (selection.from.paragraph === selection.to.paragraph) {
+      return [[selection.from.paragraph, selection.from.offset, selection.to.offset]];
+    }
     const list = (view?.paragraphs ?? []).slice(order(selection.from.paragraph), order(selection.to.paragraph) + 1);
     return list.map((item, k) => [
       item.id,
@@ -675,7 +664,9 @@ export function mountEditor(root: HTMLElement): void {
 
   function place(next: Caret, extend: boolean, keepGoal = false) {
     if (dirtyId && dirtyId !== next.paragraph) void commit();
-    if (!extend || !anchor) anchor = next;
+    // 고르기는 한 칸 안에서만(칸과 다른 칸 · 본문을 잇지 않는다).
+    const crosses = anchor && anchor.paragraph !== next.paragraph && (isCell(anchor.paragraph) || isCell(next.paragraph));
+    if (!extend || !anchor || crosses) anchor = next;
     caret = next;
     selected = next.paragraph;
     if (!keepGoal) goalX = null;
@@ -708,7 +699,7 @@ export function mountEditor(root: HTMLElement): void {
       '고치기',
       async () => {
         try {
-          return await editorReplaceText(id, text);
+          return await (isCell(id) ? editorReplaceCellText(id, text) : editorReplaceText(id, text));
         } catch (error) {
           // 바탕이 거절하면(통특기에 없는 글자 등) 화면을 바탕 판으로 되돌린다 — 안 그러면 친 글이 남아 그 문단 고침이 계속 실패한다.
           dirtyId = null;
@@ -751,6 +742,12 @@ export function mountEditor(root: HTMLElement): void {
   }
 
   function setText(id: string, chars: string[]) {
+    if (isCell(id)) {
+      cellTexts.set(id, chars.join(''));
+      dirtyId = id;
+      edits += 1;
+      return;
+    }
     const paragraph = paragraphOf(id);
     if (!paragraph) return;
     paragraph.text = chars.join('');
@@ -794,6 +791,10 @@ export function mountEditor(root: HTMLElement): void {
         if (!span() || range()) insertText(text);
       });
     }
+    if (isCell(caret.paragraph)) {
+      if (!cellTexts.has(caret.paragraph)) return say('표 칸 글을 읽는 중입니다 — 잠시 뒤 다시 치세요.');
+      if (text.includes('\n')) return say('표 칸 글은 한 줄입니다(다음 칸은 Tab).');
+    }
     const selection = range();
     if (selection) deleteRange(...selection);
     const id = caret.paragraph;
@@ -826,6 +827,7 @@ export function mountEditor(root: HTMLElement): void {
   /** 강제 쪽나눔: 고른 것을 지우고 커서 자리에서 나눈다 — 뒤 조각이 새 쪽 첫머리(다시 굽기 한 번 · 되돌리기 한 번). */
   function pageBreak() {
     if (!caret || !canEdit()) return;
+    if (isCell(caret.paragraph)) return say('표 칸에서는 쪽을 나눌 수 없습니다.');
     if (span() && !range()) return say('쪽나눔: 여러 문단을 고른 채로는 못 나눕니다.');
     const selection = range();
     if (selection) deleteRange(...selection);
@@ -899,6 +901,34 @@ export function mountEditor(root: HTMLElement): void {
     }
   }
 
+  /** 문단에만 되는 일(정렬 · 들여쓰기 · 식별항목 · 표 · 수식 넣기)을 표 칸에서 부르면 알리고 멈춘다. */
+  function inCell(id: string | null | undefined): boolean {
+    if (!id || !isCell(id)) return false;
+    say('표 칸에서는 안 됩니다 — 표 밖 문단을 누르세요.');
+    return true;
+  }
+
+  /** 표 칸에서 Tab · Shift+Tab: 쪽 차례로 다음 · 앞 칸 처음. */
+  function nextCell(step: -1 | 1) {
+    if (!caret) return;
+    const cells = [...new Set(caretLines(pages).map((item) => item.line.cell).filter((id): id is string => Boolean(id)))];
+    const target = cells[cells.indexOf(caret.paragraph) + step];
+    if (target) void enterCell({ paragraph: target, offset: 0 }, false);
+  }
+
+  /** 칸에 커서를 둔다 — 칸 글이 아직 없으면(모델 준비 전) 먼저 묻는다. */
+  async function enterCell(next: Caret, extend: boolean) {
+    if (!cellTexts.has(next.paragraph)) {
+      try {
+        cellTexts.set(next.paragraph, await editorCellText(next.paragraph));
+      } catch (error) {
+        fail('칸 읽기', error);
+        return;
+      }
+    }
+    place(next, extend);
+  }
+
   const pointCaret = (event: MouseEvent): Caret | null => {
     const host = (event.target as HTMLElement).closest<HTMLElement>('.nk-page');
     if (!host) return null;
@@ -908,12 +938,11 @@ export function mountEditor(root: HTMLElement): void {
   let dragging = false;
   pagesRoot.addEventListener('mousedown', (event) => {
     if (event.button !== 0 || !view) return;
-    if ((event.target as HTMLElement).closest<HTMLElement>('[data-cell]')) return;
     const next = pointCaret(event);
     if (!next) return;
     event.preventDefault();
     const shift = event.shiftKey;
-    act(() => place(next, shift));
+    act(() => (isCell(next.paragraph) && !cellTexts.has(next.paragraph) ? void enterCell(next, shift) : place(next, shift)));
     input.focus({ preventScroll: true });
     dragging = true;
   });
@@ -977,6 +1006,11 @@ export function mountEditor(root: HTMLElement): void {
     // Tab: 포커스를 옮기지 않고 탭 문자를 넣는다(통특기도 본문에 0x09 를 그대로 둔다).
     if (event.key === 'Tab' && !event.altKey) {
       event.preventDefault();
+      if (isCell(caret.paragraph)) {
+        const shift = event.shiftKey;
+        act(() => nextCell(shift ? -1 : 1));
+        return;
+      }
       act(() => insertText('\t'));
       return;
     }
@@ -1041,7 +1075,7 @@ export function mountEditor(root: HTMLElement): void {
   });
   /** 식별항목 넣기: 번호를 묻고(같은 종류 가장 큰 번호 + 1 을 채워 둔다) 커서 문단 아래(문단 맨 앞이면 위)에 표제 + 빈 문단. */
   async function insertItem(kind: string) {
-    if (!caret || !canEdit()) return;
+    if (!caret || !canEdit() || inCell(caret.paragraph)) return;
     const at = caret;
     const numbers = (view?.paragraphs ?? [])
       .map((paragraph) => paragraph.text.match(/^【(.+) ([A-Za-z0-9]+)】$/))
@@ -1193,6 +1227,7 @@ export function mountEditor(root: HTMLElement): void {
   /** 표 그리기: 줄 · 칸 수를 묻고 커서 문단(없으면 고른 문단) 아래에 새 표 → 첫 칸을 칸 창으로 연다. */
   async function insertTable() {
     const after = caret?.paragraph ?? selected;
+    if (inCell(after)) return;
     if (!after || !canEdit()) {
       say('표: 넣을 자리(문단)를 먼저 누르세요.');
       return;
@@ -1290,6 +1325,7 @@ export function mountEditor(root: HTMLElement): void {
 
   /** 쪽에서 고른 글자에 서식을 건다(고른 것은 그대로 남는다). */
   async function pageFormat(format: CharacterFormatDto, size?: number) {
+    if (caret && isCell(caret.paragraph)) return say('표 칸 글자모양은 아직 바꿀 수 없습니다.');
     const whole = span();
     if (whole && !range() && !size) {
       if (!canEdit()) return;
@@ -1627,6 +1663,7 @@ export function mountEditor(root: HTMLElement): void {
           break;
         }
         const at = caret;
+        if (inCell(at.paragraph)) break;
         const align = action.slice('align-'.length) as Alignment;
         await structural('정렬', async () => ({ next: await editorSetAlignment(at.paragraph, align), caret: at }));
         break;
@@ -1638,6 +1675,7 @@ export function mountEditor(root: HTMLElement): void {
           break;
         }
         const at = caret;
+        if (inCell(at.paragraph)) break;
         const indent = action === 'indent' ? BODY_INDENT : 0;
         await structural(action === 'indent' ? '들여쓰기' : '들여쓰기 취소', async () => ({
           next: await editorSetIndent(at.paragraph, indent),

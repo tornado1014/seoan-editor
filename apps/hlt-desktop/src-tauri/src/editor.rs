@@ -162,6 +162,8 @@ pub struct EditorViewDto {
     pub paragraph_pages: std::collections::BTreeMap<String, usize>,
     /// 편집 모델을 뒤에서 만드는 중(첫 고침이 그만큼 기다린다).
     pub preparing: bool,
+    /// 표 칸 글(칸 id → 글 · 그림 `_`) — 쪽 위 칸 편집. 모델이 아직 없으면 비고 화면이 칸마다 묻는다.
+    pub cells: std::collections::BTreeMap<String, String>,
 }
 
 fn view(session: &mut EditorSession, title: String) -> EditorViewDto {
@@ -174,6 +176,7 @@ fn view(session: &mut EditorSession, title: String) -> EditorViewDto {
         page_width: session.plan.width,
         page_height: session.plan.height,
         paragraphs: session.paragraphs(),
+        cells: session.cell_texts(),
         paragraph_pages: session
             .plan
             .pages

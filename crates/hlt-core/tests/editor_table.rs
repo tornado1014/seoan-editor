@@ -269,3 +269,54 @@ fn clicked_cell_ids_stay_valid_after_table_edits() {
     session.replace_cell_text(&last, "셋째 줄").unwrap();
     assert_eq!(session.cell_text(&last).as_deref(), Some("셋째 줄"));
 }
+
+/// 쪽 위 칸 편집: 칸마다(빈 칸도) 커서 줄이 있고, 칸 줄들의 자리(`start` · `stops`)를 이으면 칸 글과 글자 수가 같다
+/// (줄바꿈된 긴 칸 · 영문 · 공백 포함 — 어긋나면 친 글이 엉뚱한 자리에 들어간다).
+#[test]
+fn cell_lines_carry_caret_stops_that_add_up_to_the_cell_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = session_with_table(&dir);
+    let heading = paragraph_id(&session, "【표 1】");
+    let first = session.insert_table(&heading, 2, 2).unwrap();
+    session
+        .replace_cell_text(
+            &first,
+            "가나다라마바사아자차카타파하 abc def 가나다라마바사",
+        )
+        .unwrap();
+    let cells: Vec<String> = session
+        .plan
+        .pages
+        .iter()
+        .flat_map(|p| &p.cells)
+        .map(|c| c.cell.clone())
+        .collect();
+    assert!(!cells.is_empty());
+    for cell in &cells {
+        let mut lines: Vec<_> = session
+            .plan
+            .pages
+            .iter()
+            .flat_map(|p| &p.lines)
+            .filter(|line| line.cell.as_deref() == Some(cell.as_str()))
+            .collect();
+        assert!(!lines.is_empty(), "칸 {cell} 에 커서 줄이 없다");
+        lines.sort_by_key(|line| line.start.unwrap());
+        let mut next = 0;
+        for line in &lines {
+            assert_eq!(line.start, Some(next), "칸 {cell} 줄 이음");
+            assert!(!line.stops.is_empty());
+            next += line.stops.len() as u32 - 1;
+        }
+        let text = session.cell_text(cell).unwrap();
+        assert_eq!(next as usize, text.chars().count(), "칸 {cell} 글 {text:?}");
+    }
+    let wrapped = session
+        .plan
+        .pages
+        .iter()
+        .flat_map(|p| &p.lines)
+        .filter(|l| l.cell.as_deref() == Some(first.as_str()))
+        .count();
+    assert!(wrapped >= 2, "긴 칸 글은 여러 줄: {wrapped}");
+}

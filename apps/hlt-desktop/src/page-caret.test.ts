@@ -102,3 +102,51 @@ describe('page caret', () => {
     expect(previewDelete(map, 'p', 1, 3)).toBeNull();
   });
 });
+
+// 표 칸 줄: 칸 줄의 `paragraph` 는 표 문단(p)과 같다 — 커서 열쇠는 칸 id 여야 본문 커서와 섞이지 않는다.
+function tablePages(): Map<number, PlannedPageDto> {
+  return new Map([
+    [
+      0,
+      {
+        number: 1,
+        images: [],
+        lines: [
+          { top: 100, paragraph: 'p', start: 0, stops: [50, 62], glyphs: [{ ch: '가', x: 50, size: 12, style: 0, drop: 0 }] },
+          {
+            top: 120,
+            paragraph: 'p',
+            cell: 'cell:0:0:0',
+            start: 0,
+            stops: [52, 61, 70],
+            glyphs: [
+              { ch: '표', x: 52, size: 9, style: 0, drop: 0 },
+              { ch: '칸', x: 61, size: 9, style: 0, drop: 0 },
+            ],
+          },
+          { top: 120, paragraph: 'p', cell: 'cell:0:0:1', start: 0, stops: [150], glyphs: [] },
+        ],
+      },
+    ],
+  ]);
+}
+
+describe('표 칸 커서', () => {
+  it('칸 줄을 누르면 칸 커서(빈 칸 포함)', () => {
+    const lines = caretLines(tablePages());
+    expect(hit(lines, 0, 62, 122)).toEqual({ paragraph: 'cell:0:0:0', offset: 1 });
+    expect(hit(lines, 0, 151, 122)).toEqual({ paragraph: 'cell:0:0:1', offset: 0 });
+  });
+  it('본문 커서는 같은 문단 id 의 칸 줄에 붙지 않는다', () => {
+    const lines = caretLines(tablePages());
+    expect(caretPoint(lines, { paragraph: 'p', offset: 1 })).toEqual({ page: 0, x: 62, top: 100 });
+    expect(caretPoint(lines, { paragraph: 'cell:0:0:0', offset: 2 })).toEqual({ page: 0, x: 70, top: 120 });
+  });
+  it('칸에 친 글은 그 칸 줄에만 끼운다', () => {
+    const map = tablePages();
+    previewInsert(map, { paragraph: 'cell:0:0:1', offset: 0 }, '새');
+    const page = map.get(0)!;
+    expect(page.lines[2].glyphs.map((glyph) => glyph.ch)).toEqual(['새']);
+    expect(page.lines[0].glyphs.map((glyph) => glyph.ch)).toEqual(['가']);
+  });
+});
