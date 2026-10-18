@@ -983,7 +983,7 @@ pub async fn editor_print_pdf(
     Ok(Some(path.display().to_string()))
 }
 
-/// Word(.docx)로 저장 — 표제는 나오고 식별번호는 안 나온다. 있는 파일은 덮지 않는다.
+/// Word(.docx)로 저장 — 표제는 나오고 식별번호는 안 나온다.
 #[tauri::command]
 pub async fn editor_export_docx(
     window: Window,
@@ -1015,16 +1015,15 @@ pub async fn editor_export_docx(
     else {
         return Ok(None);
     };
-    if path.exists() {
-        return Err(CoreError::new(
-            ErrorCode::OutputExists,
-            "export_docx",
-            false,
-        ));
-    }
+    // 덮어쓰기는 저장 대화상자가 이미 물었다. 옆 임시 파일에 다 쓴 뒤 바꿔 끼워 실패해도 옛 파일이 남는다.
     let docx = with_session(&state, &window, |session| session.docx())?;
-    std::fs::write(&path, docx)
-        .map_err(|_| CoreError::new(ErrorCode::IoError, "export_docx", false))?;
+    let temp = path.with_extension("docx.tmp");
+    std::fs::write(&temp, docx)
+        .and_then(|()| std::fs::rename(&temp, &path))
+        .map_err(|_| {
+            let _ = std::fs::remove_file(&temp);
+            CoreError::new(ErrorCode::IoError, "export_docx", false)
+        })?;
     Ok(Some(path.display().to_string()))
 }
 
