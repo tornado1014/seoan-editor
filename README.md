@@ -113,3 +113,9 @@ bash apps/hlt-desktop/scripts/install-mac.sh      # 맥 앱 빌드 · 설치
 **릴리스:** `tauri.conf.json` 의 `version` 을 올리고 같은 판의 태그(`v0.6.4` 등)를 올리면, GitHub Actions(`.github/workflows/release.yml`)가 맥·윈도 설치 파일과 업데이트 파일(`latest.json` · 서명)을 만들어 Release 에 올립니다. 업데이트 서명 키는 저장소 시크릿에만 있습니다.
 
 실제 출원 문서는 저장소에 넣지 않습니다. 실제 문서로 재는 테스트(`#[ignore]`)는 그 자료가 있는 환경에서만 돕니다.
+
+---
+
+## 라이선스
+
+[MIT](LICENSE)
