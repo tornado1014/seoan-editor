@@ -207,3 +207,65 @@ fn table_rows_and_sentinels_take_slots_in_document_order() {
     let sentinels: Vec<u32> = tail.terminal_cells.iter().map(|cell| cell.row).collect();
     assert_eq!(sentinels, [4, 4, 6, 6], "센티널 칸 줄 자리");
 }
+
+/// 표 테두리: 쪽 계획에 칸마다 상자(빈 칸 포함) — 새 빈 표가 화면 · PDF 에서 보이지 않던 것.
+/// 상자 왼쪽 · 폭은 칸 시작 · 폭(twip/20)을 따르고, 같은 행 칸들은 붙어 있다.
+#[test]
+fn page_plan_draws_a_box_for_every_cell() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = session_with_table(&dir);
+    let heading = paragraph_id(&session, "【표 1】");
+    let first = session.insert_table(&heading, 2, 3).unwrap();
+    let boxes: Vec<_> = session
+        .plan
+        .pages
+        .iter()
+        .flat_map(|page| page.cells.iter())
+        .collect();
+    assert_eq!(boxes.len(), 2 * 3 + 2, "새 표 6칸 + 기존 표 2칸: {boxes:?}");
+    let row: Vec<_> = boxes.iter().filter(|b| b.top == boxes[0].top).collect();
+    assert_eq!(row.len(), 3, "새 표 첫 행 3칸");
+    assert_eq!(row[0].cell, first);
+    for pair in row.windows(2) {
+        assert!(
+            (pair[0].x + pair[0].width - pair[1].x).abs() < 0.01,
+            "칸이 붙어 있다: {pair:?}"
+        );
+    }
+    assert!((row[0].width - 2848.0 / 20.0).abs() < 0.01);
+    assert!(boxes.iter().all(|b| b.height > 10.0));
+}
+
+/// 화면이 누른 칸 id(쪽 계획의 칸 상자)는 표를 고친 뒤에도 모델에서 찾아진다 — 「표」 메뉴 · 칸 글 고치기.
+#[test]
+fn clicked_cell_ids_stay_valid_after_table_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = session_with_table(&dir);
+    let heading = paragraph_id(&session, "【표 1】");
+    session.insert_table(&heading, 2, 2).unwrap();
+    let table = session
+        .cell_position(&session.plan.pages[0].cells[0].cell)
+        .unwrap()
+        .table_id;
+    session
+        .table_edit(TableOperation::InsertRow {
+            table_id: table,
+            index: 1,
+        })
+        .unwrap();
+    for cell in session.plan.pages.iter().flat_map(|page| &page.cells) {
+        assert!(
+            session.cell_position(&cell.cell).is_some(),
+            "칸 자리: {}",
+            cell.cell
+        );
+        assert!(
+            session.cell_text(&cell.cell).is_some(),
+            "칸 글: {}",
+            cell.cell
+        );
+    }
+    let last = session.plan.pages[0].cells[4].cell.clone();
+    session.replace_cell_text(&last, "셋째 줄").unwrap();
+    assert_eq!(session.cell_text(&last).as_deref(), Some("셋째 줄"));
+}

@@ -13,6 +13,16 @@ export function renderPage(
   selected: string | null,
 ): DocumentFragment {
   const fragment = document.createDocumentFragment();
+  // 표 칸 테두리 — 글자보다 먼저(아래) 깐다. 빈 칸은 상자만 있으니 상자도 누를 수 있게 칸 id 를 단다.
+  for (const box of page.cells ?? []) {
+    const element = document.createElement('div');
+    element.className = 'nk-cell';
+    element.dataset.cell = box.cell;
+    place(element, box.x, box.top, scale);
+    element.style.width = `${box.width * scale}px`;
+    element.style.height = `${box.height * scale}px`;
+    fragment.append(element);
+  }
   for (const image of page.images) {
     const element = document.createElement('img');
     element.className = 'nk-image';

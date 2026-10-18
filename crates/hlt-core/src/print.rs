@@ -56,6 +56,19 @@ pub struct PlannedPage {
     pub number: usize,
     pub lines: Vec<PlannedLine>,
     pub images: Vec<PlannedImage>,
+    /// 표 칸 테두리 상자(빈 칸 포함) — 화면 · PDF 가 칸 선을 긋는다.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cells: Vec<PlannedCellBox>,
+}
+
+/// 표 칸 하나의 테두리 상자(pt · 쪽 위 기준). 높이 = 그 행 높이(세로 병합 칸도 우선 제 행만).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct PlannedCellBox {
+    pub cell: String,
+    pub x: f64,
+    pub top: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 /// 그림 하나. `object_code` = `InspectDocument::image_payloads` 의 키. 크기 = 표시 크기 − (0.76, 0.68)pt.
@@ -148,6 +161,7 @@ pub fn page_plan(document: &InspectDocument, inflated: &[u8], options: PrintOpti
             number,
             lines: Vec::new(),
             images: Vec::new(),
+            cells: Vec::new(),
         })
         .collect();
     let rows = table_rows(document);
@@ -210,6 +224,16 @@ pub fn page_plan(document: &InspectDocument, inflated: &[u8], options: PrintOpti
                 if let Some(row) = rows.get(&line) {
                     let pad = if row.first { TABLE_PAD_TOP } else { 0.0 };
                     let top = first_top + (used + pad + CELL_TEXT_OFFSET) * PT_PER_UNIT;
+                    // 칸 상자: 행 윗변(첫 행은 위 여백 포함)부터 행 높이만큼 · 왼쪽 = 행 들여쓰기 + 칸 시작.
+                    for (cell, _) in &row.cells {
+                        plan[page - 1].cells.push(PlannedCellBox {
+                            cell: cell.id.clone(),
+                            x: row.border_left + f64::from(cell.start) / 20.0,
+                            top: first_top + used * PT_PER_UNIT,
+                            width: f64::from(cell.width) / 20.0,
+                            height: (pad + ROW_UNIT * row.lines as f64) * PT_PER_UNIT,
+                        });
+                    }
                     let (lines, images) = place_row(row, top, inflated, document);
                     plan[page - 1].lines.extend(lines);
                     plan[page - 1].images.extend(images);
@@ -396,6 +420,8 @@ fn place_line(
 /// 표 행 하나: 칸들(칸 시작 pt · 줄 차례들 · 세로 가운데인가)과 행 줄 수. 행 첫 줄(높이가 실린 줄)로 찾는다.
 struct TableRow<'a> {
     left: f64,
+    /// 칸 테두리 왼쪽 기준(pt) = 쪽 왼쪽 + 행 들여쓰기(칸 안 여백 빼고).
+    border_left: f64,
     cells: Vec<(&'a crate::CellRecord, Vec<usize>)>,
     lines: usize,
     first: bool,
@@ -436,17 +462,16 @@ fn table_rows(document: &InspectDocument) -> BTreeMap<usize, TableRow<'_>> {
             .map(|(_, lines)| lines.len())
             .max()
             .unwrap_or(1);
+        let (indent, margin) = document
+            .cell_text_offsets
+            .get(&(first as u64))
+            .copied()
+            .unwrap_or((0, 0));
         rows.insert(
             first,
             TableRow {
-                left: LEFT
-                    + f64::from(
-                        document
-                            .cell_text_offsets
-                            .get(&(first as u64))
-                            .copied()
-                            .unwrap_or(0),
-                    ) / 20.0,
+                left: LEFT + f64::from(indent.saturating_add(margin)) / 20.0,
+                border_left: LEFT + f64::from(indent) / 20.0,
                 first: cells.iter().all(|(cell, _)| cell.row == 0),
                 cells,
                 lines,

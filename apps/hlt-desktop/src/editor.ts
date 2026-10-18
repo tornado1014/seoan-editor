@@ -547,7 +547,7 @@ export function mountEditor(root: HTMLElement): void {
 
   // 표 칸은 아직 칸 창으로 고친다(쪽 위 커서는 본문 문단만).
   pagesRoot.addEventListener('click', (event) => {
-    const line = (event.target as HTMLElement).closest<HTMLElement>('.nk-line');
+    const line = (event.target as HTMLElement).closest<HTMLElement>('[data-cell]');
     if (line?.dataset.cell) void openCell(line.dataset.cell, line.dataset.paragraph ?? null);
   });
 
@@ -564,7 +564,7 @@ export function mountEditor(root: HTMLElement): void {
     panel.hidden = false;
     panelTitle.textContent = `표 칸 ${cellId}`;
     panelText.contentEditable = view.editable ? 'plaintext-only' : 'false';
-    for (const line of pagesRoot.querySelectorAll<HTMLElement>('.nk-line')) {
+    for (const line of pagesRoot.querySelectorAll<HTMLElement>('.nk-line, .nk-cell')) {
       line.classList.toggle('selected', line.dataset.cell === cellId);
     }
     panelText.focus();
@@ -908,7 +908,7 @@ export function mountEditor(root: HTMLElement): void {
   let dragging = false;
   pagesRoot.addEventListener('mousedown', (event) => {
     if (event.button !== 0 || !view) return;
-    if ((event.target as HTMLElement).closest<HTMLElement>('.nk-line')?.dataset.cell) return;
+    if ((event.target as HTMLElement).closest<HTMLElement>('[data-cell]')) return;
     const next = pointCaret(event);
     if (!next) return;
     event.preventDefault();
@@ -1036,7 +1036,7 @@ export function mountEditor(root: HTMLElement): void {
       compare(at, selection.to) <= 0;
     if (at && !inside) act(() => place(at, false));
     input.focus({ preventScroll: true });
-    const cell = (event.target as HTMLElement).closest<HTMLElement>('.nk-line')?.dataset.cell ?? null;
+    const cell = (event.target as HTMLElement).closest<HTMLElement>('[data-cell]')?.dataset.cell ?? null;
     void contextMenu(cell).catch((error) => fail('메뉴', error));
   });
   /** 식별항목 넣기: 번호를 묻고(같은 종류 가장 큰 번호 + 1 을 채워 둔다) 커서 문단 아래(문단 맨 앞이면 위)에 표제 + 빈 문단. */
@@ -1200,13 +1200,10 @@ export function mountEditor(root: HTMLElement): void {
     const size = await askTableSize();
     input.focus({ preventScroll: true });
     if (!size) return;
-    let cell: string | null = null;
-    await structural('표 넣기', async () => {
-      const result = await editorInsertTable(after, size.rows, size.columns);
-      cell = result.cell;
-      return { next: result.view, caret: null };
-    });
-    if (cell) void openCell(cell, null);
+    await structural('표 넣기', async () => ({
+      next: (await editorInsertTable(after, size.rows, size.columns)).view,
+      caret: null,
+    }));
   }
 
   function askTableSize(): Promise<{ rows: number; columns: number } | null> {

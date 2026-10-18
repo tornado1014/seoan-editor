@@ -1186,7 +1186,7 @@ impl EditorSession {
         rows: u32,
         columns: u32,
     ) -> Result<String, CoreError> {
-        let mut first = None;
+        let mut slot = None;
         self.edit_model(|model| {
             let index = model
                 .paragraphs
@@ -1223,14 +1223,20 @@ impl EditorSession {
                     columns,
                 }],
             )?)?;
-            first = model
+            // 표 목록 자리(문서 차례) — 문단 id 는 고친 뒤 다시 매겨지므로 자리로 찾는다.
+            slot = model
                 .tables
                 .iter()
-                .find(|table| Some(&table.id) == decision.table_id.as_ref())
-                .and_then(|table| table.cell_ids.first().cloned());
+                .position(|table| Some(&table.id) == decision.table_id.as_ref());
             Ok(())
         })?;
-        first.ok_or_else(|| editor_error("table"))
+        // 칸 id 는 고친 뒤 판독 id 로 맞춰진다(`align_cell_ids`) — 맞춘 모델에서 첫 칸을 읽는다.
+        self.versions[self.current]
+            .model
+            .as_ref()
+            .and_then(|model| model.document.tables.get(slot?))
+            .and_then(|table| table.cell_ids.first().cloned())
+            .ok_or_else(|| editor_error("table"))
     }
 
     /// 표 편집(줄 · 칸 넣기/지우기 · 합치기 · 나누기) 하나 — 되돌리기 한 번.
@@ -1540,7 +1546,11 @@ impl EditorSession {
             generated: true,
         });
         self.current = self.versions.len() - 1;
-        self.reload()
+        self.reload()?;
+        if let Some(model) = self.versions[self.current].model.as_mut() {
+            align_cell_ids(&mut model.document, &self.document);
+        }
+        Ok(())
     }
 
     /// 되돌린 뒤 고치면 그 뒤 판들을 버린다 — 저장한 판이 그 가운데 있으면 「저장한 판」도 사라진다.
@@ -1830,6 +1840,60 @@ fn renumber(model: &mut HmlDocument) {
     }
     model.summary.image_count = model.images.len() as u64;
     model.summary.content_paragraph_count = model.paragraphs.len() as u64;
+}
+
+/// 고친 뒤 모델 칸 id 를 다시 읽은 판(쪽 계획 · 화면)의 칸 id(`cell:표:행:차례`)로 맞춘다.
+/// 표 엔진이 만든 칸(`cell:…:new:…`)은 판독 id 와 갈라져, 화면이 누른 칸을 모델에서 못 찾았다(칸 창 · 「표」 메뉴).
+/// 표마다 차례대로 짝짓는다 — 세로 병합 이어짐 칸은 판독에 따로 없어 빼고, 수가 안 맞는 표는 건드리지 않는다.
+fn align_cell_ids(model: &mut HmlDocument, layout: &crate::InspectDocument) {
+    let continuation: std::collections::BTreeSet<String> = model
+        .cells
+        .iter()
+        .filter(|cell| cell.merge_continuation)
+        .map(|cell| cell.id.clone())
+        .collect();
+    let mut rename = std::collections::BTreeMap::new();
+    for (table, read) in model.tables.iter().zip(&layout.tables) {
+        let ours: Vec<&String> = table
+            .cell_ids
+            .iter()
+            .filter(|id| !continuation.contains(*id))
+            .collect();
+        if ours.len() != read.cell_ids.len() {
+            continue;
+        }
+        for (old, new) in ours.into_iter().zip(&read.cell_ids) {
+            if old != new {
+                rename.insert(old.clone(), new.clone());
+            }
+        }
+    }
+    // 이어짐 칸 id 가 새 id 와 겹치면 표 꼬리에서 칸이 둘이 된다 — 꼬리표를 달아 비킨다.
+    let taken: std::collections::BTreeSet<String> = rename.values().cloned().collect();
+    for id in &continuation {
+        if taken.contains(id) {
+            rename.insert(id.clone(), format!("{id}:continued"));
+        }
+    }
+    if rename.is_empty() {
+        return;
+    }
+    let renamed = |id: &mut String| {
+        if let Some(new) = rename.get(id.as_str()) {
+            *id = new.clone();
+        }
+    };
+    for cell in &mut model.cells {
+        renamed(&mut cell.id);
+    }
+    for table in &mut model.tables {
+        table.cell_ids.iter_mut().for_each(renamed);
+    }
+    for image in &mut model.images {
+        if let Some(id) = image.cell_id.as_mut() {
+            renamed(id);
+        }
+    }
 }
 
 /// 표 연산 하나의 결과 — 건너뛰었으면 `table_skipped:<이유>` 오류.

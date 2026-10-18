@@ -133,7 +133,9 @@ pub use package::hlt_from_package;
 pub use paginate::{page_count, page_layout};
 #[cfg(feature = "pdf")]
 pub use pdf::write_pdf;
-pub use print::{PagePlan, PlannedGlyph, PlannedLine, PlannedPage, PrintOptions, page_plan};
+pub use print::{
+    PagePlan, PlannedCellBox, PlannedGlyph, PlannedLine, PlannedPage, PrintOptions, page_plan,
+};
 pub use read_model::{
     CellCharacterFormatSpan, CellFormatInventory, CellFormatRecord, CellRecord, CharacterFormat,
     CharacterFormatSpan, CharacterSizeRun, DocumentTreeKind, FixedBlockFingerprints,

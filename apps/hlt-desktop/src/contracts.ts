@@ -108,10 +108,20 @@ export interface PlannedImageDto {
   height: number;
 }
 
+/** 표 칸 테두리 상자(pt · 빈 칸 포함). */
+export interface PlannedCellBoxDto {
+  cell: string;
+  x: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 export interface PlannedPageDto {
   number: number;
   lines: PlannedLineDto[];
   images: PlannedImageDto[];
+  cells?: PlannedCellBoxDto[];
 }
 
 export interface EditorParagraphDto {

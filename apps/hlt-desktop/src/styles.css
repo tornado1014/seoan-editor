@@ -244,6 +244,8 @@ progress {
 .nk-underline { position: absolute; background: #000; pointer-events: none; }
 .nk-glyph { position: absolute; font-family: BatangChe, "바탕체", AppleMyungjo, serif; line-height: 1; white-space: pre; color: #000; }
 .nk-image { position: absolute; }
+.nk-cell { position: absolute; box-sizing: border-box; border: 1px solid #000; margin: 0 -1px -1px 0; cursor: text; }
+.nk-cell.selected { background: rgba(166, 61, 45, .08); }
 .nk-line { cursor: text; }
 .nk-line.selected .nk-glyph { background: rgba(166, 61, 45, .16); }
 .editor-panel { width: 24rem; border-left: 1px solid var(--rule); padding: .8rem; display: flex; flex-direction: column; gap: .5rem; overflow: auto; }

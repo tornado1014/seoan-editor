@@ -58,9 +58,9 @@ pub struct InspectDocument {
     pub tables: Vec<TableRecord>,
     pub cells: Vec<CellRecord>,
     pub images: Vec<ImageOccurrence>,
-    /// 표 칸 줄 → 칸 글자 왼쪽 여백(twip) = 행 들여쓰기(행 레코드 +32) + 칸 안 여백(칸 레코드 +44).
+    /// 표 칸 줄 → (행 들여쓰기(행 레코드 +32), 칸 안 여백(칸 레코드 +44)) twip. 글자 왼쪽 = 둘의 합 · 칸 테두리 왼쪽 = 행 들여쓰기.
     /// 인쇄 배치(`print.rs`)가 쓴다. 예: 1080+108 · 0+40 · 3+15.
-    pub(crate) cell_text_offsets: BTreeMap<u64, u32>,
+    pub(crate) cell_text_offsets: BTreeMap<u64, (u32, u32)>,
 }
 
 struct RawParagraph {
@@ -487,7 +487,7 @@ fn cell_text_offsets(
     line_base: u64,
     total_lines: u64,
     cell_record: u64,
-) -> Result<BTreeMap<u64, u32>, CoreError> {
+) -> Result<BTreeMap<u64, (u32, u32)>, CoreError> {
     let tail = locate_tail(file, inflated, line_base, total_lines, cell_record)?;
     let cells = read_u32(file, tail.font_table + 1)?;
     let mut rows_start = None;
@@ -517,7 +517,7 @@ fn cell_text_offsets(
         } else {
             0
         };
-        out.insert(line, indent.saturating_add(margin));
+        out.insert(line, (indent, margin));
     }
     Ok(out)
 }

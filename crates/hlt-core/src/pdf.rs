@@ -26,6 +26,8 @@ const BOLD_STROKE: f32 = 0.03;
 /// 밑줄: 기준선 아래 거리 · 두께(글자 크기 배수).
 const UNDERLINE_DROP: f32 = 0.12;
 const UNDERLINE_THICKNESS: f32 = 0.05;
+/// 표 칸 테두리 굵기(pt).
+const CELL_BORDER: f32 = 0.5;
 
 /// `payloads` = `InspectDocument::image_payloads`(그림 본문을 실어 판독한 것). 없는 그림은 건너뛴다.
 pub fn write_pdf(
@@ -108,6 +110,29 @@ pub fn write_pdf(
                     baseline + UNDERLINE_DROP * FONT_SIZE,
                     (*to - *from) as f32,
                     UNDERLINE_THICKNESS * FONT_SIZE,
+                ) else {
+                    continue;
+                };
+                let mut path = PathBuilder::new();
+                path.push_rect(rect);
+                if let Some(path) = path.finish() {
+                    surface.draw_path(&path);
+                }
+            }
+        }
+        // 표 칸 테두리(0.5pt) — 채우지 않고 선만. 쪽의 맨 끝에 그려 위 그리기의 채움 설정을 건드리지 않는다.
+        if !planned.cells.is_empty() {
+            surface.set_fill(None);
+            surface.set_stroke(Some(Stroke {
+                width: CELL_BORDER,
+                ..Stroke::default()
+            }));
+            for cell in &planned.cells {
+                let Some(rect) = Rect::from_xywh(
+                    cell.x as f32,
+                    cell.top as f32,
+                    cell.width as f32,
+                    cell.height as f32,
                 ) else {
                     continue;
                 };
