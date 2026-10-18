@@ -9,6 +9,12 @@ import {
   editorLog,
   editorMergeParagraph,
   editorCellText,
+  editorCellPosition,
+  editorDeleteTable,
+  editorInsertTable,
+  editorTableEdit,
+  type TableOperationDto,
+  type CellPositionDto,
   editorExportAmendment,
   editorExportFin,
   editorFind,
@@ -87,6 +93,7 @@ const ICONS: Record<string, string[]> = {
   left: ['M21 6H3', 'M15 12H3', 'M17 18H3'],
   math: ['M18 7V4H6l6 8-6 8h12v-3'],
   chem: ['M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2', 'M8.5 2h7', 'M7 16h10'],
+  table: ['M3 3h18v18H3z', 'M3 9h18', 'M3 15h18', 'M9 3v18', 'M15 3v18'],
   marks: ['M13 4v16', 'M17 4v16', 'M19 4H9.5a4.5 4.5 0 0 0 0 9H13'],
   print: ['M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2', 'M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6', 'M6 14h12v8H6z'],
   send: ['m22 2-7 20-4-9-9-4Z', 'M22 2 11 13'],
@@ -128,6 +135,7 @@ export function mountEditor(root: HTMLElement): void {
         <div class="tb-group" role="group" aria-label="넣기">
           <button type="button" data-action="math" disabled title="수식 넣기(LaTeX)">${icon('math')}<span>수식</span></button>
           <button type="button" data-action="chem" disabled title="화학식 넣기(구조식)">${icon('chem')}<span>화학식</span></button>
+          <button type="button" data-action="table" disabled title="표 넣기(커서 문단 아래 · 고치기는 표 칸 위 우클릭)">${icon('table')}<span>표</span></button>
           <button type="button" data-action="marks" aria-pressed="false" title="문단부호 보기">${icon('marks')}</button>
         </div>
         <div class="tb-group" role="group" aria-label="내보내기">
@@ -304,7 +312,7 @@ export function mountEditor(root: HTMLElement): void {
     void editorLog(`${label} 실패 ${JSON.stringify(error)}`).catch(() => {});
   };
   const enable = () => {
-    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'fin', 'amend', 'math', 'chem', 'align-justified', 'align-center', 'align-left']) {
+    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'fin', 'amend', 'math', 'chem', 'table', 'align-justified', 'align-center', 'align-left']) {
       q<HTMLButtonElement>(`[data-action="${action}"]`).disabled = !view;
     }
   };
@@ -1022,7 +1030,8 @@ export function mountEditor(root: HTMLElement): void {
       compare(at, selection.to) <= 0;
     if (at && !inside) act(() => place(at, false));
     input.focus({ preventScroll: true });
-    void contextMenu().catch((error) => fail('메뉴', error));
+    const cell = (event.target as HTMLElement).closest<HTMLElement>('.nk-line')?.dataset.cell ?? null;
+    void contextMenu(cell).catch((error) => fail('메뉴', error));
   });
   /** 식별항목 넣기: 번호를 묻고(같은 종류 가장 큰 번호 + 1 을 채워 둔다) 커서 문단 아래(문단 맨 앞이면 위)에 표제 + 빈 문단. */
   async function insertItem(kind: string) {
@@ -1137,9 +1146,97 @@ export function mountEditor(root: HTMLElement): void {
     });
   }
 
-  async function contextMenu() {
+  /** 우클릭한 표 칸 기준의 표 메뉴(줄 · 칸 번호는 0 부터 · 넣기 번호 = 새 줄/칸이 설 자리). */
+  function tableItems(at: CellPositionDto) {
+    const table_id = at.table_id;
+    const item = (text: string, operation: TableOperationDto, enabled = true) => ({
+      text,
+      enabled,
+      action: () => void structural(text, async () => ({ next: await editorTableEdit(operation), caret: null })),
+    });
+    const lastRow = at.row + at.rowspan - 1;
+    const lastColumn = at.column + at.colspan - 1;
+    return [
+      item('위에 줄 넣기', { kind: 'insert_row', table_id, index: at.row }),
+      item('아래에 줄 넣기', { kind: 'insert_row', table_id, index: lastRow + 1 }),
+      item('줄 지우기', { kind: 'delete_row', table_id, index: at.row }, at.rows > 1),
+      { item: 'Separator' as const },
+      item('왼쪽에 칸 넣기', { kind: 'insert_column', table_id, index: at.column }),
+      item('오른쪽에 칸 넣기', { kind: 'insert_column', table_id, index: lastColumn + 1 }),
+      item('칸 지우기', { kind: 'delete_column', table_id, index: at.column }, at.columns > 1),
+      { item: 'Separator' as const },
+      item(
+        '오른쪽 칸과 합치기',
+        { kind: 'merge', table_id, row: at.row, column: at.column, row_end: lastRow, column_end: lastColumn + 1 },
+        lastColumn + 1 < at.columns,
+      ),
+      item(
+        '아래 칸과 합치기',
+        { kind: 'merge', table_id, row: at.row, column: at.column, row_end: lastRow + 1, column_end: lastColumn },
+        lastRow + 1 < at.rows,
+      ),
+      item('합친 칸 나누기', { kind: 'split', table_id, row: at.row, column: at.column }, at.rowspan > 1 || at.colspan > 1),
+      { item: 'Separator' as const },
+      {
+        text: '표 지우기',
+        action: () => void structural('표 지우기', async () => ({ next: await editorDeleteTable(table_id), caret: null })),
+      },
+    ];
+  }
+
+  /** 표 그리기: 줄 · 칸 수를 묻고 커서 문단(없으면 고른 문단) 아래에 새 표 → 첫 칸을 칸 창으로 연다. */
+  async function insertTable() {
+    const after = caret?.paragraph ?? selected;
+    if (!after || !canEdit()) {
+      say('표: 넣을 자리(문단)를 먼저 누르세요.');
+      return;
+    }
+    const size = await askTableSize();
+    input.focus({ preventScroll: true });
+    if (!size) return;
+    let cell: string | null = null;
+    await structural('표 넣기', async () => {
+      const result = await editorInsertTable(after, size.rows, size.columns);
+      cell = result.cell;
+      return { next: result.view, caret: null };
+    });
+    if (cell) void openCell(cell, null);
+  }
+
+  function askTableSize(): Promise<{ rows: number; columns: number } | null> {
+    return new Promise((resolve) => {
+      const box = document.createElement('form');
+      box.className = 'item-ask';
+      box.innerHTML = `<label>줄 <input class="table-rows" type="number" min="1" max="200" value="2" size="4"></label>
+        <label>칸 <input class="table-columns" type="number" min="1" max="40" value="2" size="4"></label>
+        <button type="submit">표 넣기</button><button type="button" class="item-cancel">취소</button><span class="item-hint">줄 1–200 · 칸 1–40</span>`;
+      const rows = box.querySelector<HTMLInputElement>('.table-rows')!;
+      const columns = box.querySelector<HTMLInputElement>('.table-columns')!;
+      const done = (value: { rows: number; columns: number } | null) => {
+        box.remove();
+        resolve(value);
+      };
+      box.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const size = { rows: Number(rows.value), columns: Number(columns.value) };
+        const ok = Number.isInteger(size.rows) && Number.isInteger(size.columns) && size.rows >= 1 && size.rows <= 200 && size.columns >= 1 && size.columns <= 40;
+        if (ok) done(size);
+        else box.querySelector('.item-hint')!.textContent = '줄은 1–200, 칸은 1–40 사이 정수';
+      });
+      box.querySelector('.item-cancel')!.addEventListener('click', () => done(null));
+      box.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') done(null);
+      });
+      root.append(box);
+      rows.focus();
+      rows.select();
+    });
+  }
+
+  async function contextMenu(cell: string | null) {
     const has = span() !== null;
     const editable = Boolean(view?.editable);
+    const at = cell && editable ? await editorCellPosition(cell).catch(() => null) : null;
     const onItem = caret !== null && ITEM_HEADING.test(charsOf(caret.paragraph).join(''));
     const format = (text: string, accelerator: string | undefined, value: CharacterFormatDto) => ({
       text,
@@ -1171,6 +1268,7 @@ export function mountEditor(root: HTMLElement): void {
           items: ITEM_KINDS.map((kind) => ({ text: kind, action: () => void insertItem(kind) })),
         },
         { text: '식별항목 삭제', enabled: editable, action: () => void removeItem() },
+        { text: '표', enabled: at !== null, items: at ? tableItems(at) : [] },
         { item: 'Separator' },
         { text: '찾기·바꾸기', accelerator: 'CmdOrCtrl+F', action: button('find') },
       ],
@@ -1544,6 +1642,9 @@ export function mountEditor(root: HTMLElement): void {
       case 'chem':
         openFigure('chemistry');
         break;
+      case 'table':
+        void insertTable();
+        break;
       case 'find': {
         const bar = q<HTMLElement>('.find-bar');
         bar.hidden = !bar.hidden;
@@ -1667,6 +1768,14 @@ function describe(error: unknown): string {
     const plain: Record<string, string> = {
       heading_paragraph: '표제(【 】) 문단이 걸려 있어 할 수 없습니다',
       table_paragraph: '표 문단이 걸려 있어 할 수 없습니다',
+      'table_skipped:last_row': '표의 마지막 줄은 지울 수 없습니다(표를 없애려면 「표 지우기」)',
+      'table_skipped:last_column': '표의 마지막 칸은 지울 수 없습니다(표를 없애려면 「표 지우기」)',
+      'table_skipped:cell_contains_image': '그림이 든 칸은 지울 수 없습니다',
+      'table_skipped:merge_crosses_boundary': '다른 합친 칸에 걸쳐 있어 합칠 수 없습니다',
+      'table_skipped:not_merged': '합친 칸이 아닙니다',
+      'table_skipped:size_limit': '표는 200줄 · 40칸까지입니다',
+      'table_skipped:index_out_of_range': '표 밖의 자리입니다',
+      'table_skipped:no_change': '바뀐 것이 없습니다',
       amendment_empty: '변경된 내용이 없습니다',
       amendment_needs_final: '최종본(.fin)으로 연 문서에서만 보정서를 만듭니다(열기에서 .fin 을 고르세요)',
       item_missing: '그 번호의 식별항목이 없습니다',

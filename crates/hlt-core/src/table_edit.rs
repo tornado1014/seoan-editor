@@ -313,14 +313,34 @@ fn new_table(
         }
     }
 
-    document.tables.push(crate::HmlTable {
-        id: table_id.clone(),
-        occurrence,
-        paragraph_id: paragraph_id.to_string(),
-        max_columns: columns,
-        row_count: rows,
-        cell_ids: Vec::new(),
-    });
+    // 생성기는 꼬리(줄 · 칸 레코드)를 표 목록 차례로 쓰고 본문은 문단 차례로 쓴다 — 둘이 같아야 한다.
+    // 새 표를 문서 차례 자리에 끼우고 차례 번호를 다시 매긴다(뒤에 붙이면 앞에 넣은 표가 어긋났다).
+    let paragraph_at = |id: &str| {
+        document
+            .paragraphs
+            .iter()
+            .position(|value| value.id == id)
+            .unwrap_or(usize::MAX)
+    };
+    let slot = document
+        .tables
+        .iter()
+        .filter(|table| paragraph_at(&table.paragraph_id) < position)
+        .count();
+    document.tables.insert(
+        slot,
+        crate::HmlTable {
+            id: table_id.clone(),
+            occurrence,
+            paragraph_id: paragraph_id.to_string(),
+            max_columns: columns,
+            row_count: rows,
+            cell_ids: Vec::new(),
+        },
+    );
+    for (index, table) in document.tables.iter_mut().enumerate() {
+        table.occurrence = index as u32;
+    }
     document.paragraphs[position].table_id = Some(table_id.clone());
     grid.store(document, &table_id)?;
 
@@ -333,6 +353,55 @@ fn new_table(
         column_count: columns,
         discarded_text_cells: 0,
     })
+}
+
+/// 칸 하나가 표 격자에서 차지하는 자리(0 부터) — 편집기가 「이 칸 위/아래에 줄 넣기」를 정할 때 쓴다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CellPosition {
+    pub table_id: String,
+    pub row: u32,
+    pub column: u32,
+    pub rowspan: u32,
+    pub colspan: u32,
+    /// 표 전체 줄 · 칸 수.
+    pub rows: u32,
+    pub columns: u32,
+}
+
+/// `cell_id` 의 격자 자리. 병합에 덮인 칸(이어짐 칸)은 `None`.
+pub fn cell_position(
+    document: &HmlDocument,
+    cell_id: &str,
+) -> Result<Option<CellPosition>, CoreError> {
+    let Some(table_id) = document
+        .cells
+        .iter()
+        .find(|cell| cell.id == cell_id)
+        .map(|cell| cell.table_id.clone())
+    else {
+        return Ok(None);
+    };
+    let Some(grid) = Grid::load(document, &table_id)? else {
+        return Ok(None);
+    };
+    for (row, slots) in grid.rows.iter().enumerate() {
+        for (column, slot) in slots.iter().enumerate() {
+            let Some(index) = slot else { continue };
+            let cell = &grid.cells[*index];
+            if cell.id.as_deref() == Some(cell_id) {
+                return Ok(Some(CellPosition {
+                    table_id,
+                    row: row as u32,
+                    column: column as u32,
+                    rowspan: cell.rowspan as u32,
+                    colspan: cell.colspan as u32,
+                    rows: grid.rows.len() as u32,
+                    columns: grid.widths.len() as u32,
+                }));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// 총폭을 열 수로 나누고 나머지는 마지막 열에 준다(통특기 기본값).

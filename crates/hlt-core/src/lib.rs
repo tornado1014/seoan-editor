@@ -147,9 +147,9 @@ pub use save::{
 };
 pub use schema::{PackageReport, SchemaReport, validate_kipo_package, validate_kipo_xml};
 pub use table_edit::{
-    NEW_TABLE_TOTAL_WIDTH, TableEditDecision, TableEditDecisionStatus, TableEditPlan,
+    CellPosition, NEW_TABLE_TOTAL_WIDTH, TableEditDecision, TableEditDecisionStatus, TableEditPlan,
     TableEditRequest, TableEditSaveResult, TableEditSkipReason, TableOperation, apply_table_edits,
-    plan_table_edits,
+    cell_position, plan_table_edits,
 };
 pub use template::{
     DocumentRegions, NewDocument, document_regions, inflate_hlt, new_document_from_template,

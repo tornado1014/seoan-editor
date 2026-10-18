@@ -191,6 +191,27 @@ export const editorRemoveItems = (kind: string, numbers: string[]) =>
 export const editorCellText = (cellId: string) => invoke<string>('editor_cell_text', { cellId });
 export const editorReplaceCellText = (cellId: string, text: string) =>
   invoke<EditorViewDto>('editor_replace_cell_text', { cellId, text });
+/** 표 편집 연산(hlt-core `TableOperation` · 줄 · 칸 번호는 0 부터 · 합치기 끝은 포함). */
+export type TableOperationDto =
+  | { kind: 'insert_row' | 'delete_row' | 'insert_column' | 'delete_column'; table_id: string; index: number }
+  | { kind: 'merge'; table_id: string; row: number; column: number; row_end: number; column_end: number }
+  | { kind: 'split'; table_id: string; row: number; column: number };
+export interface CellPositionDto {
+  table_id: string;
+  row: number;
+  column: number;
+  rowspan: number;
+  colspan: number;
+  rows: number;
+  columns: number;
+}
+export const editorInsertTable = (after: string, rows: number, columns: number) =>
+  invoke<{ view: EditorViewDto; cell: string }>('editor_insert_table', { after, rows, columns });
+export const editorTableEdit = (operation: TableOperationDto) =>
+  invoke<EditorViewDto>('editor_table_edit', { operation });
+export const editorDeleteTable = (tableId: string) => invoke<EditorViewDto>('editor_delete_table', { tableId });
+export const editorCellPosition = (cellId: string) =>
+  invoke<CellPositionDto | null>('editor_cell_position', { cellId });
 export const editorExportFin = () => invoke<string | null>('editor_export_fin');
 export interface AmendItemDto {
   target: string;

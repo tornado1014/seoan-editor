@@ -1148,6 +1148,131 @@ impl EditorSession {
         })
     }
 
+    /// 표 그리기: `after` 문단 뒤에 빈 문단을 넣고 그 자리를 `rows`×`columns` 새 표로(열 폭 = 통특기 새 표 기본).
+    /// 돌려줌 = 새 표 첫 칸 id(화면이 그 칸을 연다).
+    pub fn insert_table(
+        &mut self,
+        after: &str,
+        rows: u32,
+        columns: u32,
+    ) -> Result<String, CoreError> {
+        let mut first = None;
+        self.edit_model(|model| {
+            let index = model
+                .paragraphs
+                .iter()
+                .position(|paragraph| paragraph.id == after)
+                .ok_or_else(|| editor_error("paragraph"))?;
+            let id = (0..)
+                .map(|n| format!("{after}:table{n}"))
+                .find(|id| model.paragraphs.iter().all(|paragraph| &paragraph.id != id))
+                .expect("unbounded");
+            let template = model.paragraphs[index].clone();
+            model.paragraphs.insert(
+                index + 1,
+                crate::HmlParagraph {
+                    id: id.clone(),
+                    marker: None,
+                    page_break: false,
+                    table_id: None,
+                    image_ids: Vec::new(),
+                    inlines: Vec::new(),
+                    source_line_bytes: Vec::new(),
+                    text: String::new(),
+                    tail_text: String::new(),
+                    number: None,
+                    indent_raw: 0,
+                    ..template
+                },
+            );
+            let decision = table_decision(crate::apply_table_edits(
+                model,
+                &[crate::TableOperation::NewTable {
+                    paragraph_id: id,
+                    rows,
+                    columns,
+                }],
+            )?)?;
+            first = model
+                .tables
+                .iter()
+                .find(|table| Some(&table.id) == decision.table_id.as_ref())
+                .and_then(|table| table.cell_ids.first().cloned());
+            Ok(())
+        })?;
+        first.ok_or_else(|| editor_error("table"))
+    }
+
+    /// 표 편집(줄 · 칸 넣기/지우기 · 합치기 · 나누기) 하나 — 되돌리기 한 번.
+    /// 엔진이 건너뛰면(마지막 줄 · 그림 든 칸 …) 고치지 않고 `table_skipped:<이유>` 로 알린다.
+    pub fn table_edit(
+        &mut self,
+        operation: crate::TableOperation,
+    ) -> Result<crate::TableEditDecision, CoreError> {
+        let mut done = None;
+        self.edit_model(|model| {
+            done = Some(table_decision(crate::apply_table_edits(
+                model,
+                &[operation],
+            )?)?);
+            Ok(())
+        })?;
+        Ok(done.expect("edit ran"))
+    }
+
+    /// 표 지우기: 표와 칸을 없애고 그 문단은 표 뒤 글만 남긴 보통 문단으로. 그림 든 칸이 있으면 거부.
+    pub fn delete_table(&mut self, table_id: &str) -> Result<(), CoreError> {
+        self.edit_model(|model| {
+            if model
+                .cells
+                .iter()
+                .any(|cell| cell.table_id == table_id && !cell.image_ids.is_empty())
+            {
+                return Err(editor_error("table_skipped:cell_contains_image"));
+            }
+            let table = model
+                .tables
+                .iter()
+                .position(|table| table.id == table_id)
+                .ok_or_else(|| editor_error("table"))?;
+            model.tables.remove(table);
+            model.cells.retain(|cell| cell.table_id != table_id);
+            let paragraph = model
+                .paragraphs
+                .iter_mut()
+                .find(|paragraph| paragraph.table_id.as_deref() == Some(table_id))
+                .ok_or_else(|| editor_error("paragraph"))?;
+            // ponytail: 표 뒤 글의 글자 서식은 버린다(tail 은 글만 실린다) — 서식이 필요해지면 tail inlines 를 모델에 싣는다.
+            let tail = std::mem::take(&mut paragraph.tail_text);
+            paragraph.table_id = None;
+            paragraph.inlines = if tail.is_empty() {
+                Vec::new()
+            } else {
+                vec![HmlInline::Text {
+                    text: tail.clone(),
+                    formats: Vec::new(),
+                    size: None,
+                }]
+            };
+            paragraph.text = tail;
+            paragraph.source_line_bytes.clear();
+            Ok(())
+        })
+    }
+
+    /// 칸의 표 격자 자리(줄 · 칸 · 병합 크기 · 표 크기).
+    pub fn cell_position(&self, cell_id: &str) -> Option<crate::CellPosition> {
+        let parsed;
+        let model = match &self.versions[self.current].model {
+            Some(model) => &model.document,
+            None => {
+                parsed = hml_document_from_hlt(self.path()).ok()?.0;
+                &parsed
+            }
+        };
+        crate::cell_position(model, cell_id).ok().flatten()
+    }
+
     /// 문단번호 넣기.
     pub fn number_paragraphs(&mut self) -> Result<(), CoreError> {
         let real = self.materialize()?;
@@ -1675,6 +1800,25 @@ fn renumber(model: &mut HmlDocument) {
     }
     model.summary.image_count = model.images.len() as u64;
     model.summary.content_paragraph_count = model.paragraphs.len() as u64;
+}
+
+/// 표 연산 하나의 결과 — 건너뛰었으면 `table_skipped:<이유>` 오류.
+fn table_decision(plan: crate::TableEditPlan) -> Result<crate::TableEditDecision, CoreError> {
+    let decision = plan
+        .decisions
+        .into_iter()
+        .next()
+        .ok_or_else(|| editor_error("table"))?;
+    match decision.reason {
+        Some(reason) if decision.status == crate::TableEditDecisionStatus::Skipped => {
+            let reason = serde_json::to_value(reason)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .unwrap_or_default();
+            Err(editor_error(&format!("table_skipped:{reason}")))
+        }
+        _ => Ok(decision),
+    }
 }
 
 fn find_bit(format: FindFormat) -> u32 {

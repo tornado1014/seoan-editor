@@ -793,6 +793,71 @@ pub async fn editor_replace_cell_text(
     })
 }
 
+#[derive(Serialize)]
+pub struct TableInsertedDto {
+    pub view: EditorViewDto,
+    /// 새 표 첫 칸(화면이 칸 창을 연다).
+    pub cell: String,
+}
+
+/// 표 그리기: `after` 문단 뒤에 `rows`×`columns` 새 표.
+#[tauri::command]
+pub async fn editor_insert_table(
+    window: Window,
+    state: State<'_, EditorState>,
+    after: String,
+    rows: u32,
+    columns: u32,
+) -> Result<TableInsertedDto, CoreError> {
+    with_session(&state, &window, |session| {
+        let cell = session.insert_table(&after, rows, columns)?;
+        let title = title(session);
+        Ok(TableInsertedDto {
+            view: view(session, title),
+            cell,
+        })
+    })
+}
+
+/// 표 편집 하나(줄 · 칸 넣기/지우기 · 합치기 · 나누기).
+#[tauri::command]
+pub async fn editor_table_edit(
+    window: Window,
+    state: State<'_, EditorState>,
+    operation: hlt_core::TableOperation,
+) -> Result<EditorViewDto, CoreError> {
+    with_session(&state, &window, |session| {
+        session.table_edit(operation)?;
+        let title = title(session);
+        Ok(view(session, title))
+    })
+}
+
+#[tauri::command]
+pub async fn editor_delete_table(
+    window: Window,
+    state: State<'_, EditorState>,
+    table_id: String,
+) -> Result<EditorViewDto, CoreError> {
+    with_session(&state, &window, |session| {
+        session.delete_table(&table_id)?;
+        let title = title(session);
+        Ok(view(session, title))
+    })
+}
+
+/// 칸의 표 격자 자리(우클릭 「표」 메뉴가 쓴다 · 병합에 덮인 칸이면 null).
+#[tauri::command]
+pub async fn editor_cell_position(
+    window: Window,
+    state: State<'_, EditorState>,
+    cell_id: String,
+) -> Result<Option<hlt_core::CellPosition>, CoreError> {
+    with_session(&state, &window, |session| {
+        Ok(session.cell_position(&cell_id))
+    })
+}
+
 #[tauri::command]
 pub async fn editor_undo(
     window: Window,

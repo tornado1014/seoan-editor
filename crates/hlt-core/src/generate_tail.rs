@@ -110,6 +110,7 @@ pub fn plan_table_tail(
     let mut cells = Vec::new();
     let mut global_row = 0_u32;
     let mut last_rows: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+    let mut sentinel_rows: BTreeMap<u32, u32> = BTreeMap::new();
     for table in &document.tables {
         let mut row_groups: BTreeMap<u32, Vec<_>> = BTreeMap::new();
         for id in &table.cell_ids {
@@ -189,6 +190,10 @@ pub fn plan_table_tail(
             }
             let _ = row_number;
         }
+        // 이 표의 센티널 줄 자리 — 다음 표의 줄은 그 뒤부터 센다(줄 레코드 배열에 센티널이 표마다 끼기 때문).
+        // 안 세면 둘째 표부터 칸이 앞 표 센티널 자리를 가리켜 통특기에서 여러 줄 표가 흐트러졌다.
+        global_row += 1;
+        sentinel_rows.insert(table.occurrence, global_row);
     }
     // ⛔ **표 뒤에는 센티널 행이 붙는다. PCT 만이 아니다.**
     // 국내 서식에 안 달았더니 통특기가 **마지막 실제 행을 표 종결자로 먹었다**
@@ -208,8 +213,8 @@ pub fn plan_table_tail(
     let mut terminal_cells = Vec::new();
     {
         let mut next = cells.len() as u32 + 1;
-        for (offset, table) in document.tables.iter().enumerate() {
-            let sentinel = global_row + 1 + offset as u32;
+        for table in &document.tables {
+            let sentinel = sentinel_rows[&table.occurrence];
             let indices = last_rows
                 .get(&table.occurrence)
                 .ok_or_else(|| tail_structure("missing_last_row"))?;

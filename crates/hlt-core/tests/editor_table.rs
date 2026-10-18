@@ -1,0 +1,209 @@
+//! 편집기 세션의 표 그리기 · 표 편집 — 합성 문서(표 1개 · 1×2 「A」「B」)를 굽고, 고치고, 저장해 다시 연다.
+
+use std::path::PathBuf;
+
+use hlt_core::{
+    EditorSession, GenerationDialect, TableOperation, WriteOptions, inspect_hml_path,
+    save_generated_hlt_as_new,
+};
+
+fn session_with_table(dir: &tempfile::TempDir) -> EditorSession {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/generate_pct.hml");
+    let document = inspect_hml_path(&fixture).unwrap();
+    let path = dir.path().join("표.HLT");
+    save_generated_hlt_as_new(
+        &fixture,
+        &document,
+        GenerationDialect::PctPatent,
+        &[],
+        &path,
+        WriteOptions::default(),
+    )
+    .unwrap();
+    EditorSession::open(&path).unwrap()
+}
+
+/// 저장해 다시 연 문서의 표마다 (줄, 칸, 칸 글들).
+fn reopen(
+    session: &mut EditorSession,
+    dir: &tempfile::TempDir,
+    name: &str,
+) -> Vec<(u32, u32, Vec<String>)> {
+    let out = dir.path().join(format!("{name}.HLT"));
+    session.save_as(&out).unwrap();
+    let saved = EditorSession::open(&out).unwrap();
+    saved
+        .document
+        .tables
+        .iter()
+        .map(|table| {
+            let texts = table
+                .cell_ids
+                .iter()
+                .map(|id| saved.cell_text(id).unwrap())
+                .collect();
+            (table.row_count, table.column_count, texts)
+        })
+        .collect()
+}
+
+fn paragraph_id(session: &EditorSession, text: &str) -> String {
+    session
+        .paragraphs()
+        .into_iter()
+        .find(|paragraph| paragraph.text.trim() == text)
+        .unwrap()
+        .id
+}
+
+/// 기존 표 **앞**에 새 표를 넣어도 두 표의 칸 글이 제 표에 남는다
+/// (새 표가 표 목록 끝에 붙으면 꼬리 레코드 차례가 문서 차례와 어긋난다).
+#[test]
+fn inserts_a_table_before_an_existing_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = session_with_table(&dir);
+    let heading = paragraph_id(&session, "【표 1】");
+    let first = session.insert_table(&heading, 2, 3).unwrap();
+    session.replace_cell_text(&first, "새 칸").unwrap();
+    let tables = reopen(&mut session, &dir, "새표");
+    assert_eq!(tables.len(), 2, "{tables:?}");
+    assert_eq!((tables[0].0, tables[0].1), (2, 3), "{tables:?}");
+    assert_eq!(tables[0].2[0], "새 칸", "{tables:?}");
+    assert_eq!((tables[1].0, tables[1].1), (1, 2), "{tables:?}");
+    assert_eq!(tables[1].2, ["A", "B"], "{tables:?}");
+}
+
+/// 칸 자리를 알고(화면의 「위/아래에 줄 넣기」), 줄 · 칸을 넣고 지우고, 합치고 나눈다.
+#[test]
+fn edits_rows_columns_and_merges() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = session_with_table(&dir);
+    let table = session.document.tables[0].id.clone();
+    let b = session.document.tables[0].cell_ids[1].clone();
+    let position = session.cell_position(&b).unwrap();
+    assert_eq!((position.row, position.column), (0, 1));
+    assert_eq!((position.rows, position.columns), (1, 2));
+    assert_eq!(position.table_id, table);
+
+    let mut op = |operation| session_op(&mut session, operation);
+    op(TableOperation::InsertRow {
+        table_id: table.clone(),
+        index: 1,
+    });
+    op(TableOperation::InsertColumn {
+        table_id: table.clone(),
+        index: 2,
+    });
+    let tables = reopen(&mut session, &dir, "줄칸");
+    assert_eq!((tables[0].0, tables[0].1), (2, 3), "{tables:?}");
+    assert_eq!(&tables[0].2[..2], ["A", "B"], "{tables:?}");
+
+    let table = session.document.tables[0].id.clone();
+    session_op(
+        &mut session,
+        TableOperation::Merge {
+            table_id: table.clone(),
+            row: 1,
+            column: 0,
+            row_end: 1,
+            column_end: 1,
+        },
+    );
+    session_op(
+        &mut session,
+        TableOperation::DeleteColumn {
+            table_id: table.clone(),
+            index: 2,
+        },
+    );
+    let tables = reopen(&mut session, &dir, "합침");
+    assert_eq!((tables[0].0, tables[0].1), (2, 2), "{tables:?}");
+    assert_eq!(tables[0].2.len(), 3, "합친 아래 줄은 한 칸: {tables:?}");
+
+    // 마지막 줄 하나 남기면 더 못 지운다 — 고치지 않고 이유를 낸다.
+    let table = session.document.tables[0].id.clone();
+    session_op(
+        &mut session,
+        TableOperation::DeleteRow {
+            table_id: table.clone(),
+            index: 1,
+        },
+    );
+    let error = session
+        .table_edit(TableOperation::DeleteRow {
+            table_id: table,
+            index: 0,
+        })
+        .unwrap_err();
+    assert_eq!(
+        error.details.get("reason").map(String::as_str),
+        Some("table_skipped:last_row")
+    );
+}
+
+/// 표 지우기: 표가 없어지고 그 자리는 빈 문단으로 남는다(뒤 글은 그대로).
+#[test]
+fn deletes_a_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = session_with_table(&dir);
+    let table = session.document.tables[0].id.clone();
+    session.delete_table(&table).unwrap();
+    assert!(reopen(&mut session, &dir, "지움").is_empty());
+    assert!(
+        session
+            .paragraphs()
+            .iter()
+            .any(|p| p.text.contains("claim 1."))
+    );
+}
+
+fn session_op(session: &mut EditorSession, operation: TableOperation) {
+    session.table_edit(operation).unwrap();
+}
+
+/// 표가 둘 이상일 때 꼬리 레코드: 표는 문서 차례로, 표마다 「실제 줄들 → 센티널 줄」이 줄 자리를 차례로 차지하고
+/// 칸 레코드의 줄 번호도 그 자리로 센다. (센티널 자리를 안 세면 둘째 표부터 칸이 앞 표 센티널 자리를 가리켜
+/// 통특기에서 여러 줄 표의 첫 줄이 오른쪽으로 밀리고 줄 사이가 벌어졌다.)
+#[test]
+fn table_rows_and_sentinels_take_slots_in_document_order() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/generate_pct.hml");
+    let mut document = inspect_hml_path(&fixture).unwrap();
+    // 기존 표(1×2) **앞**에 3×2 새 표.
+    let mut blank = document.paragraphs[0].clone();
+    blank.id = "paragraph:new".into();
+    blank.text.clear();
+    blank.inlines.clear();
+    blank.marker = None;
+    blank.source_line_bytes.clear();
+    document.paragraphs.insert(1, blank);
+    for section in &mut document.sections {
+        section.paragraph_ids = document
+            .paragraphs
+            .iter()
+            .filter(|p| p.section_id.as_deref() == Some(section.id.as_str()))
+            .map(|p| p.id.clone())
+            .collect();
+    }
+    let plan = hlt_core::apply_table_edits(
+        &mut document,
+        &[TableOperation::NewTable {
+            paragraph_id: "paragraph:new".into(),
+            rows: 3,
+            columns: 2,
+        }],
+    )
+    .unwrap();
+    assert_eq!(plan.ready, 1);
+    assert_eq!(
+        document.tables[0].paragraph_id, "paragraph:new",
+        "표 목록 = 문서 차례"
+    );
+    let body = hlt_core::plan_hlt_body(&document, GenerationDialect::PctPatent).unwrap();
+    let tail =
+        hlt_core::plan_table_tail(&document, GenerationDialect::PctPatent, &body.cell_ranges)
+            .unwrap();
+    let rows: Vec<u32> = tail.cells.iter().map(|cell| cell.row).collect();
+    assert_eq!(rows, [1, 1, 2, 2, 3, 3, 5, 5], "실제 칸 줄 자리");
+    let sentinels: Vec<u32> = tail.terminal_cells.iter().map(|cell| cell.row).collect();
+    assert_eq!(sentinels, [4, 4, 6, 6], "센티널 칸 줄 자리");
+}
