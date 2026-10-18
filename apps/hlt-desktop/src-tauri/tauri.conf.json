@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "서안 통특기",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "identifier": "io.github.tornado1014.seoan",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -22,7 +22,20 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self' 'unsafe-eval' 'wasm-unsafe-eval' 'sha256-jhO2i0AayyuJ0I2VxRMsXvuCY3K/4xuuI0GM4h1Z3aE=' 'sha256-0lJO6JbyQtOXsJmBRBxMmCetklbHFwPF4FS/BW8VwTs=' 'sha256-lzmKdjJ/YIWfqu0H9x/HHhm2+pQx7PzmquvF1vVvM8U=' 'sha256-BNY2DgU98yNOkmdt0BPaB/dJflUm0n2I0LmPbSjea20=' 'sha256-OCj7bXy2tHejGsUXGHI6A+yDKre1gNeFOVSy/8J70Lo=' 'sha256-+Bi2zWVjhYXWz5gfBaL7cZXq57hm5LUr8iwzOmhEU1k=' 'sha256-YOJQeaj+QOw8rZ8T1o7+VaszmAMFlSsN2VuyfrSMveY=' 'sha256-fVLWgJElODefv2nlJuoTYsI4YH/H04+OqZSP8okI6HI=' 'sha256-dkTq+s63lUfcMMgNzO7Yby/UYZYxWtISeji1HtV5KUc=' 'sha256-uw+TG+hd+Gbc5EeCAgrXgTpJCD53c8iJbdK+c4oac/E=' 'sha256-wG9SHL+aai4/RsfTHqk/uB7sJbisuKVsJnA96LWqnGo=' 'sha256-7qbAcZPCR+dRf9P+fVDppvuHtKauANL6vRms7BkOb5w=' 'sha256-l6E03I/a7OgG1/Qpy69h9ldHgHXQL1ZWK8QCRYPLLYw=' 'sha256-uZtM8lOpzv7Gus1/ORg16dIhvaWLXBijWU6IVbQcfsw=' 'sha256-lpwV9mvZhy/9Ovs/0tNElWpuFlKjg/thHMVMHDhv5C8=' 'sha256-cfF5lhIwND1KR9XRBajG3eBwyABERrXuZhymstBFkPI=' 'sha256-X9x+NiSu4oIPJmR5PL42Wva7mFw1TzyG79K9a/Kbw50=' 'sha256-ebxPGcHCZuYzol2y5PA5ahnH/mHMS4C5ulYN+A5KCLA=' 'sha256-tBmF1p2AZTynm9cqBz9L4JT9SICmzQZRwLB3Qvr2cRk=' 'sha256-AFv1SOFr/+aYZQggDV64QebG9Xfw9pBmzTA4zNHsq4A=' 'sha256-AxEBjBHzneWHtZr4EGWYYCTvId/MObzpR8YR3N40PzY=' 'sha256-bFViX2GT0sbO7DHmWC/yWEKPrFM9o2gxE7UGqzDDG+Y=' 'sha256-QgPx/J+ML4C7cAqey7z5FwAMeVTTUO5QlHO5oisgFDI=' 'sha256-lGaHlrrZ3ci6Z2zMnU/bLP+aFrAO0oG+r2G98zV3BAU=' 'sha256-5U7udeZJLXrgyGEl12PmsplynusBv5gnAciCEd+mLCQ=' 'sha256-GIczCUA1r3NjSoac000Bxi4mFMOmTYdrVCwr0YpNiwA='",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' blob: data:",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost",
+        "object-src": "'none'",
+        "base-uri": "'self'",
+        "form-action": "'none'"
+      },
+      "dangerousDisableAssetCspModification": [
+        "style-src"
+      ],
       "capabilities": [
         "default"
       ]
