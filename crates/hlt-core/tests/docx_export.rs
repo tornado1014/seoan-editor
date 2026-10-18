@@ -88,6 +88,17 @@ fn exported_word_reads_back_as_the_same_document() {
     let out = dir.path().join("내보냄.docx");
     std::fs::write(&out, &bytes).unwrap();
     let word = inspect_docx_path(&out).unwrap().document;
+    // 줄 간격 = 배수 2.8(240 × 2.8).
+    let mut styles = String::new();
+    std::io::Read::read_to_string(
+        &mut zip::ZipArchive::new(std::io::Cursor::new(&bytes))
+            .unwrap()
+            .by_name("word/styles.xml")
+            .unwrap(),
+        &mut styles,
+    )
+    .unwrap();
+    assert!(styles.contains(r#"<w:spacing w:after="0" w:line="672" w:lineRule="auto"/>"#));
 
     let texts = |d: &HmlDocument| {
         d.paragraphs
