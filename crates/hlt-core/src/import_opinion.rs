@@ -32,7 +32,34 @@ pub(crate) fn is_opinion_xml(xml: &str) -> bool {
 
 /// 의견서 XML 을 새 `.HLT` 로 굽는다(`work` = 틀을 둘 빈 폴더).
 pub(crate) fn hlt_from_opinion_xml(xml: &str, work: &Path, output: &Path) -> Result<(), CoreError> {
-    let paragraphs = parse_opinion(xml)?;
+    hlt_from_paragraphs(&parse_opinion(xml)?, work, output)
+}
+
+/// 글로 새 의견서: 줄 하나 = 【의견내용】 아래 본문 문단 하나(빈 줄 = 빈 문단 · 서식 없음).
+pub fn opinion_hlt_from_text(text: &str, output: &Path) -> Result<(), CoreError> {
+    let paragraphs: Vec<OpinionParagraph> = text
+        .lines()
+        .map(|line| OpinionParagraph {
+            runs: if line.is_empty() {
+                Vec::new()
+            } else {
+                vec![(line.to_string(), Vec::new())]
+            },
+            ..OpinionParagraph::default()
+        })
+        .collect();
+    if paragraphs.is_empty() {
+        return crate::save_new_opinion_as_new(output, WriteOptions::default()).map(|_| ());
+    }
+    let work = tempfile::tempdir().map_err(|_| import_error("work"))?;
+    hlt_from_paragraphs(&paragraphs, work.path(), output)
+}
+
+fn hlt_from_paragraphs(
+    paragraphs: &[OpinionParagraph],
+    work: &Path,
+    output: &Path,
+) -> Result<(), CoreError> {
     let frame = work.join("opinion-frame.HLT");
     crate::save_new_opinion_as_new(&frame, WriteOptions::default())?;
     let mut session = EditorSession::open(&frame)?;
@@ -78,7 +105,7 @@ pub(crate) fn hlt_from_opinion_xml(xml: &str, work: &Path, output: &Path) -> Res
         CharacterFormat::Subscript,
     ] {
         let mut spans = Vec::new();
-        for (id, paragraph) in ids.iter().zip(&paragraphs) {
+        for (id, paragraph) in ids.iter().zip(paragraphs) {
             let mut at = 0;
             for (text, formats) in &paragraph.runs {
                 let length = text.chars().count();
@@ -96,7 +123,7 @@ pub(crate) fn hlt_from_opinion_xml(xml: &str, work: &Path, output: &Path) -> Res
     let to_mm = |raw: i32| (f64::from(raw) * 25.4 / 1440.0).round() as u32;
     let shapes: Vec<(String, String, i32)> = ids
         .iter()
-        .zip(&paragraphs)
+        .zip(paragraphs)
         .filter(|(_, paragraph)| !paragraph.runs.is_empty())
         .map(|(id, paragraph)| {
             let align = match paragraph.align.as_deref() {

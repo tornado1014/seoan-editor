@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use std::{
     fs::File,
     io::{self, Read, Write},
@@ -233,6 +235,25 @@ where
     }
     if args.first().is_some_and(|value| value == "print-pdf") {
         return run_print_pdf(&args, stdout);
+    }
+    if args.first().is_some_and(|value| value == "export-docx") {
+        return run_file_command(&args, stdout, |input, output| {
+            let bytes = hlt_core::EditorSession::open(input)?.docx()?;
+            std::fs::write(output, &bytes)
+                .map_err(|_| CoreError::new(ErrorCode::IoError, "write", false))?;
+            Ok(serde_json::json!({ "bytes": bytes.len() }))
+        });
+    }
+    if args.first().is_some_and(|value| value == "open-package") {
+        return run_file_command(&args, stdout, |input, output| {
+            let work = tempfile::tempdir()
+                .map_err(|_| CoreError::new(ErrorCode::IoError, "work", false))?;
+            let numbers = hlt_core::hlt_from_package(input, work.path(), output)?;
+            Ok(serde_json::json!({ "paragraph_numbers": numbers }))
+        });
+    }
+    if args.first().is_some_and(|value| value == "new-opinion") {
+        return run_new_opinion(&args, stdout);
     }
     if args
         .first()
@@ -1225,6 +1246,72 @@ fn run_repack(args: &[String], stdout: &mut impl Write) -> u8 {
             EXIT_VERIFY_FAILED
         }
     }
+}
+
+/// `<명령> <input> <absent-output>` 꼴: 출력이 있으면 거부하고 `work` 결과를 봉투에 싣는다.
+/// `export-docx <in.HLT> <out.docx>` · `open-package <in.hlz|in.fin> <out.HLT>`.
+fn run_file_command(
+    args: &[String],
+    stdout: &mut impl Write,
+    work: impl FnOnce(&Path, &Path) -> Result<serde_json::Value, CoreError>,
+) -> u8 {
+    let command = args[0].as_str();
+    let [_, input, output] = args else {
+        let error = CoreError::new(ErrorCode::VerificationFailed, "usage", false);
+        let _ = write_envelope(stdout, &error_envelope::<serde_json::Value>(command, error));
+        return EXIT_USAGE;
+    };
+    let result = if Path::new(output).exists() {
+        Err(CoreError::new(ErrorCode::OutputExists, "output", false))
+    } else {
+        work(Path::new(input), Path::new(output))
+    };
+    finish_value(command, result, stdout)
+}
+
+/// 새 의견서: `new-opinion <absent-output.HLT> [--body <body.txt>]` — 본문 줄 하나 = 문단 하나.
+fn run_new_opinion(args: &[String], stdout: &mut impl Write) -> u8 {
+    let (output, body) = match args {
+        [_, output] => (output, None),
+        [_, output, flag, body] if flag == "--body" => (output, Some(body)),
+        _ => {
+            let error = CoreError::new(ErrorCode::VerificationFailed, "usage", false);
+            let _ = write_envelope(
+                stdout,
+                &error_envelope::<serde_json::Value>("new-opinion", error),
+            );
+            return EXIT_USAGE;
+        }
+    };
+    let result = (|| {
+        if Path::new(output).exists() {
+            return Err(CoreError::new(ErrorCode::OutputExists, "output", false));
+        }
+        let text = match body {
+            Some(body) => std::fs::read_to_string(body)
+                .map_err(|_| CoreError::new(ErrorCode::IoError, "body", false))?,
+            None => String::new(),
+        };
+        hlt_core::opinion_hlt_from_text(&text, Path::new(output))?;
+        Ok(serde_json::json!({ "paragraphs": text.lines().count() }))
+    })();
+    finish_value("new-opinion", result, stdout)
+}
+
+fn finish_value(
+    command: &str,
+    result: Result<serde_json::Value, CoreError>,
+    stdout: &mut impl Write,
+) -> u8 {
+    let failed = result.is_err();
+    let envelope = match result {
+        Ok(result) => success_envelope(command, result),
+        Err(error) => error_envelope(command, error),
+    };
+    if write_envelope(stdout, &envelope).is_err() || failed {
+        return EXIT_VERIFY_FAILED;
+    }
+    EXIT_OK
 }
 
 /// 인쇄: `print-pdf <in.HLT> <out.pdf> --font <ttf/ttc> [--font-index N] [--no-page-numbers]`.

@@ -142,6 +142,7 @@
 |---|---|
 | `crates/hlt-core` | `.HLT` 판독 · 생성 · 편집 세션 · KIPO XML/제출파일/보정서 · 쪽 배치 · PDF (Rust) |
 | `crates/hlt-cli` | 같은 기능의 명령줄(JSON 계약 `contracts/*.schema.json`) |
+| `skills/seoan` | 에이전트 하네스용 스킬(`hlt-cli` 레시피: Word 저장 · 의견서 · 보정서 · 고치기) |
 | `apps/hlt-desktop` | Tauri 데스크톱 앱(맥 · 윈도) |
 
 ```sh
@@ -149,6 +150,8 @@ cargo test -p hlt-core -p hlt-cli                 # 합성 자료로 도는 테�
 cd apps/hlt-desktop && npm ci && npx vitest run   # 화면
 bash apps/hlt-desktop/scripts/install-mac.sh      # 맥 앱 빌드 · 설치
 ```
+
+하네스에서 쓰기: `cargo install --path crates/hlt-cli` 뒤 `skills/seoan` 을 하네스의 스킬 폴더에 링크한다.
 
 **릴리스:** `tauri.conf.json` 의 `version` 을 올리고 같은 판의 태그(`v0.6.4` 등)를 올리면, GitHub Actions(`.github/workflows/release.yml`)가 맥·윈도 설치 파일과 업데이트 파일(`latest.json` · 서명)을 만들어 Release 에 올립니다. 업데이트 서명 키는 저장소 시크릿에만 있습니다.
 

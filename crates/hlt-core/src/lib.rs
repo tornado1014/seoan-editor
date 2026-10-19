@@ -128,6 +128,7 @@ pub use hml::{
     HmlCell, HmlDocument, HmlImage, HmlInline, HmlParagraph, HmlSection, HmlSummary, HmlTable,
     hml_semantic_sha256, inspect_hml_path,
 };
+pub use import_opinion::opinion_hlt_from_text;
 pub use inspect::{HltImagePayload, InspectDocument, InspectOptions, inspect_path};
 pub use kipo_xml::{KipoXmlDialect, KipoXmlDocument, inspect_kipo_xml_path};
 pub use numbering::{number_paragraphs_as_new, plan_paragraph_numbers};
