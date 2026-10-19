@@ -18,7 +18,7 @@ def paragraphs(hlt):
     while cursor is not None:
         out = subprocess.run(
             ["hlt-cli", "inspect", hlt, "--kind", "paragraphs", "--limit", "500", "--cursor", cursor],
-            capture_output=True, text=True, check=False,
+            capture_output=True, encoding="utf-8", check=False,
         )
         value = json.loads(out.stdout)
         if not value["ok"]:
@@ -45,6 +45,8 @@ def main():
             "expected_text_sha256": hashlib.sha256(current.encode("utf-8")).hexdigest().upper(),
             "replacement": edit["replacement"],
         })
+    # hlt-cli 는 UTF-8 로 읽는다 — 윈도 콘솔 기본(cp949)으로 쓰면 한글이 깨진다.
+    sys.stdout.reconfigure(encoding="utf-8")
     json.dump({"expected_revision": str(revision), "operations": operations}, sys.stdout, ensure_ascii=False)
 
 
