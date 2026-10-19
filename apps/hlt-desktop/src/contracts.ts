@@ -194,6 +194,8 @@ export const editorInsertFigure = (
   widthPt: number,
   heightPt: number,
 ) => invoke<EditorViewDto>('editor_insert_figure', { after, kind, pngBase64, widthPt, heightPt });
+/** 그림 파일(JPG · TIFF) 골라 `after` 문단 뒤에 넣기 · 취소하면 그대로인 화면. */
+export const editorInsertPicture = (after: string) => invoke<EditorViewDto>('editor_insert_picture', { after });
 export type CharacterFormatDto = 'bold' | 'italic' | 'underline' | 'superscript' | 'subscript';
 export const editorToggleFormat = (paragraphId: string, start: number, end: number, format: CharacterFormatDto) =>
   invoke<EditorViewDto>('editor_toggle_format', { paragraphId, start, end, format });

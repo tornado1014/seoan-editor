@@ -126,6 +126,54 @@ fn inserted_figure_heading_and_image_are_not_indented() {
     }
 }
 
+/// 그림 파일 넣기(JPG · TIFF): 표제 없이 그림 문단 하나 · 쪽보다 큰 그림은 비율대로 줄인다 · 그림이 아니면 거부.
+#[test]
+fn inserts_jpeg_and_tiff_pictures_without_heading() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("의견서.HLT");
+    hlt_core::save_new_opinion_as_new(&path, hlt_core::WriteOptions::default()).unwrap();
+    let mut session = EditorSession::open(&path).unwrap();
+    let body = session.paragraphs()[1].id.clone();
+    let before = session.paragraphs().len();
+    let encode = |width, format| {
+        let mut bytes = Vec::new();
+        image::RgbImage::from_pixel(width, 300, image::Rgb([0, 0, 0]))
+            .write_to(&mut std::io::Cursor::new(&mut bytes), format)
+            .unwrap();
+        bytes
+    };
+    // TIFF 가 먼저 들어가고 JPG 가 그 앞(같은 문단 뒤)으로 온다.
+    session
+        .insert_picture(&body, &encode(200, image::ImageFormat::Tiff))
+        .unwrap();
+    session
+        .insert_picture(&body, &encode(1200, image::ImageFormat::Jpeg))
+        .unwrap();
+    assert!(session.insert_picture(&body, b"not a picture").is_err());
+    let out = temp.path().join("그림.HLT");
+    session.save_as(&out).unwrap();
+    let saved = EditorSession::open(&out).unwrap().paragraphs();
+    assert_eq!(saved.len(), before + 2, "표제 없이 그림 문단 둘");
+    assert!(
+        !saved
+            .iter()
+            .any(|p| p.text.contains('【') && p.text != "【의견내용】")
+    );
+    let (document, _) = hlt_core::hml_document_from_hlt(&out).unwrap();
+    let sizes: Vec<_> = document
+        .paragraphs
+        .iter()
+        .filter(|p| !p.image_ids.is_empty())
+        .map(|p| {
+            let id = p.image_ids.first().expect("그림 문단");
+            let image = document.images.iter().find(|i| &i.id == id).unwrap();
+            (image.secondary_width, image.secondary_height)
+        })
+        .collect();
+    // 1200×300 화소 = 900×225pt → 가로 450pt 로 반. 200×300 = 150×225pt 그대로.
+    assert_eq!(sizes, [(Some(450), Some(113)), (Some(150), Some(225))]);
+}
+
 /// 들여쓰기 · 들여쓰기 취소(통특기처럼 누를 때마다 더하지 않고 정해진 값으로 켜고 0 으로 끈다).
 #[test]
 fn sets_and_clears_first_line_indent() {

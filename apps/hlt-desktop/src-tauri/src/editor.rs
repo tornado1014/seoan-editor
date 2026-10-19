@@ -718,6 +718,45 @@ pub async fn editor_insert_figure(
     })
 }
 
+/// 그림 파일 넣기: JPG · TIFF 를 골라 `after` 문단 뒤에 그림 문단으로. 고르기를 취소하면 문서는 그대로.
+#[tauri::command]
+pub async fn editor_insert_picture(
+    window: Window,
+    app: AppHandle,
+    state: State<'_, EditorState>,
+    after: String,
+) -> Result<EditorViewDto, CoreError> {
+    let source = state
+        .slot(window.label())
+        .lock()
+        .ok()
+        .and_then(|slot| slot.source.clone());
+    let mut dialog = app
+        .dialog()
+        .file()
+        .add_filter("그림(JPG · TIFF)", &["jpg", "jpeg", "tif", "tiff"]);
+    if let Some(folder) = source.as_deref().and_then(|path| path.parent()) {
+        dialog = dialog.set_directory(folder);
+    }
+    let bytes = match dialog
+        .blocking_pick_file()
+        .and_then(|path| path.into_path().ok())
+    {
+        Some(path) => Some(
+            std::fs::read(&path)
+                .map_err(|_| CoreError::new(ErrorCode::IoError, "picture", false))?,
+        ),
+        None => None,
+    };
+    with_session(&state, &window, |session| {
+        if let Some(bytes) = &bytes {
+            session.insert_picture(&after, bytes)?;
+        }
+        let title = title(session);
+        Ok(view(session, title))
+    })
+}
+
 /// 글자 서식 켜기/끄기(문단 글 [start, end) · 그림 = 한 칸).
 #[tauri::command]
 pub async fn editor_toggle_format(

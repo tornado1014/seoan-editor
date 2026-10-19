@@ -33,6 +33,7 @@ import {
   editorNewOpinion,
   editorNewTab,
   editorInsertItem,
+  editorInsertPicture,
   editorRemoveItems,
   editorClose,
   editorOpenPending,
@@ -1097,6 +1098,13 @@ export function mountEditor(root: HTMLElement): void {
     }
   }
 
+  /** 그림 파일(JPG · TIFF)을 골라 커서 문단 뒤에 그림 문단으로 넣는다 · 커서는 그대로. */
+  async function insertPicture() {
+    if (!caret || !canEdit() || inCell(caret.paragraph)) return;
+    const at = caret.paragraph;
+    await structural('이미지 넣기', async () => ({ next: await editorInsertPicture(at), caret: null }));
+  }
+
   /** 식별항목 삭제(통특기 「단락삭제」 창): 종류 + 번호(쉼표 · 범위)를 묻고 지운다. 커서가 표제 위면 그 종류 · 번호를 채워 둔다.
    *  【청구항 N】은 내용 문단까지 지운다(통특기와 같다) · 뒤 번호는 그대로. 커서는 지운 첫 표제의 앞 문단 끝으로. */
   async function removeItem() {
@@ -1311,6 +1319,11 @@ export function mountEditor(root: HTMLElement): void {
           items: ITEM_KINDS.map((kind) => ({ text: kind, action: () => void insertItem(kind) })),
         },
         { text: '식별항목 삭제', enabled: editable, action: () => void removeItem() },
+        {
+          text: '이미지 파일 선택하기',
+          enabled: caret !== null && editable && !inCell(caret.paragraph),
+          action: () => void insertPicture(),
+        },
         { text: '표', enabled: at !== null, items: at ? tableItems(at) : [] },
         { item: 'Separator' },
         { text: '찾기·바꾸기', accelerator: 'CmdOrCtrl+F', action: button('find') },

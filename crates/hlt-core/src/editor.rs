@@ -1101,18 +1101,54 @@ impl EditorSession {
     ) -> Result<(), CoreError> {
         image::load_from_memory_with_format(&png, image::ImageFormat::Png)
             .map_err(|_| editor_error("figure_png"))?;
+        self.place_figure(after, Some(kind.label()), png, width_pt, height_pt)
+    }
+
+    /// 그림 파일 넣기(JPG · TIFF · PNG …): `after` 문단 뒤에 그림 문단 하나(표제 없음).
+    /// 크기 = 96dpi 화소 → pt, 쪽보다 크면 비율 그대로 줄인다.
+    pub fn insert_picture(&mut self, after: &str, bytes: &[u8]) -> Result<(), CoreError> {
+        let picture = image::load_from_memory(bytes).map_err(|_| editor_error("figure_image"))?;
+        let (width, height) = (
+            picture.width() as f64 * 0.75,
+            picture.height() as f64 * 0.75,
+        );
+        // ponytail: 쪽 글 상자 = 가로 450 · 세로 650pt 로 어림 — 용지 · 여백을 읽게 되면 그 값으로.
+        let scale = (450.0 / width).min(650.0 / height).min(1.0);
+        let mut png = Vec::new();
+        picture
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .map_err(|_| editor_error("figure_image"))?;
+        self.place_figure(
+            after,
+            None,
+            png,
+            (width * scale).max(1.0),
+            (height * scale).max(1.0),
+        )
+    }
+
+    /// 그림 문단 넣기 · `label` 이 있으면 그 표제를 앞에 달고 뒤 같은 표제 번호를 민다.
+    fn place_figure(
+        &mut self,
+        after: &str,
+        label: Option<&str>,
+        png: Vec<u8>,
+        width_pt: f64,
+        height_pt: f64,
+    ) -> Result<(), CoreError> {
         if !(1.0..=500.0).contains(&width_pt) || !(1.0..=700.0).contains(&height_pt) {
             return Err(editor_error("figure_size"));
         }
-        let label = kind.label();
         self.edit_model_with(|model, payloads| {
             let index = model
                 .paragraphs
                 .iter()
                 .position(|paragraph| paragraph.id == after)
                 .ok_or_else(|| editor_error("paragraph"))?;
-            let prefix = format!("【{label} ");
+            // 표제 없는 그림은 뒤 번호를 밀지 않는다.
+            let prefix = format!("【{} ", label.unwrap_or_default());
             let number_of = |text: &str| -> Option<u32> {
+                label?;
                 text.trim()
                     .strip_prefix(prefix.as_str())?
                     .strip_suffix('】')?
@@ -1126,7 +1162,7 @@ impl EditorSession {
                 + 1;
             for paragraph in &mut model.paragraphs[index + 1..] {
                 if let Some(old) = number_of(&paragraph.text) {
-                    let text = format!("【{label} {}】", old + 1);
+                    let text = format!("{prefix}{}】", old + 1);
                     paragraph.marker = Some(text.clone());
                     paragraph.inlines = vec![HmlInline::Text {
                         text: text.clone(),
@@ -1156,22 +1192,27 @@ impl EditorSession {
                 number: None,
                 ..template
             };
-            let heading_text = format!("【{label} {number}】");
-            let heading = crate::HmlParagraph {
-                id: format!("{after}:{}h", label),
-                marker: Some(heading_text.clone()),
-                text: heading_text.clone(),
-                inlines: vec![HmlInline::Text {
-                    text: heading_text,
-                    formats: Vec::new(),
-                    size: None,
-                }],
-                // 식별항목 넣기(`insert_item`)의 표제와 같은 모양.
-                align: "left".into(),
-                ..base.clone()
-            };
+            let heading = label.map(|label| {
+                let heading_text = format!("【{label} {number}】");
+                crate::HmlParagraph {
+                    id: format!("{after}:{}h", label),
+                    marker: Some(heading_text.clone()),
+                    text: heading_text.clone(),
+                    inlines: vec![HmlInline::Text {
+                        text: heading_text,
+                        formats: Vec::new(),
+                        size: None,
+                    }],
+                    // 식별항목 넣기(`insert_item`)의 표제와 같은 모양.
+                    align: "left".into(),
+                    ..base.clone()
+                }
+            });
             let body = crate::HmlParagraph {
-                id: format!("{after}:{}i", label),
+                id: match label {
+                    Some(label) => format!("{after}:{label}i"),
+                    None => format!("{after}:{image_id}"),
+                },
                 image_ids: vec![image_id.clone()],
                 inlines: vec![HmlInline::Image {
                     image_id: image_id.clone(),
@@ -1197,7 +1238,7 @@ impl EditorSession {
             });
             model
                 .paragraphs
-                .splice(index + 1..index + 1, [heading, body]);
+                .splice(index + 1..index + 1, heading.into_iter().chain([body]));
             Ok(())
         })
     }
