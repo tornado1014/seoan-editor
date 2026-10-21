@@ -430,13 +430,21 @@ struct TableRow<'a> {
     cells: Vec<(&'a crate::CellRecord, Vec<usize>, Option<f64>)>,
     lines: usize,
     first: bool,
+    /// 쪽 매기기가 이 행 첫 줄에 실은 높이(칸 그림 높이까지 든 값).
+    measured: f64,
 }
 
 impl TableRow<'_> {
     /// 이 행이 쪽에서 먹는 높이(단위) — 첫 행은 위 여백 포함.
     fn height(&self) -> f64 {
         let pad = if self.first { TABLE_PAD_TOP } else { 0.0 };
-        pad + ROW_UNIT * self.lines as f64
+        let text = pad + ROW_UNIT * self.lines as f64;
+        // 칸 그림이 글 줄보다 높으면 쪽 매기기 값(그림 + 여백) — 아니면 글 줄 값 그대로(반올림 차이로 표를 흔들지 않는다).
+        if self.measured > text + 1.0 {
+            self.measured
+        } else {
+            text
+        }
     }
 }
 
@@ -491,6 +499,7 @@ fn table_rows<'a>(document: &'a InspectDocument, heights: &[i64]) -> BTreeMap<us
                 first: cells
                     .iter()
                     .all(|(cell, _, covered)| cell.row == 0 && !covered),
+                measured: heights.get(first).copied().unwrap_or(0) as f64,
                 cells: cells
                     .into_iter()
                     .map(|(cell, lines, covered)| (cell, lines, (!covered).then_some(0.0)))

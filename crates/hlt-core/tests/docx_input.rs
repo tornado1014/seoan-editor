@@ -498,3 +498,68 @@ fn centered_paragraphs_without_first_line_indent_take_the_native_line_spacing() 
     assert_eq!(indented.len(), 68);
     assert!(indented.iter().all(|paragraph| paragraph.lspace == 280));
 }
+
+/// 칸 그림이 글 줄보다 높으면 그 행 상자가 그림을 다 덮고 다음 행은 그림 아래에서 시작한다(겹쳐 그리지 않는다).
+#[test]
+fn a_table_row_grows_to_its_cell_picture_when_printed() {
+    // 칸 그림 = Word 크기 40×30mm(글 한 줄 ≈ 5mm 보다 훨씬 높다).
+    let xml = TABLE_DOCUMENT_XML.replace(
+        r#"<w:pict><v:shape><v:imagedata r:id="rId4"/></v:shape></w:pict>"#,
+        r#"<w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="1440000" cy="1080000"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:blipFill><a:blip r:embed="rId4"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#,
+    );
+    let mut png = Vec::new();
+    image::RgbImage::from_pixel(80, 60, image::Rgb([0, 0, 0]))
+        .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let parts = vec![
+        ("word/document.xml", xml.as_bytes()),
+        ("word/_rels/document.xml.rels", RELS_XML.as_bytes()),
+        ("word/media/image1.png", png.as_slice()),
+    ];
+    let file = write_docx(&parts);
+    let (document, payloads) = hlt_core::load_generation_input(file.path()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let hlt = dir.path().join("표그림.HLT");
+    hlt_core::save_generated_hlt_as_new(
+        file.path(),
+        &document,
+        hlt_core::GenerationDialect::PctPatent,
+        &payloads,
+        &hlt,
+        hlt_core::WriteOptions::default(),
+    )
+    .unwrap();
+    let (_, inflated) = hlt_core::inflate_hlt(&hlt).unwrap();
+    let inspected = hlt_core::inspect_path(&hlt, hlt_core::InspectOptions::default()).unwrap();
+    let plan = hlt_core::page_plan(&inspected, &inflated, hlt_core::PrintOptions::default());
+    let page = plan
+        .pages
+        .iter()
+        .find(|page| !page.cells.is_empty())
+        .unwrap();
+    let image = page
+        .images
+        .iter()
+        .find(|image| image.height > 50.0)
+        .expect("칸 그림");
+    let holder = page
+        .cells
+        .iter()
+        .filter(|cell| cell.top <= image.top + 1.0 && image.top < cell.top + cell.height)
+        .min_by(|a, b| a.height.total_cmp(&b.height))
+        .expect("그림을 품은 칸");
+    assert!(
+        holder.top + holder.height >= image.top + image.height,
+        "칸 {holder:?} 이 그림 {image:?} 을 덮는다"
+    );
+    let below = page
+        .cells
+        .iter()
+        .filter(|cell| cell.top > holder.top + 1.0)
+        .map(|cell| cell.top)
+        .fold(f64::INFINITY, f64::min);
+    assert!(
+        below >= image.top + image.height,
+        "다음 행 {below} 은 그림 아래"
+    );
+}
