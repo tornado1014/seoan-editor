@@ -517,7 +517,7 @@ fn a_table_row_grows_to_its_cell_picture_when_printed() {
         ("word/media/image1.png", png.as_slice()),
     ];
     let file = write_docx(&parts);
-    let (document, payloads) = hlt_core::load_generation_input(file.path()).unwrap();
+    let (document, payloads, _) = hlt_core::load_generation_input(file.path()).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let hlt = dir.path().join("표그림.HLT");
     hlt_core::save_generated_hlt_as_new(
@@ -561,5 +561,65 @@ fn a_table_row_grows_to_its_cell_picture_when_printed() {
     assert!(
         below >= image.top + image.height,
         "다음 행 {below} 은 그림 아래"
+    );
+}
+
+/// CP949 에 없는 글자: 대응표에 있으면 바꿔 굽고(목록을 낸다) · 없으면 그런 글자 전부를 들고 거부한다.
+#[test]
+fn word_characters_outside_cp949_are_substituted_or_listed() {
+    let xml = TABLE_DOCUMENT_XML
+        .replace("구성품 시험 결과", "5 \u{2212} 3 \u{00B5}m\u{00A0}값")
+        .replace(">t-값<", ">café<");
+    let parts = vec![
+        ("word/document.xml", xml.as_bytes()),
+        ("word/_rels/document.xml.rels", RELS_XML.as_bytes()),
+        ("word/media/image1.png", PNG_1X1),
+    ];
+    let file = write_docx(&parts);
+    let (document, _, substitutions) = hlt_core::load_generation_input(file.path()).unwrap();
+    let pairs: Vec<(char, &str)> = substitutions
+        .iter()
+        .map(|item| (item.from, item.to.as_str()))
+        .collect();
+    assert_eq!(
+        pairs,
+        [
+            ('\u{A0}', " "),
+            ('\u{B5}', "\u{3BC}"),
+            ('é', "e"),
+            ('\u{2212}', "-")
+        ]
+    );
+    let caption = document
+        .paragraphs
+        .iter()
+        .find(|p| p.text.starts_with("5 "))
+        .unwrap();
+    assert_eq!(caption.text, "5 - 3 \u{3BC}m 값");
+    let run_text: String = caption
+        .inlines
+        .iter()
+        .filter_map(|inline| match inline {
+            HmlInline::Text { text, .. } => Some(text.as_str()),
+            HmlInline::Image { .. } => None,
+        })
+        .collect();
+    assert_eq!(run_text, caption.text, "런 글도 같게 바뀐다");
+    assert!(document.cells.iter().any(|cell| cell.text == "cafe"));
+
+    // 대응표에 없는 글자 둘 → 둘 다 이름을 들고 거부.
+    let xml = TABLE_DOCUMENT_XML.replace("구성품 시험 결과", "\u{1F600} \u{2603}");
+    let parts = vec![
+        ("word/document.xml", xml.as_bytes()),
+        ("word/_rels/document.xml.rels", RELS_XML.as_bytes()),
+        ("word/media/image1.png", PNG_1X1),
+    ];
+    let file = write_docx(&parts);
+    let error = hlt_core::load_generation_input(file.path()).unwrap_err();
+    assert_eq!(error.code, ErrorCode::Cp949Invalid);
+    let chars = &error.details["chars"];
+    assert!(
+        chars.contains("U+1F600") && chars.contains("U+2603"),
+        "{chars}"
     );
 }

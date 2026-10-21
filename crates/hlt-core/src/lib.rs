@@ -5,6 +5,7 @@ mod cell_format_edit;
 mod claim_check;
 mod codec;
 mod container;
+mod cp949_safe;
 mod docx;
 mod docx_write;
 mod drawmark;
@@ -60,6 +61,7 @@ pub use codec::{
     max_backreference_distance,
 };
 pub use container::{ContainerLayout, Footer, HLT_HEADER_LEN, HLT_MAGIC, read_layout};
+pub use cp949_safe::{Cp949Substitution, cp949_safe_text, make_cp949_safe};
 pub use docx::{
     DocxDocument, DocxMediaAsset, DocxPackageSummary, DocxPageBreak, inspect_docx_path,
     load_docx_image_payloads,

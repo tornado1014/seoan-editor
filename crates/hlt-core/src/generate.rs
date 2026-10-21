@@ -334,7 +334,23 @@ fn generation_error(reason: &str) -> CoreError {
 
 /// 생성 입력(`.docx` · KIPO `.xml` · `.hml` · `.HLT`/`.HBK`) → 의미 모델 + 그림 원본. 확장자로 고른다.
 /// CLI `generate-hlt` 와 편집기 「불러와 HLT 만들기」가 같은 길을 쓴다.
+/// 글은 CP949 로 쓸 수 있게 바꿔서 낸다(바꾼 글자 목록 · 대응 없는 글자는 거부 — [`crate::make_cp949_safe`]).
 pub fn load_generation_input(
+    input: &std::path::Path,
+) -> Result<
+    (
+        HmlDocument,
+        Vec<GeneratedImagePayload>,
+        Vec<crate::Cp949Substitution>,
+    ),
+    CoreError,
+> {
+    let (mut document, payloads) = load_generation_source(input)?;
+    let substitutions = crate::make_cp949_safe(&mut document)?;
+    Ok((document, payloads, substitutions))
+}
+
+fn load_generation_source(
     input: &std::path::Path,
 ) -> Result<(HmlDocument, Vec<GeneratedImagePayload>), CoreError> {
     let extension = input

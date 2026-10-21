@@ -145,6 +145,8 @@ export interface EditorViewDto {
   preparing: boolean;
   /** 표 칸 글(칸 id → 글 · 그림 `_`). 모델 준비 전이면 비어 있다(칸마다 `editorCellText`). */
   cells?: Record<string, string>;
+  /** 방금 고침에서 CP949 에 없어 바꾼 글자들(붙여넣기 등). */
+  cp949_substitutions?: { from: string; to: string; count: number }[];
 }
 
 /** 열기: 이 탭에 문서가 있으면 새 탭에서 열고 `null`(이 탭은 그대로). */

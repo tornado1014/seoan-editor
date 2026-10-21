@@ -394,6 +394,11 @@ export function mountEditor(root: HTMLElement): void {
   function layout(next: EditorViewDto, keepScroll: boolean) {
     const scroll = pagesRoot.scrollTop;
     view = next;
+    const replaced = next.cp949_substitutions ?? [];
+    if (replaced.length > 0) {
+      const list = replaced.map((item) => `${item.from} → ${item.to || '(지움)'} (${item.count}곳)`).join(' · ');
+      warn(`CP949 에 없는 글자를 바꿨습니다: ${list}`);
+    }
     cellTexts.clear();
     for (const [id, text] of Object.entries(next.cells ?? {})) cellTexts.set(id, text);
     pages = new Map();

@@ -157,7 +157,7 @@ fn exported_word_reads_back_as_the_same_document() {
     });
     assert!(!numbered, "식별번호가 없다");
     // 다시 HLT 로 굽힌다.
-    let (again, payloads) = load_generation_input(&out).unwrap();
+    let (again, payloads, _) = load_generation_input(&out).unwrap();
     save_generated_hlt_as_new(
         &out,
         &again,

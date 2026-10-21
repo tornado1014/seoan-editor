@@ -225,3 +225,36 @@ fn refuses_to_indent_an_item_heading() {
     );
     session.set_indent(&heading, 0).unwrap();
 }
+
+/// 편집기에 붙여넣은 CP949 밖 글자: 고침 관문에서 바뀌어 저장되고 바꾼 목록이 세션에 남는다 · 대응 없는 글자는 고침 거부.
+#[test]
+fn pasted_characters_outside_cp949_are_substituted_before_saving() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("의견서.HLT");
+    hlt_core::save_new_opinion_as_new(&path, hlt_core::WriteOptions::default()).unwrap();
+    let mut session = EditorSession::open(&path).unwrap();
+    let body = session.paragraphs()[1].id.clone();
+    session
+        .replace_text(&body, "a\u{2212}b\u{200B}c \u{2013} d")
+        .unwrap();
+    let replaced: Vec<(char, String, usize)> = session
+        .cp949_substitutions
+        .iter()
+        .map(|item| (item.from, item.to.clone(), item.count))
+        .collect();
+    assert_eq!(
+        replaced,
+        [
+            ('\u{200B}', String::new(), 1),
+            ('\u{2013}', "-".to_string(), 1),
+            ('\u{2212}', "-".to_string(), 1)
+        ]
+    );
+    let out = temp.path().join("붙여넣기.HLT");
+    session.save_as(&out).unwrap();
+    let saved = EditorSession::open(&out).unwrap().paragraphs();
+    assert!(saved.iter().any(|p| p.text == "a-bc - d"), "{saved:?}");
+
+    let error = session.replace_text(&body, "\u{1F600}").unwrap_err();
+    assert_eq!(error.code, hlt_core::ErrorCode::Cp949Invalid);
+}

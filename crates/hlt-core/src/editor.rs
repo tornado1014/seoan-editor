@@ -32,6 +32,8 @@ pub struct EditorSession {
     opened_numbers: Vec<Option<String>>,
     /// 지금 판의 식별번호(화면 문단 차례) — 모델이 문단과 함께 들고 다닌다.
     numbers: Vec<Option<String>>,
+    /// 마지막 고침이 CP949 에 없어 바꾼 글자들(붙여넣기 · 타이핑) — 화면이 알린다.
+    pub cp949_substitutions: Vec<crate::Cp949Substitution>,
 }
 
 /// 판 하나: 파일 · 그 판의 의미 모델(있으면 다시 해석하지 않는다) · 다시 구운 판인가(저장 때 전체 검증).
@@ -207,6 +209,7 @@ impl EditorSession {
             }),
             numbers: opened_numbers.clone(),
             opened_numbers,
+            cp949_substitutions: Vec::new(),
         }
         .with_spans()
         .centered_items()
@@ -1600,7 +1603,10 @@ impl EditorSession {
         let mut payloads = base.payloads;
         // 그림 본문은 고칠 때(수식 넣기)만 복사한다 — 글·서식 고침은 빈 목록에 덧붙인 것이 없으면 그대로 나눠 쓴다.
         let mut payloads_for_edit: Vec<GeneratedImagePayload> = Vec::new();
+        self.cp949_substitutions.clear();
         edit(&mut document, &mut payloads_for_edit)?;
+        // 모든 모델 고침이 지나는 관문 — 붙여넣은 글의 CP949 밖 글자를 여기서 바꾼다(대응 없는 글자는 고침 거부).
+        let substitutions = crate::make_cp949_safe(&mut document)?;
         if !payloads_for_edit.is_empty() {
             std::sync::Arc::make_mut(&mut payloads).extend(payloads_for_edit);
         }
@@ -1637,6 +1643,7 @@ impl EditorSession {
         if let Some(model) = self.versions[self.current].model.as_mut() {
             align_cell_ids(&mut model.document, &self.document);
         }
+        self.cp949_substitutions = substitutions;
         Ok(())
     }
 

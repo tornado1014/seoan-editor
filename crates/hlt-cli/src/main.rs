@@ -1529,11 +1529,11 @@ fn run_generate_hlt(args: &[String], stdout: &mut impl Write) -> u8 {
         _ => return generate_hlt_usage(stdout),
     };
     let input_path = Path::new(input);
-    let loaded = load_generation_document(input_path);
-    let (document, payloads) = match loaded {
+    let loaded = load_generation_document_with_substitutions(input_path);
+    let (document, payloads, substitutions) = match loaded {
         Ok(value) => value,
         Err(error) => {
-            let envelope: CommandEnvelope<GeneratedHltSaveResult> =
+            let envelope: CommandEnvelope<GenerateHltOutput> =
                 error_envelope("generate-hlt", *error);
             let _ = write_envelope(stdout, &envelope);
             return EXIT_VERIFY_FAILED;
@@ -1547,15 +1547,19 @@ fn run_generate_hlt(args: &[String], stdout: &mut impl Write) -> u8 {
         Path::new(output),
         WriteOptions::default(),
     ) {
-        Ok(result) => {
-            let envelope = success_envelope("generate-hlt", result);
+        Ok(saved) => {
+            let output = GenerateHltOutput {
+                saved,
+                cp949_substitutions: substitutions,
+            };
+            let envelope = success_envelope("generate-hlt", output);
             if write_envelope(stdout, &envelope).is_err() {
                 return EXIT_VERIFY_FAILED;
             }
             EXIT_OK
         }
         Err(error) => {
-            let envelope: CommandEnvelope<GeneratedHltSaveResult> =
+            let envelope: CommandEnvelope<GenerateHltOutput> =
                 error_envelope("generate-hlt", error);
             let _ = write_envelope(stdout, &envelope);
             EXIT_VERIFY_FAILED
@@ -1726,7 +1730,29 @@ fn load_table_operations(path: &Path) -> Result<TableEditRequest, Box<CoreError>
 fn load_generation_document(
     input: &Path,
 ) -> Result<(HmlDocument, Vec<GeneratedImagePayload>), Box<CoreError>> {
+    load_generation_document_with_substitutions(input)
+        .map(|(document, payloads, _)| (document, payloads))
+}
+
+fn load_generation_document_with_substitutions(
+    input: &Path,
+) -> Result<
+    (
+        HmlDocument,
+        Vec<GeneratedImagePayload>,
+        Vec<hlt_core::Cp949Substitution>,
+    ),
+    Box<CoreError>,
+> {
     hlt_core::load_generation_input(input).map_err(Box::new)
+}
+
+/// `generate-hlt` 결과 = 저장 결과 + CP949 로 바꾼 글자들.
+#[derive(serde::Serialize)]
+struct GenerateHltOutput {
+    #[serde(flatten)]
+    saved: GeneratedHltSaveResult,
+    cp949_substitutions: Vec<hlt_core::Cp949Substitution>,
 }
 
 fn table_edit_plan_usage(writer: &mut impl Write) -> u8 {

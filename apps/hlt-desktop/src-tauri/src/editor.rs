@@ -164,6 +164,27 @@ pub struct EditorViewDto {
     pub preparing: bool,
     /// 표 칸 글(칸 id → 글 · 그림 `_`) — 쪽 위 칸 편집. 모델이 아직 없으면 비고 화면이 칸마다 묻는다.
     pub cells: std::collections::BTreeMap<String, String>,
+    /// 방금 고침에서 CP949 에 없어 바꾼 글자들(한 번만 실린다 — 화면이 알린다).
+    pub cp949_substitutions: Vec<hlt_core::Cp949Substitution>,
+}
+
+/// 「− → - (3곳)」 줄들.
+fn substitution_lines(substitutions: &[hlt_core::Cp949Substitution]) -> String {
+    substitutions
+        .iter()
+        .map(|item| {
+            let to = if item.to.is_empty() {
+                "(지움)"
+            } else {
+                item.to.as_str()
+            };
+            format!(
+                "U+{:04X} {} → {to} ({}곳)",
+                item.from as u32, item.from, item.count
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn view(session: &mut EditorSession, title: String) -> EditorViewDto {
@@ -177,6 +198,7 @@ fn view(session: &mut EditorSession, title: String) -> EditorViewDto {
         page_height: session.plan.height,
         paragraphs: session.paragraphs(),
         cells: session.cell_texts(),
+        cp949_substitutions: std::mem::take(&mut session.cp949_substitutions),
         paragraph_pages: session
             .plan
             .pages
@@ -294,8 +316,8 @@ pub async fn editor_import(
         return Ok(None);
     };
     let (source, target) = (input.clone(), output.clone());
-    tauri::async_runtime::spawn_blocking(move || {
-        let (document, payloads) = hlt_core::load_generation_input(&source)?;
+    let substitutions = tauri::async_runtime::spawn_blocking(move || {
+        let (document, payloads, substitutions) = hlt_core::load_generation_input(&source)?;
         hlt_core::save_generated_hlt_as_new(
             &source,
             &document,
@@ -303,10 +325,21 @@ pub async fn editor_import(
             &payloads,
             &target,
             hlt_core::WriteOptions::default(),
-        )
+        )?;
+        Ok::<_, CoreError>(substitutions)
     })
     .await
     .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "worker", false))??;
+    if !substitutions.is_empty() {
+        app.dialog()
+            .message(format!(
+                "CP949 에 없는 글자를 바꿨습니다.\n\n{}",
+                substitution_lines(&substitutions)
+            ))
+            .title("불러와 HLT 만들기")
+            .parent(&window)
+            .blocking_show();
+    }
     // 열기와 같다: 이 탭에 문서가 있으면 새 탭에서.
     if state.has_document(window.label()) {
         new_tab(&app, Some(window.label()), Some(output))?;
