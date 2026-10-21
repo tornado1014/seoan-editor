@@ -2403,15 +2403,50 @@ fn claim_check_xml(path: &Path) -> Result<String, CoreError> {
         .map_err(|_| CoreError::new(ErrorCode::UnsupportedFormat, "claim_check", false))
 }
 
+/// `--overwrite`(값 없는 선택 인자)를 떼어 낸다 — 있으면 출력 파일이 있어도 덮는다.
+fn take_overwrite(args: &[String]) -> (Vec<String>, bool) {
+    let overwrite = args.iter().any(|value| value == "--overwrite");
+    let rest = args
+        .iter()
+        .filter(|value| *value != "--overwrite")
+        .cloned()
+        .collect();
+    (rest, overwrite)
+}
+
+/// 출력 쓰기. 덮지 않으면 없는 파일만 만든다. 덮으면 옆 임시 파일에 다 쓴 뒤 바꿔 끼운다
+/// (실패해도 옛 파일이 남는다 · 출력이 입력 `.fin` 자리여도 입력은 이미 다 읽었다).
+fn write_output(path: &Path, bytes: &[u8], overwrite: bool) -> std::io::Result<()> {
+    if !overwrite {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        file.write_all(bytes)?;
+        return file.sync_all();
+    }
+    let mut temporary = path.as_os_str().to_owned();
+    temporary.push(".tmp");
+    let written = std::fs::File::create(&temporary)
+        .and_then(|mut file| file.write_all(bytes).and_then(|()| file.sync_all()))
+        .and_then(|()| std::fs::rename(&temporary, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    written
+}
+
 fn export_fin_usage<O: Write>(stdout: &mut O) -> u8 {
     let _ = writeln!(
         stdout,
-        "usage: hlt-cli export-fin <input.HLT> <absent-output.fin> --hlz-name <name.hlz> --app-date <YYYY-MM-DD> --app-time <stamp> [--image-time <YYYY:MM:DD HH:MM:SS>] [--schema-dir <Epasl/INCLUDE/Schema>] [--document-id <id>] [--page-count <n>] [--amendment <name.dta>=<amendment.xml>=<YYYY-MM-DD>]..."
+        "usage: hlt-cli export-fin <input.HLT> <absent-output.fin> --hlz-name <name.hlz> --app-date <YYYY-MM-DD> --app-time <stamp> [--image-time <YYYY:MM:DD HH:MM:SS>] [--schema-dir <Epasl/INCLUDE/Schema>] [--document-id <id>] [--page-count <n>] [--amendment <name.dta>=<amendment.xml>=<YYYY-MM-DD>]... [--overwrite]"
     );
     EXIT_USAGE
 }
 
 fn run_export_fin<O: Write, E: Write>(args: &[String], stdout: &mut O, _stderr: &mut E) -> u8 {
+    let (args, overwrite) = take_overwrite(args);
+    let args = args.as_slice();
     let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
         return export_fin_usage(stdout);
     };
@@ -2468,7 +2503,7 @@ fn run_export_fin<O: Write, E: Write>(args: &[String], stdout: &mut O, _stderr: 
     }
     let input_path = Path::new(input);
     let output_path = Path::new(output);
-    if output_path.exists() {
+    if output_path.exists() && !overwrite {
         let mut error = CoreError::new(ErrorCode::OutputExists, "export_fin", false);
         error.source = output_path
             .file_name()
@@ -2490,23 +2525,13 @@ fn run_export_fin<O: Write, E: Write>(args: &[String], stdout: &mut O, _stderr: 
         let _ = write_envelope(stdout, &envelope);
         return EXIT_VERIFY_FAILED;
     }
-    let mut file = match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(output_path)
-    {
-        Ok(file) => file,
-        Err(error) => {
-            let mut failure = CoreError::new(ErrorCode::IoError, "export_fin", false);
-            failure
-                .details
-                .insert("io".into(), error.kind().to_string());
-            let envelope: CommandEnvelope<FinExportResult> = error_envelope("export-fin", failure);
-            let _ = write_envelope(stdout, &envelope);
-            return EXIT_VERIFY_FAILED;
-        }
-    };
-    if file.write_all(&export.fin).is_err() || file.sync_all().is_err() {
+    if let Err(error) = write_output(output_path, &export.fin, overwrite) {
+        let mut failure = CoreError::new(ErrorCode::IoError, "export_fin", false);
+        failure
+            .details
+            .insert("io".into(), error.kind().to_string());
+        let envelope: CommandEnvelope<FinExportResult> = error_envelope("export-fin", failure);
+        let _ = write_envelope(stdout, &envelope);
         return EXIT_VERIFY_FAILED;
     }
     let result = FinExportResult {
@@ -2543,7 +2568,7 @@ struct AmendmentExportResult {
 fn export_amendment_usage<O: Write>(stdout: &mut O) -> u8 {
     let _ = writeln!(
         stdout,
-        "usage: hlt-cli export-amendment <before.HLT> <after.HLT> <absent-output.dta> [--document-id <id>] [--dta-version <v>] [--keaps-version <v>] [--en-title <text>] [--image-time <YYYY:MM:DD HH:MM:SS>]\n       hlt-cli export-amendment <final.fin> <after.HLT> <absent-output.fin> --dta-name <name.dta> --date <YYYY-MM-DD>   (보정서생성: 새 .fin)"
+        "usage: hlt-cli export-amendment <before.HLT> <after.HLT> <absent-output.dta> [--document-id <id>] [--dta-version <v>] [--keaps-version <v>] [--en-title <text>] [--image-time <YYYY:MM:DD HH:MM:SS>] [--overwrite]\n       hlt-cli export-amendment <final.fin> <after.HLT> <absent-output.fin> --dta-name <name.dta> --date <YYYY-MM-DD> [--overwrite]   (보정서생성: 새 .fin · --overwrite 면 final.fin 자리도 된다)"
     );
     EXIT_USAGE
 }
@@ -2553,6 +2578,8 @@ fn run_export_amendment<O: Write, E: Write>(
     stdout: &mut O,
     _stderr: &mut E,
 ) -> u8 {
+    let (args, overwrite) = take_overwrite(args);
+    let args = args.as_slice();
     let (Some(before), Some(after), Some(output)) = (args.get(1), args.get(2), args.get(3)) else {
         return export_amendment_usage(stdout);
     };
@@ -2584,7 +2611,7 @@ fn run_export_amendment<O: Write, E: Write>(
         index += 2;
     }
     let output_path = Path::new(output);
-    if output_path.exists() {
+    if output_path.exists() && !overwrite {
         let mut error = CoreError::new(ErrorCode::OutputExists, "export_amendment", false);
         error.source = output_path
             .file_name()
@@ -2621,24 +2648,14 @@ fn run_export_amendment<O: Write, E: Write>(
             return EXIT_VERIFY_FAILED;
         }
     };
-    let mut file = match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(output_path)
-    {
-        Ok(file) => file,
-        Err(error) => {
-            let mut failure = CoreError::new(ErrorCode::IoError, "export_amendment", false);
-            failure
-                .details
-                .insert("io".into(), error.kind().to_string());
-            let envelope: CommandEnvelope<AmendmentExportResult> =
-                error_envelope("export-amendment", failure);
-            let _ = write_envelope(stdout, &envelope);
-            return EXIT_VERIFY_FAILED;
-        }
-    };
-    if file.write_all(&bytes).is_err() || file.sync_all().is_err() {
+    if let Err(error) = write_output(output_path, &bytes, overwrite) {
+        let mut failure = CoreError::new(ErrorCode::IoError, "export_amendment", false);
+        failure
+            .details
+            .insert("io".into(), error.kind().to_string());
+        let envelope: CommandEnvelope<AmendmentExportResult> =
+            error_envelope("export-amendment", failure);
+        let _ = write_envelope(stdout, &envelope);
         return EXIT_VERIFY_FAILED;
     }
     let result = AmendmentExportResult {

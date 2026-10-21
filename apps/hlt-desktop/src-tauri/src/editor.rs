@@ -1205,20 +1205,48 @@ pub async fn editor_export_fin(
     if let Some(folder) = source.as_deref().and_then(|path| path.parent()) {
         dialog = dialog.set_directory(folder);
     }
-    let Some(hlz_path) = dialog
+    let Some(picked) = dialog
         .blocking_save_file()
         .and_then(|picked| picked.into_path().ok())
     else {
         return Ok(None);
     };
-    let hlz_path = hlz_path.with_extension("hlz");
+    let hlz_path = picked.with_extension("hlz");
     let path = hlz_path.with_extension("fin");
     // 의견서(문서 종류 7)는 `.hlz` 만 낸다 — 특허로에 의견서 hlz 를 올린다(최종본 .fin 은 명세서 몫 · 사용자 2026-10-16).
     let opinion = with_session(&state, &window, |session| {
         Ok(session.document.summary.document_type_raw & 0x7fff == 7)
     })?;
-    if hlz_path.exists() || (!opinion && path.exists()) {
-        return Err(CoreError::new(ErrorCode::OutputExists, "export_fin", false));
+    // 저장 창이 덮어쓰기를 물은 것은 고른 그 파일뿐 — 옆 `.fin`(· 확장자를 붙여 바뀐 `.hlz`)이 이미 있으면 여기서 묻는다.
+    let unasked: Vec<String> = [
+        (hlz_path != picked).then_some(&hlz_path),
+        (!opinion).then_some(&path),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|candidate| candidate.exists())
+    .filter_map(|candidate| {
+        candidate
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+    })
+    .collect();
+    if !unasked.is_empty()
+        && !app
+            .dialog()
+            .message(format!(
+                "{} 이(가) 이미 있습니다. 덮어쓸까요?",
+                unasked.join(" · ")
+            ))
+            .title("제출파일")
+            .parent(&window)
+            .buttons(tauri_plugin_dialog::MessageDialogButtons::OkCancelCustom(
+                "덮어쓰기".into(),
+                "취소".into(),
+            ))
+            .blocking_show()
+    {
+        return Ok(None);
     }
     let stem = hlz_path
         .file_stem()
@@ -1238,12 +1266,12 @@ pub async fn editor_export_fin(
             amendments: Vec::new(),
         },
     )?;
-    std::fs::write(&hlz_path, &export.hlz)
+    write_replacing(&hlz_path, &export.hlz)
         .map_err(|_| CoreError::new(ErrorCode::IoError, "export_hlz", false))?;
     if opinion {
         return Ok(Some(hlz_path.display().to_string()));
     }
-    std::fs::write(&path, export.fin)
+    write_replacing(&path, &export.fin)
         .map_err(|_| CoreError::new(ErrorCode::IoError, "export_fin", false))?;
     Ok(Some(path.display().to_string()))
 }
@@ -1326,18 +1354,25 @@ pub async fn editor_export_amendment(
         },
     )?;
     let io = |_| CoreError::new(ErrorCode::IoError, "export_amendment", false);
-    std::fs::write(&dta_path, &export.dta).map_err(io)?;
-    // 연 fin 을 바꾼다 — 옆 임시 파일에 다 쓴 뒤 바꿔 끼워 반쯤 쓴 fin 이 남지 않게.
-    let temporary = fin.with_extension("fin.tmp");
-    std::fs::write(&temporary, &export.fin)
-        .and_then(|_| std::fs::rename(&temporary, &fin))
-        .map_err(io)?;
+    write_replacing(&dta_path, &export.dta).map_err(io)?;
+    // 연 fin 을 그 자리에서 바꾼다(통특기 보정서생성도 그렇다).
+    write_replacing(&fin, &export.fin).map_err(io)?;
     Ok(Some(AmendmentDoneDto {
         dta: dta_path.display().to_string(),
         fin: fin.display().to_string(),
         order: amendment_order(&export.xml),
         items: amendment_items(&export.xml),
     }))
+}
+
+/// 있는 파일도 덮는다 — 옆 임시 파일(`이름.확장자.tmp`)에 다 쓴 뒤 바꿔 끼워, 실패해도 반쯤 쓴 파일 대신 옛 파일이 남는다.
+fn write_replacing(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut temporary = path.as_os_str().to_owned();
+    temporary.push(".tmp");
+    std::fs::write(&temporary, bytes)?;
+    std::fs::rename(&temporary, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&temporary);
+    })
 }
 
 /// 차수 = dtaVersion − 1(첫 보정서 002 — 실물 보정서 320/320).

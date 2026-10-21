@@ -15,6 +15,7 @@ description: >
 
 **규칙**
 - 출력은 늘 **없는 새 파일**이다. 있으면 `output_exists` 로 거부한다 — 원본은 절대 덮이지 않는다. 다시 할 땐 새 이름으로.
+  예외: `export-fin` · `export-amendment` 는 `--overwrite` 를 주면 있는 `.fin` · `.dta` 를 덮는다(사용자가 덮으라고 했을 때만 · 임시 파일에 다 쓴 뒤 바꿔 끼운다).
 - 다루는 것은 **미공개 출원**이다. 파일 · 본문을 외부 서비스에 올리지 마라.
 - 고친 `.HLT` 는 `hlt-cli verify <file>` 로 확인한다(`ok: true`).
 
