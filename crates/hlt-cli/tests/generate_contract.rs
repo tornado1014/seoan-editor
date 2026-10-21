@@ -117,3 +117,55 @@ fn fixture() -> PathBuf {
         .canonicalize()
         .unwrap()
 }
+
+/// CP949 밖 글자: 대응 없는 글자(⁵)는 그냥 굽기를 거부하고, `--substitutions` 로 고른 대응을 주면 굽는다.
+#[test]
+fn generate_hlt_takes_chosen_cp949_substitutions() {
+    let source = fs::read_to_string(fixture())
+        .unwrap()
+        .replace("plain <b>bold</b> text.", "10\u{2075} \u{2212} 3");
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("input.hml");
+    fs::write(&input, source).unwrap();
+    let output = directory.path().join("out.HLT");
+    let args = [
+        "generate-hlt",
+        input.to_str().unwrap(),
+        output.to_str().unwrap(),
+        "--dialect",
+        "patent-specification-ko",
+    ];
+    let refused: serde_json::Value = serde_json::from_slice(&run(&args).stdout).unwrap();
+    assert_eq!(refused["error"]["code"], "cp949_invalid", "{refused}");
+    assert!(
+        refused["error"]["details"]["chars"]
+            .as_str()
+            .unwrap()
+            .contains("U+2075")
+    );
+
+    let map = directory.path().join("map.json");
+    fs::write(&map, r#"{"⁵": "^5"}"#).unwrap();
+    let mut chosen = args.to_vec();
+    chosen.extend(["--substitutions", map.to_str().unwrap()]);
+    let done: serde_json::Value = serde_json::from_slice(&run(&chosen).stdout).unwrap();
+    assert_eq!(done["ok"], true, "{done}");
+    let pairs: Vec<(String, String)> = done["result"]["cp949_substitutions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| {
+            (
+                item["from"].as_str().unwrap().into(),
+                item["to"].as_str().unwrap().into(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        pairs,
+        [
+            ("\u{2075}".into(), "^5".into()),
+            ("\u{2212}".into(), "-".into())
+        ]
+    );
+}

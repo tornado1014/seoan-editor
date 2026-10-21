@@ -1516,6 +1516,13 @@ fn run_new_from_template(args: &[String], stdout: &mut impl Write) -> u8 {
 }
 
 fn run_generate_hlt(args: &[String], stdout: &mut impl Write) -> u8 {
+    // 선택: `--substitutions map.json`(CP949 밖 글자 → 바꿀 글 · 확인 표에서 고른 것). 없으면 대응표로 자동.
+    let (args, choices_path) = match args {
+        [head @ .., flag, path] if args.len() == 7 && flag == "--substitutions" => {
+            (head, Some(path))
+        }
+        _ => (args, None),
+    };
     let [command, input, output, dialect_flag, dialect_value] = args else {
         return generate_hlt_usage(stdout);
     };
@@ -1529,7 +1536,10 @@ fn run_generate_hlt(args: &[String], stdout: &mut impl Write) -> u8 {
         _ => return generate_hlt_usage(stdout),
     };
     let input_path = Path::new(input);
-    let loaded = load_generation_document_with_substitutions(input_path);
+    let loaded = match choices_path {
+        Some(path) => load_generation_with_choices(input_path, Path::new(path)),
+        None => load_generation_document_with_substitutions(input_path),
+    };
     let (document, payloads, substitutions) = match loaded {
         Ok(value) => value,
         Err(error) => {
@@ -1745,6 +1755,41 @@ fn load_generation_document_with_substitutions(
     Box<CoreError>,
 > {
     hlt_core::load_generation_input(input).map_err(Box::new)
+}
+
+/// 고른 대응(`{"−": "-"}` · 열쇠는 글자 하나)으로 원본을 바꾼다.
+fn load_generation_with_choices(
+    input: &Path,
+    choices_path: &Path,
+) -> Result<
+    (
+        HmlDocument,
+        Vec<GeneratedImagePayload>,
+        Vec<hlt_core::Cp949Substitution>,
+    ),
+    Box<CoreError>,
+> {
+    let usage = || {
+        Box::new(CoreError::new(
+            ErrorCode::VerificationFailed,
+            "usage",
+            false,
+        ))
+    };
+    let text = std::fs::read_to_string(choices_path).map_err(|_| usage())?;
+    let map: std::collections::BTreeMap<String, String> =
+        serde_json::from_str(&text).map_err(|_| usage())?;
+    let mut choices = hlt_core::Cp949Choices::new();
+    for (from, to) in map {
+        let mut chars = from.chars();
+        let (Some(ch), None) = (chars.next(), chars.next()) else {
+            return Err(usage());
+        };
+        choices.insert(ch, to);
+    }
+    let (mut document, payloads) = hlt_core::load_generation_source(input).map_err(Box::new)?;
+    let substitutions = hlt_core::apply_cp949(&mut document, &choices).map_err(Box::new)?;
+    Ok((document, payloads, substitutions))
 }
 
 /// `generate-hlt` 결과 = 저장 결과 + CP949 로 바꾼 글자들.

@@ -30,6 +30,9 @@ import {
   type CharacterFormatDto,
   editorOpen,
   editorImport,
+  editorImportFinish,
+  editorCp949Scan,
+  type Cp949FindingDto,
   editorNewOpinion,
   editorNewTab,
   editorInsertItem,
@@ -789,6 +792,30 @@ export function mountEditor(root: HTMLElement): void {
     }));
   }
 
+  /** 친 · 붙여넣은 글에 CP949(HLT) 밖 글자가 있으면 확인 표를 거쳐 넣는다(그동안 키는 모아 둔다) · 취소면 버린다. */
+  function insertReviewed(text: string) {
+    if (!CP949_SUSPECT.test(text) || !canEdit()) return insertText(text);
+    holding += 1;
+    void (async () => {
+      let next: string | null = text;
+      try {
+        const findings = await editorCp949Scan(text);
+        if (findings.length > 0) {
+          const choices = await reviewCp949(findings, '입력한 글');
+          next = choices && Array.from(text, (ch) => choices[ch] ?? ch).join('');
+        }
+      } catch (error) {
+        fail('글자 확인', error);
+        next = null;
+      } finally {
+        holding -= 1;
+        input.focus({ preventScroll: true });
+        if (next) insertText(next);
+        while (holding === 0 && backlog.length > 0) backlog.shift()!();
+      }
+    })();
+  }
+
   function insertText(text: string) {
     if (!caret || !text || !canEdit()) return;
     if (span() && !range()) {
@@ -1035,14 +1062,14 @@ export function mountEditor(root: HTMLElement): void {
     composing = false;
     const text = input.value;
     input.value = '';
-    act(() => insertText(text));
+    act(() => insertReviewed(text));
     paint();
   });
   input.addEventListener('input', () => {
     if (composing) return paint();
     const text = input.value;
     input.value = '';
-    if (text) act(() => insertText(text));
+    if (text) act(() => insertReviewed(text));
   });
   const selectedText = () => {
     const selection = span();
@@ -1175,6 +1202,61 @@ export function mountEditor(root: HTMLElement): void {
   }
 
   /** 식별항목 번호 묻기(작은 입력 칸 · Enter = 넣기 · Esc = 취소). 영문 · 숫자만. */
+  /** CP949 밖 글자 확인 표: 줄 = 글자 한 종류(코드 · 몇 곳 · 처음 나온 곳 앞뒤 글 · 바꿀 글자 칸 · 지움).
+   *  돌려줌 = 고른 대응(글자 → 바꿀 글 · 빈 글 = 지움) · 취소면 `null`. 바꿀 글도 CP949 인지 확인한 뒤에 닫는다. */
+  function reviewCp949(findings: Cp949FindingDto[], what: string): Promise<Record<string, string> | null> {
+    return new Promise((resolve) => {
+      const box = document.createElement('form');
+      box.className = 'cp949-review';
+      const rows = findings
+        .map((item, i) => {
+          const from = escapeHtml(item.from);
+          const context = escapeHtml(item.context).split(from).join(`<mark>${from}</mark>`);
+          const none = item.suggestion === null;
+          return `<tr class="${none ? 'cp949-none' : ''}"><td class="cp949-char">${from}</td><td>${item.code}</td><td>${item.count}곳</td>
+            <td class="cp949-context">${context}</td>
+            <td><input data-row="${i}" value="${escapeHtml(item.suggestion ?? '')}" placeholder="${none ? '대응 없음 — 입력' : ''}" size="9" autocomplete="off" spellcheck="false"></td>
+            <td><input type="checkbox" data-drop="${i}"></td></tr>`;
+        })
+        .join('');
+      box.innerHTML = `<header>${escapeHtml(what)} — HLT(CP949)에 쓸 수 없는 글자</header>
+        <p class="cp949-hint">바꿀 글자를 확인하거나 고치세요. 대응이 없는 글자(붉은 줄)는 직접 넣거나 「지움」을 고르세요.</p>
+        <div class="cp949-table"><table><thead><tr><th>글자</th><th>코드</th><th>횟수</th><th>앞뒤 글</th><th>바꿀 글자</th><th>지움</th></tr></thead><tbody>${rows}</tbody></table></div>
+        <p class="cp949-error" aria-live="polite"></p>
+        <div class="cp949-buttons"><button type="submit">바꾸기</button><button type="button" class="cp949-cancel">취소</button></div>`;
+      const error = box.querySelector<HTMLParagraphElement>('.cp949-error')!;
+      const done = (value: Record<string, string> | null) => {
+        box.remove();
+        resolve(value);
+      };
+      box.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const choices: Record<string, string> = {};
+        for (const [i, item] of findings.entries()) {
+          const drop = box.querySelector<HTMLInputElement>(`[data-drop="${i}"]`)!.checked;
+          const value = drop ? '' : box.querySelector<HTMLInputElement>(`[data-row="${i}"]`)!.value;
+          if (!value && !drop) {
+            error.textContent = `${item.from} (${item.code}): 바꿀 글자를 넣거나 「지움」을 고르세요.`;
+            return;
+          }
+          choices[item.from] = value;
+        }
+        const still = await editorCp949Scan(Object.values(choices).join(''));
+        if (still.length > 0) {
+          error.textContent = `바꿀 글자에도 쓸 수 없는 글자가 있습니다: ${still.map((item) => `${item.from} (${item.code})`).join(', ')}`;
+          return;
+        }
+        done(choices);
+      });
+      box.querySelector('.cp949-cancel')!.addEventListener('click', () => done(null));
+      box.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') done(null);
+      });
+      root.append(box);
+      box.querySelector<HTMLInputElement>('[data-row]')?.focus();
+    });
+  }
+
   function askNumber(kind: string, suggested: string): Promise<string | null> {
     return new Promise((resolve) => {
       const box = document.createElement('form');
@@ -1340,7 +1422,7 @@ export function mountEditor(root: HTMLElement): void {
   input.addEventListener('paste', (event) => {
     event.preventDefault();
     const text = event.clipboardData?.getData('text/plain').replace(/\r\n?/g, '\n') ?? '';
-    act(() => insertText(text));
+    act(() => insertReviewed(text));
   });
 
   /** 쪽에서 고른 글자에 서식을 건다(고른 것은 그대로 남는다). */
@@ -1609,7 +1691,14 @@ export function mountEditor(root: HTMLElement): void {
       case 'import': {
         say('HLT 만드는 중…');
         try {
-          const opened = await editorImport();
+          const result = await editorImport();
+          let opened = result.view;
+          if (result.review.length > 0) {
+            say('쓸 수 없는 글자 확인 중…');
+            const choices = await reviewCp949(result.review, 'Word · XML 불러오기');
+            say(choices ? 'HLT 만드는 중…' : '');
+            opened = await editorImportFinish(choices);
+          }
           if (opened) {
             images.clear();
             panel.hidden = true;
@@ -1843,6 +1932,9 @@ export function parseNumbers(text: string): string[] | null {
   }
   return out.length ? out : null;
 }
+
+/** CP949 에 없을 수도 있는 글자(ASCII · 한글 음절 · 호환 자모 밖) — 있을 때만 바탕에 물어본다. */
+const CP949_SUSPECT = /[^\x00-\x7F\uAC00-\uD7A3\u3131-\u318E]/;
 
 function escapeHtml(text: string): string {
   return text.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]!);

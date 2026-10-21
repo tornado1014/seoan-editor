@@ -312,3 +312,15 @@ progress {
 .amend-view .amend-body { overflow: auto; padding: 8px 16px; }
 .amend-view p { margin: 6px 0; }
 .amend-view pre { white-space: pre-wrap; font: inherit; margin: 0 0 10px 1em; }
+.cp949-review { position: fixed; left: 50%; top: 90px; transform: translateX(-50%); z-index: 20; max-width: min(860px, 92vw); max-height: 75vh; display: flex; flex-direction: column; gap: 6px; padding: 10px 14px; background: #fffdf8; border: 1px solid #c9bfae; border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.18); font-size: 14px; }
+.cp949-review header { font-weight: 600; }
+.cp949-review .cp949-hint { margin: 0; color: #8a7f70; font-size: 12px; }
+.cp949-review .cp949-table { overflow: auto; }
+.cp949-review table { border-collapse: collapse; width: 100%; }
+.cp949-review th, .cp949-review td { border-bottom: 1px solid #e6dfd2; padding: 3px 6px; text-align: left; white-space: nowrap; }
+.cp949-review .cp949-char { font-size: 18px; }
+.cp949-review .cp949-context { white-space: pre; max-width: 22em; overflow: hidden; text-overflow: ellipsis; color: #555; }
+.cp949-review mark { background: #ffe08a; }
+.cp949-review tr.cp949-none td { background: #fbe9e7; }
+.cp949-review .cp949-error { margin: 0; min-height: 1em; color: #b3261e; font-size: 12px; }
+.cp949-review .cp949-buttons { display: flex; gap: 6px; justify-content: flex-end; }

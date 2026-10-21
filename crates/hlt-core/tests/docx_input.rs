@@ -623,3 +623,64 @@ fn word_characters_outside_cp949_are_substituted_or_listed() {
         "{chars}"
     );
 }
+
+/// 확인 표 두 단계: 찾기(바꾸지 않음 · 종류별 횟수 · 앞뒤 글 · 제안) → 고른 대응대로 바꾸기.
+#[test]
+fn cp949_review_scans_then_applies_the_chosen_replacements() {
+    let xml = TABLE_DOCUMENT_XML
+        .replace("구성품 시험 결과", "10\u{2075} \u{2212} 3 \u{2212} 1")
+        .replace(">t-값<", ">café<");
+    let parts = vec![
+        ("word/document.xml", xml.as_bytes()),
+        ("word/_rels/document.xml.rels", RELS_XML.as_bytes()),
+        ("word/media/image1.png", PNG_1X1),
+    ];
+    let file = write_docx(&parts);
+    let (document, _) = hlt_core::load_generation_source(file.path()).unwrap();
+    let findings = hlt_core::scan_cp949(&document);
+    let rows: Vec<(char, Option<&str>, usize)> = findings
+        .iter()
+        .map(|item| (item.from, item.suggestion.as_deref(), item.count))
+        .collect();
+    // 첨자 ⁵ 는 대응표에 없다(None) · − 는 두 번(런과 문단 글을 두 번 세지 않는다).
+    assert_eq!(
+        rows,
+        [
+            ('é', Some("e"), 1),
+            ('\u{2075}', None, 1),
+            ('\u{2212}', Some("-"), 2)
+        ]
+    );
+    assert!(
+        findings[1].context.contains("10\u{2075} \u{2212} 3"),
+        "{:?}",
+        findings[1]
+    );
+    assert_eq!(findings[1].code, "U+2075");
+
+    // 고르지 않은 대응 없는 글자(⁵)는 여전히 거부.
+    let mut untouched = document.clone();
+    assert!(hlt_core::make_cp949_safe(&mut untouched).is_err());
+    // 고른 글이 CP949 밖이면 거부.
+    let mut bad = document.clone();
+    let error = hlt_core::apply_cp949(&mut bad, &[('\u{2075}', "\u{2076}".to_string())].into())
+        .unwrap_err();
+    assert_eq!(error.phase, "cp949_choice");
+
+    // 고른 대응: ⁵ → ^5 · − → 대응표와 다른 ～ · é → 지움.
+    let mut chosen = document.clone();
+    let choices = [
+        ('\u{2075}', "^5".to_string()),
+        ('\u{2212}', "\u{FF5E}".to_string()),
+        ('é', String::new()),
+    ]
+    .into();
+    hlt_core::apply_cp949(&mut chosen, &choices).unwrap();
+    let caption = chosen
+        .paragraphs
+        .iter()
+        .find(|p| p.text.starts_with("10"))
+        .unwrap();
+    assert_eq!(caption.text, "10^5 \u{FF5E} 3 \u{FF5E} 1");
+    assert!(chosen.cells.iter().any(|cell| cell.text == "caf"));
+}

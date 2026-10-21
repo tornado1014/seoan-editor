@@ -152,7 +152,22 @@ export interface EditorViewDto {
 /** 열기: 이 탭에 문서가 있으면 새 탭에서 열고 `null`(이 탭은 그대로). */
 export const editorOpen = () => invoke<EditorViewDto | null>('editor_open');
 /** 불러와 HLT 만들기: 워드 · XML · HML → 새 `.HLT` 를 굽고 연다(이 탭에 문서가 있으면 새 탭 · `null`). */
-export const editorImport = () => invoke<EditorViewDto | null>('editor_import');
+/** CP949(HLT)에 없는 글자 한 종류 — 확인 표 한 줄. `suggestion` 이 `null` 이면 대응표에 없다. */
+export interface Cp949FindingDto {
+  from: string;
+  code: string;
+  suggestion: string | null;
+  count: number;
+  context: string;
+}
+/** 불러오기: 연 화면, 또는 CP949 밖 글자 확인 표(`review` — 고른 뒤 `editorImportFinish`). */
+export const editorImport = () =>
+  invoke<{ view: EditorViewDto | null; review: Cp949FindingDto[] }>('editor_import');
+/** 확인 표 뒤: 고른 대응(글자 → 바꿀 글 · 빈 글 = 지움)으로 굽고 연다. `null` = 취소. */
+export const editorImportFinish = (choices: Record<string, string> | null) =>
+  invoke<EditorViewDto | null>('editor_import_finish', { choices });
+/** 글에서 CP949 밖 글자 찾기(바꾸지 않는다). */
+export const editorCp949Scan = (text: string) => invoke<Cp949FindingDto[]>('editor_cp949_scan', { text });
 /** 새 의견서: 빈 문서 + 【의견내용】 을 만들고 연다(이 탭에 문서가 있으면 새 탭 · `null`). */
 export const editorNewOpinion = () => invoke<EditorViewDto | null>('editor_new_opinion');
 export const editorNewTab = () => invoke<void>('editor_new_tab');

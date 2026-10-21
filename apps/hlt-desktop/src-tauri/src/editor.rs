@@ -37,6 +37,33 @@ pub struct EditorState {
     pub quitting: std::sync::atomic::AtomicBool,
     /// 앱이 다 떴다(그 전에 온 Finder 파일은 첫 창 몫).
     pub ready: std::sync::atomic::AtomicBool,
+    /// 창 → 확인 표를 기다리는 불러오기(CP949 밖 글자를 고른 뒤 `editor_import_finish` 가 굽는다).
+    pending_import: Mutex<HashMap<String, PendingImport>>,
+}
+
+/// 불러온 원본(CP949 바꾸기 전) · 굽을 자리.
+struct PendingImport {
+    document: hlt_core::HmlDocument,
+    payloads: Vec<hlt_core::GeneratedImagePayload>,
+    input: PathBuf,
+    output: PathBuf,
+    dialect: hlt_core::GenerationDialect,
+}
+
+/// 불러오기 결과: 연 화면, 또는 CP949 밖 글자 확인 표(이때 `editor_import_finish` 로 잇는다).
+#[derive(Serialize)]
+pub struct ImportDto {
+    pub view: Option<EditorViewDto>,
+    pub review: Vec<hlt_core::Cp949Finding>,
+}
+
+impl ImportDto {
+    fn cancelled() -> Self {
+        Self {
+            view: None,
+            review: Vec::new(),
+        }
+    }
 }
 
 impl EditorState {
@@ -168,25 +195,6 @@ pub struct EditorViewDto {
     pub cp949_substitutions: Vec<hlt_core::Cp949Substitution>,
 }
 
-/// 「− → - (3곳)」 줄들.
-fn substitution_lines(substitutions: &[hlt_core::Cp949Substitution]) -> String {
-    substitutions
-        .iter()
-        .map(|item| {
-            let to = if item.to.is_empty() {
-                "(지움)"
-            } else {
-                item.to.as_str()
-            };
-            format!(
-                "U+{:04X} {} → {to} ({}곳)",
-                item.from as u32, item.from, item.count
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 fn view(session: &mut EditorSession, title: String) -> EditorViewDto {
     session.poll();
     EditorViewDto {
@@ -267,7 +275,7 @@ pub async fn editor_import(
     window: Window,
     app: AppHandle,
     state: State<'_, EditorState>,
-) -> Result<Option<EditorViewDto>, CoreError> {
+) -> Result<ImportDto, CoreError> {
     use hlt_core::GenerationDialect;
     use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogResult};
     let Some(input) = app
@@ -277,7 +285,7 @@ pub async fn editor_import(
         .blocking_pick_file()
         .and_then(|picked| picked.into_path().ok())
     else {
-        return Ok(None);
+        return Ok(ImportDto::cancelled());
     };
     let dialect = match app
         .dialog()
@@ -299,7 +307,7 @@ pub async fn editor_import(
         MessageDialogResult::Custom(label) if label == "국내 출원" => {
             GenerationDialect::PatentSpecificationKo
         }
-        _ => return Ok(None),
+        _ => return Ok(ImportDto::cancelled()),
     };
     let mut dialog = app
         .dialog()
@@ -313,39 +321,109 @@ pub async fn editor_import(
         .blocking_save_file()
         .and_then(|picked| picked.into_path().ok())
     else {
-        return Ok(None);
+        return Ok(ImportDto::cancelled());
     };
-    let (source, target) = (input.clone(), output.clone());
-    let substitutions = tauri::async_runtime::spawn_blocking(move || {
-        let (document, payloads, substitutions) = hlt_core::load_generation_input(&source)?;
-        hlt_core::save_generated_hlt_as_new(
-            &source,
-            &document,
-            dialect,
-            &payloads,
-            &target,
-            hlt_core::WriteOptions::default(),
-        )?;
-        Ok::<_, CoreError>(substitutions)
+    let source = input.clone();
+    let (document, payloads, review) = tauri::async_runtime::spawn_blocking(move || {
+        let (document, payloads) = hlt_core::load_generation_source(&source)?;
+        let review = hlt_core::scan_cp949(&document);
+        Ok::<_, CoreError>((document, payloads, review))
     })
     .await
     .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "worker", false))??;
-    if !substitutions.is_empty() {
-        app.dialog()
-            .message(format!(
-                "CP949 에 없는 글자를 바꿨습니다.\n\n{}",
-                substitution_lines(&substitutions)
-            ))
-            .title("불러와 HLT 만들기")
-            .parent(&window)
-            .blocking_show();
+    let pending = PendingImport {
+        document,
+        payloads,
+        input,
+        output,
+        dialect,
+    };
+    // CP949 밖 글자가 있으면 확인 표부터(화면이 고른 뒤 `editor_import_finish`).
+    if !review.is_empty() {
+        state
+            .pending_import
+            .lock()
+            .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "import_lock", false))?
+            .insert(window.label().to_string(), pending);
+        return Ok(ImportDto { view: None, review });
     }
+    let view = bake_import(
+        &window,
+        &app,
+        &state,
+        pending,
+        hlt_core::Cp949Choices::new(),
+    )
+    .await?;
+    Ok(ImportDto {
+        view,
+        ..ImportDto::cancelled()
+    })
+}
+
+/// 확인 표 뒤: 고른 대응(글자 → 바꿀 글 · 빈 글 = 지움)으로 굽고 연다. `None` = 취소(불러오기를 버린다).
+#[tauri::command]
+pub async fn editor_import_finish(
+    window: Window,
+    app: AppHandle,
+    state: State<'_, EditorState>,
+    choices: Option<std::collections::BTreeMap<String, String>>,
+) -> Result<Option<EditorViewDto>, CoreError> {
+    let pending = state
+        .pending_import
+        .lock()
+        .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "import_lock", false))?
+        .remove(window.label());
+    let (Some(pending), Some(choices)) = (pending, choices) else {
+        return Ok(None);
+    };
+    let choices = choices
+        .into_iter()
+        .filter_map(|(from, to)| from.chars().next().map(|ch| (ch, to)))
+        .collect();
+    bake_import(&window, &app, &state, pending, choices).await
+}
+
+/// CP949 밖 글자 찾기(편집기 붙여넣기 · 확인 표의 「직접 입력」 칸 검사).
+#[tauri::command]
+pub fn editor_cp949_scan(text: String) -> Vec<hlt_core::Cp949Finding> {
+    hlt_core::scan_cp949_text(&text)
+}
+
+async fn bake_import(
+    window: &Window,
+    app: &AppHandle,
+    state: &State<'_, EditorState>,
+    pending: PendingImport,
+    choices: hlt_core::Cp949Choices,
+) -> Result<Option<EditorViewDto>, CoreError> {
+    let output = pending.output.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let PendingImport {
+            mut document,
+            payloads,
+            input,
+            output,
+            dialect,
+        } = pending;
+        hlt_core::apply_cp949(&mut document, &choices)?;
+        hlt_core::save_generated_hlt_as_new(
+            &input,
+            &document,
+            dialect,
+            &payloads,
+            &output,
+            hlt_core::WriteOptions::default(),
+        )
+    })
+    .await
+    .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "worker", false))??;
     // 열기와 같다: 이 탭에 문서가 있으면 새 탭에서.
     if state.has_document(window.label()) {
-        new_tab(&app, Some(window.label()), Some(output))?;
+        new_tab(app, Some(window.label()), Some(output))?;
         return Ok(None);
     }
-    open_path(&state, &window, output).await.map(Some)
+    open_path(state, window, output).await.map(Some)
 }
 
 /// 새 의견서: 의견서 서식(빈 문서 + 【의견내용】)으로 새 `.HLT` 를 만들고 연다(이 탭에 문서가 있으면 새 탭).

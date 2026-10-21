@@ -61,7 +61,10 @@ pub use codec::{
     max_backreference_distance,
 };
 pub use container::{ContainerLayout, Footer, HLT_HEADER_LEN, HLT_MAGIC, read_layout};
-pub use cp949_safe::{Cp949Substitution, cp949_safe_text, make_cp949_safe};
+pub use cp949_safe::{
+    Cp949Choices, Cp949Finding, Cp949Substitution, apply_cp949, cp949_safe_text, make_cp949_safe,
+    scan_cp949, scan_cp949_text,
+};
 pub use docx::{
     DocxDocument, DocxMediaAsset, DocxPackageSummary, DocxPageBreak, inspect_docx_path,
     load_docx_image_payloads,
@@ -106,7 +109,7 @@ pub use format_rules::{
 pub use from_hlt::hml_document_from_hlt;
 pub use generate::{
     GeneratedHltDocument, generate_hlt_document, generate_hlt_document_with_profile,
-    load_generation_input,
+    load_generation_input, load_generation_source,
 };
 pub use generate_body::{
     GeneratedFormatSpan, GeneratedImageAnchor, GeneratedLine, GeneratedLineEnding, HltBodyPlan,

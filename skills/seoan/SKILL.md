@@ -44,6 +44,9 @@ hlt-cli export-docx doc.HLT doc.docx
 hlt-cli generate-hlt spec.docx spec.HLT --dialect pct-patent            # PCT 국내진입
 hlt-cli generate-hlt spec.docx spec.HLT --dialect patent-specification-ko # 국내출원
 ```
+HLT 는 CP949 로 저장한다. CP949 밖 글자(`−` `é` NBSP …)는 대응표로 바뀌고 결과의 `cp949_substitutions` 에 남는다.
+대응표에 없는 글자(CP949 밖 첨자 `⁵` · 이모지)는 `cp949_invalid`(`details.chars` = 전부)로 멈춘다 — 사용자에게 보여 주고
+고른 대응을 `--substitutions map.json`(`{"⁵": "^5"}` · 빈 글 = 지움)으로 다시 준다.
 
 ### 4. 글 고치기
 1. `inspect --kind paragraphs` 로 고칠 문단 id 를 찾는다.

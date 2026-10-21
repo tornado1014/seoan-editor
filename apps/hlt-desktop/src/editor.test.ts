@@ -89,6 +89,16 @@ beforeEach(() => {
         return view(texts);
       case 'editor_page':
         return page(texts);
+      case 'editor_cp949_scan':
+        return Array.from(String(args!.text))
+          .filter((ch) => ch === '\u2212' || ch === '\u2075')
+          .map((ch) => ({
+            from: ch,
+            code: `U+${ch.codePointAt(0)!.toString(16).toUpperCase()}`,
+            suggestion: ch === '\u2212' ? '-' : null,
+            count: 1,
+            context: String(args!.text),
+          }));
       case 'editor_replace_text': {
         if (String(args!.text).includes('≈')) {
           throw { code: 'cp949_invalid', phase: 'generate_body', details: { char: 'U+2248' } };
@@ -480,6 +490,7 @@ describe('page editing', () => {
     const root = await open();
     clickAt(root, 63, 104);
     type(root, '≈');
+    await settle(10); // CP949 밖일 수 있는 글자는 바탕에 한 번 물어본 뒤 넣는다
     expect(glyphs(root)).toBe('가≈나다라마');
     await settle(600);
     expect(glyphs(root)).toBe('가나다라마');
@@ -487,6 +498,34 @@ describe('page editing', () => {
     type(root, '김'); // 다음 고침은 다시 된다(거절된 글자를 다시 보내지 않는다)
     await settle(600);
     expect(texts[0]).toBe('가김나다');
+  });
+
+  test('typing or pasting a character outside CP949 asks in a review table first', async () => {
+    const root = await open();
+    clickAt(root, 63, 104);
+    type(root, 'a\u2212b');
+    await settle(10);
+    const box = document.querySelector<HTMLFormElement>('.cp949-review')!;
+    expect(box).not.toBeNull();
+    expect(box.querySelector('.cp949-char')!.textContent).toBe('\u2212');
+    expect(box.querySelector<HTMLInputElement>('[data-row="0"]')!.value).toBe('-');
+    type(root, '김'); // 표가 떠 있는 동안 친 글은 기다렸다가 뒤에 들어간다
+    box.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
+    await settle(10);
+    expect(document.querySelector('.cp949-review')).toBeNull();
+    expect(glyphs(root)).toBe('가a-b김나다라마');
+
+    // 대응 없는 글자(⁵): 칸이 비면 못 닫는다 · 취소하면 넣지 않는다.
+    type(root, 'x\u2075');
+    await settle(10);
+    const second = document.querySelector<HTMLFormElement>('.cp949-review')!;
+    second.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
+    await settle(10);
+    expect(second.querySelector('.cp949-error')!.textContent).toContain('U+2075');
+    second.querySelector<HTMLButtonElement>('.cp949-cancel')!.click();
+    await settle(10);
+    expect(document.querySelector('.cp949-review')).toBeNull();
+    expect(glyphs(root)).toBe('가a-b김나다라마');
   });
 
   test('identification item: right-click submenu → number (next one filled in) → heading + empty paragraph below', async () => {

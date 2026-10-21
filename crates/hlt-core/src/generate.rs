@@ -350,7 +350,8 @@ pub fn load_generation_input(
     Ok((document, payloads, substitutions))
 }
 
-fn load_generation_source(
+/// [`load_generation_input`] 에서 CP949 바꾸기를 뺀 원본 — 확인 표([`crate::scan_cp949`])를 먼저 보여 줄 때.
+pub fn load_generation_source(
     input: &std::path::Path,
 ) -> Result<(HmlDocument, Vec<GeneratedImagePayload>), CoreError> {
     let extension = input
