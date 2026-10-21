@@ -75,6 +75,8 @@ pub struct PlannedCellBox {
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct PlannedImage {
     pub object_code: u32,
+    /// 판독 그림 id(`ImageOccurrence::id`) — 화면이 그림을 골라 크기를 바꿀 때 가리킨다.
+    pub image: String,
     pub x: f64,
     pub top: f64,
     pub width: f64,
@@ -198,6 +200,7 @@ pub fn page_plan(document: &InspectDocument, inflated: &[u8], options: PrintOpti
                         let image = &document.images[index];
                         plan[page - 1].images.push(PlannedImage {
                             object_code: image.object_code,
+                            image: image.id.clone(),
                             x,
                             top: line_top + (printed.ascent - height) * PT_PER_UNIT - IMAGE_RAISE,
                             width: (f64::from(image.display_width) - DRAW_INSET_WIDTH).max(0.0),
@@ -581,6 +584,7 @@ fn place_row(
                     stops.push(x);
                     images.push(PlannedImage {
                         object_code: image.object_code,
+                        image: image.id.clone(),
                         x,
                         top: top + shift + k as f64 * CELL_PITCH + CELL_IMAGE_DROP,
                         width,

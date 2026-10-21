@@ -829,6 +829,21 @@ pub async fn editor_insert_figure(
     })
 }
 
+/// 그림 크기 바꾸기(비율 잠금): 판독 그림 id · 배율.
+#[tauri::command]
+pub async fn editor_resize_image(
+    window: Window,
+    state: State<'_, EditorState>,
+    image: String,
+    scale: f64,
+) -> Result<EditorViewDto, CoreError> {
+    with_session(&state, &window, |session| {
+        session.resize_image(&image, scale)?;
+        let title = title(session);
+        Ok(view(session, title))
+    })
+}
+
 /// 그림 파일 넣기: JPG · TIFF 를 골라 `after` 문단 뒤에 그림 문단으로. 고르기를 취소하면 문서는 그대로.
 #[tauri::command]
 pub async fn editor_insert_picture(

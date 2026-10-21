@@ -18,7 +18,7 @@ describe('renderPage', () => {
           ],
         },
       ],
-      images: [{ object_code: 7, x: 89.76, top: 182.04, width: 399.24, height: 475.32 }],
+      images: [{ object_code: 7, image: 'image:0', x: 89.76, top: 182.04, width: 399.24, height: 475.32 }],
     };
     const host = document.createElement('div');
     host.append(renderPage(page, 2, (code) => (code === 7 ? 'blob:x' : null), 'paragraph:4'));
@@ -33,6 +33,7 @@ describe('renderPage', () => {
     const image = host.querySelector<HTMLImageElement>('img')!;
     expect(image.src).toBe('blob:x');
     expect(image.style.width).toBe('798.48px');
+    expect(image.dataset.image, '크기 바꾸기가 가리킬 그림 id').toBe('image:0');
   });
 });
 

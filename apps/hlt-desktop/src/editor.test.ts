@@ -3,7 +3,7 @@
 // 문단 첫머리 Backspace = 앞 문단에 붙이기. 다시 굽는 동안 친 키는 버리지 않는다. 백엔드는 가짜다.
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
-import type { EditorViewDto, PlannedPageDto } from './contracts';
+import type { EditorViewDto, PlannedImageDto, PlannedPageDto } from './contracts';
 import { mountEditor } from './editor';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
@@ -45,7 +45,7 @@ function view(texts: string[]): EditorViewDto {
 function page(texts: string[]): PlannedPageDto {
   return {
     number: 1,
-    images: [],
+    images: pageImages,
     lines: texts.map((text, i) => {
       const stops = [50];
       for (const ch of text) stops.push(stops.at(-1)! + (ch.charCodeAt(0) < 0x80 ? 6 : 12));
@@ -63,12 +63,14 @@ function page(texts: string[]): PlannedPageDto {
 }
 
 let texts: string[] = [];
+let pageImages: PlannedImageDto[] = [];
 let numbers: (string | null)[] = [];
 let closeAnswer = true;
 const calls: [string, unknown][] = [];
 
 beforeEach(() => {
   texts = ['가나다', '라마'];
+  pageImages = [];
   numbers = [];
   closeAnswer = true;
   calls.length = 0;
@@ -89,6 +91,10 @@ beforeEach(() => {
         return view(texts);
       case 'editor_page':
         return page(texts);
+      case 'editor_image':
+        return new Uint8Array();
+      case 'editor_resize_image':
+        return view(texts);
       case 'editor_cp949_scan':
         return Array.from(String(args!.text))
           .filter((ch) => ch === '\u2212' || ch === '\u2075')
@@ -526,6 +532,32 @@ describe('page editing', () => {
     await settle(10);
     expect(document.querySelector('.cp949-review')).toBeNull();
     expect(glyphs(root)).toBe('가a-b김나다라마');
+  });
+
+  test('a picture is picked by clicking it and resized by dragging its corner, ratio locked', async () => {
+    pageImages = [{ object_code: 3, image: 'image:0', x: 50, top: 200, width: 100, height: 50 }];
+    URL.createObjectURL = () => 'blob:x';
+    const root = await open();
+    const picture = root.querySelector<HTMLImageElement>('img.nk-image')!;
+    expect(picture.dataset.image).toBe('image:0');
+    picture.getBoundingClientRect = () => ({ left: 65, top: 260, right: 195, bottom: 325 }) as DOMRect;
+    picture.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 100, clientY: 300 }));
+    const handle = root.querySelector<HTMLElement>('.nk-image-handle')!;
+    expect(handle).not.toBeNull();
+    // 오른쪽으로 40px · 아래로 조금 → 가로를 따르고 세로는 비율대로.
+    handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 195, clientY: 325 }));
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: 235, clientY: 330 }));
+    const width = 100 * SCALE + 40;
+    expect(picture.style.width).toBe(`${width}px`);
+    expect(parseFloat(picture.style.height)).toBeCloseTo(width / 2);
+    window.dispatchEvent(new MouseEvent('mouseup'));
+    await settle(10);
+    const args = last('editor_resize_image')![1] as { image: string; scale: number };
+    expect(args.image).toBe('image:0');
+    expect(args.scale).toBeCloseTo(width / (100 * SCALE));
+    // 그림 밖을 누르면 고르기가 풀린다.
+    clickAt(root, 63, 104);
+    expect(root.querySelector('.nk-image-frame')).toBeNull();
   });
 
   test('identification item: right-click submenu → number (next one filled in) → heading + empty paragraph below', async () => {

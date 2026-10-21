@@ -324,3 +324,5 @@ progress {
 .cp949-review tr.cp949-none td { background: #fbe9e7; }
 .cp949-review .cp949-error { margin: 0; min-height: 1em; color: #b3261e; font-size: 12px; }
 .cp949-review .cp949-buttons { display: flex; gap: 6px; justify-content: flex-end; }
+.nk-image-frame { position: absolute; box-sizing: border-box; border: 1px solid #2f6fd1; pointer-events: none; z-index: 3; }
+.nk-image-handle { position: absolute; right: -5px; bottom: -5px; width: 9px; height: 9px; background: #2f6fd1; border: 1px solid #fff; cursor: nwse-resize; pointer-events: auto; }

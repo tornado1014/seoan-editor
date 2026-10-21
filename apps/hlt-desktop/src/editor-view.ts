@@ -26,6 +26,7 @@ export function renderPage(
   for (const image of page.images) {
     const element = document.createElement('img');
     element.className = 'nk-image';
+    element.dataset.image = image.image;
     const url = imageUrl(image.object_code);
     if (url) element.src = url;
     place(element, image.x, image.top, scale);

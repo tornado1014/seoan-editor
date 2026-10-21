@@ -1107,6 +1107,39 @@ impl EditorSession {
         self.place_figure(after, Some(kind.label()), png, width_pt, height_pt)
     }
 
+    /// 그림 크기 바꾸기(비율 잠금): 판독 그림 `image_id` 의 상자 · 표시 크기를 모두 `scale` 배로.
+    /// 쪽 본문(가로 174 · 세로 240mm)보다 커지지 않게 배율을 깎는다. 판독 그림 차례 = 모델 그림 차례(`renumber` 가 닻 차례로 매긴다).
+    pub fn resize_image(&mut self, image_id: &str, scale: f64) -> Result<(), CoreError> {
+        if !(scale.is_finite() && scale > 0.0) {
+            return Err(editor_error("image_scale"));
+        }
+        let index = self
+            .document
+            .images
+            .iter()
+            .position(|image| image.id == image_id)
+            .ok_or_else(|| editor_error("image"))?;
+        let count = self.document.images.len();
+        self.edit_model(|model| {
+            if model.images.len() != count {
+                return Err(editor_error("image"));
+            }
+            let image = &mut model.images[index];
+            let (width, height) = (image.width.unwrap_or(1), image.height.unwrap_or(1));
+            // 상자 단위 = 0.282mm(`docx.rs` 의 표시 단위와 같다).
+            let fit = (174.0 / (f64::from(width) * 0.282)).min(240.0 / (f64::from(height) * 0.282));
+            let scale = scale.min(fit);
+            let scaled = |value: Option<u32>| {
+                value.map(|value| ((f64::from(value) * scale).round() as u32).max(1))
+            };
+            image.width = scaled(image.width);
+            image.height = scaled(image.height);
+            image.secondary_width = scaled(image.secondary_width);
+            image.secondary_height = scaled(image.secondary_height);
+            Ok(())
+        })
+    }
+
     /// 그림 파일 넣기(JPG · TIFF · PNG …): `after` 문단 뒤에 그림 문단 하나(표제 없음).
     /// 크기 = 96dpi 화소 → pt, 쪽보다 크면 비율 그대로 줄인다.
     pub fn insert_picture(&mut self, after: &str, bytes: &[u8]) -> Result<(), CoreError> {

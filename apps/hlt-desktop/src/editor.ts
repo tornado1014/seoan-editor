@@ -37,6 +37,7 @@ import {
   editorNewTab,
   editorInsertItem,
   editorInsertPicture,
+  editorResizeImage,
   editorRemoveItems,
   editorClose,
   editorOpenPending,
@@ -973,6 +974,13 @@ export function mountEditor(root: HTMLElement): void {
   let dragging = false;
   pagesRoot.addEventListener('mousedown', (event) => {
     if (event.button !== 0 || !view) return;
+    if ((event.target as HTMLElement).closest('.nk-image-handle')) return;
+    clearPicture();
+    const picture = pictureAt(event);
+    if (picture && view.editable) {
+      event.preventDefault();
+      return selectPicture(picture);
+    }
     const next = pointCaret(event);
     if (!next) return;
     event.preventDefault();
@@ -989,6 +997,68 @@ export function mountEditor(root: HTMLElement): void {
     if (next) act(() => place(next, true));
   });
   window.addEventListener('mouseup', () => (dragging = false));
+
+  /** 누른 자리의 그림(글 줄이 그림 아래쪽을 덮으니 대상이 아니라 자리로 찾는다). */
+  function pictureAt(event: MouseEvent): HTMLImageElement | null {
+    const all = pagesRoot.querySelectorAll<HTMLImageElement>('img.nk-image[data-image]');
+    return (
+      Array.from(all).find((picture) => {
+        const box = picture.getBoundingClientRect();
+        return event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
+      }) ?? null
+    );
+  }
+  function clearPicture() {
+    pagesRoot.querySelectorAll('.nk-image-frame').forEach((frame) => frame.remove());
+  }
+  /** 그림 고르기: 테두리 + 오른쪽 아래 손잡이. 손잡이를 끌면 비율을 잠근 채 크기가 따라오고, 놓으면 그 배율로 다시 굽는다. */
+  function selectPicture(picture: HTMLImageElement) {
+    const frame = document.createElement('div');
+    frame.className = 'nk-image-frame';
+    const handle = document.createElement('div');
+    handle.className = 'nk-image-handle';
+    frame.append(handle);
+    const fit = () => {
+      frame.style.left = picture.style.left;
+      frame.style.top = picture.style.top;
+      frame.style.width = picture.style.width;
+      frame.style.height = picture.style.height;
+    };
+    fit();
+    picture.after(frame);
+    handle.addEventListener('mousedown', (event) => {
+      if (event.button !== 0 || !canEdit()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const [startX, startY] = [event.clientX, event.clientY];
+      const width = parseFloat(picture.style.width);
+      const height = parseFloat(picture.style.height);
+      const ratio = height / width;
+      let next = width;
+      const move = (moved: MouseEvent) => {
+        // 가로 · 세로 중 더 많이 끈 쪽을 따른다 — 세로는 늘 비율대로.
+        const dx = moved.clientX - startX;
+        const dy = (moved.clientY - startY) / ratio;
+        next = Math.max(8, width + (Math.abs(dx) >= Math.abs(dy) ? dx : dy));
+        picture.style.width = `${next}px`;
+        picture.style.height = `${next * ratio}px`;
+        fit();
+      };
+      const up = () => {
+        window.removeEventListener('mousemove', move);
+        window.removeEventListener('mouseup', up);
+        const scale = next / width;
+        if (Math.abs(scale - 1) < 0.01) return;
+        const id = picture.dataset.image!;
+        void run('그림 크기', () => editorResizeImage(id, scale));
+      };
+      window.addEventListener('mousemove', move);
+      window.addEventListener('mouseup', up);
+    });
+  }
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') clearPicture();
+  });
   // 스크롤하면 기다리던 「커서 보이기」(다시 굽기가 끝나면 커서로 옮기기)를 버린다 — 사용자가 다른 곳을 보러 갔다.
   pagesRoot.addEventListener('wheel', () => (reveal = false), { passive: true });
   pagesRoot.addEventListener('dblclick', (event) => {

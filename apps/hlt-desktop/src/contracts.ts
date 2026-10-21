@@ -102,6 +102,8 @@ export interface PlannedLineDto {
 
 export interface PlannedImageDto {
   object_code: number;
+  /** 판독 그림 id — 크기 바꾸기가 가리킨다. */
+  image: string;
   x: number;
   top: number;
   width: number;
@@ -211,6 +213,9 @@ export const editorInsertFigure = (
   widthPt: number,
   heightPt: number,
 ) => invoke<EditorViewDto>('editor_insert_figure', { after, kind, pngBase64, widthPt, heightPt });
+/** 그림 크기 바꾸기(비율 잠금): 판독 그림 id · 배율. */
+export const editorResizeImage = (image: string, scale: number) =>
+  invoke<EditorViewDto>('editor_resize_image', { image, scale });
 /** 그림 파일(JPG · TIFF) 골라 `after` 문단 뒤에 넣기 · 취소하면 그대로인 화면. */
 export const editorInsertPicture = (after: string) => invoke<EditorViewDto>('editor_insert_picture', { after });
 export type CharacterFormatDto = 'bold' | 'italic' | 'underline' | 'superscript' | 'subscript';

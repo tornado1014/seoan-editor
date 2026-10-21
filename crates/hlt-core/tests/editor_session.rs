@@ -258,3 +258,65 @@ fn pasted_characters_outside_cp949_are_substituted_before_saving() {
     let error = session.replace_text(&body, "\u{1F600}").unwrap_err();
     assert_eq!(error.code, hlt_core::ErrorCode::Cp949Invalid);
 }
+
+/// 그림 크기 바꾸기(비율 잠금): 고른 그림만 배율대로 · 비율 그대로 · 쪽보다 크게는 쪽에서 멈춘다 · 없는 그림은 오류.
+#[test]
+fn resizing_an_image_scales_only_that_image_keeping_its_ratio() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("의견서.HLT");
+    hlt_core::save_new_opinion_as_new(&path, hlt_core::WriteOptions::default()).unwrap();
+    let mut session = EditorSession::open(&path).unwrap();
+    let body = session.paragraphs()[1].id.clone();
+    let encode = |width: u32, height: u32| {
+        let mut bytes = Vec::new();
+        image::RgbImage::from_pixel(width, height, image::Rgb([0, 0, 0]))
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        bytes
+    };
+    session.insert_picture(&body, &encode(200, 100)).unwrap();
+    session.insert_picture(&body, &encode(120, 160)).unwrap();
+    let sizes = |session: &EditorSession| -> Vec<(String, u32, u32)> {
+        session
+            .document
+            .images
+            .iter()
+            .map(|image| (image.id.clone(), image.display_width, image.display_height))
+            .collect()
+    };
+    let before = sizes(&session);
+    assert_eq!(before.len(), 2);
+    session.resize_image(&before[1].0, 0.5).unwrap();
+    let out = temp.path().join("줄임.HLT");
+    session.save_as(&out).unwrap();
+    let after = sizes(&EditorSession::open(&out).unwrap());
+    assert_eq!(
+        (after[0].1, after[0].2),
+        (before[0].1, before[0].2),
+        "다른 그림은 그대로"
+    );
+    let (w, h) = (f64::from(after[1].1), f64::from(after[1].2));
+    assert!(
+        (w - f64::from(before[1].1) / 2.0).abs() <= 1.0,
+        "{before:?} → {after:?}"
+    );
+    let ratio = f64::from(before[1].1) / f64::from(before[1].2);
+    assert!(
+        (w / h - ratio).abs() < 0.05,
+        "비율 그대로 {before:?} → {after:?}"
+    );
+
+    // 아주 크게 → 쪽 본문에서 멈춘다(표시 단위 ≈ 1pt 대 · 쪽 가로 174mm ≈ 493pt 를 넘지 않는다).
+    let mut session = EditorSession::open(&out).unwrap();
+    let id = sizes(&session)[0].0.clone();
+    session.resize_image(&id, 100.0).unwrap();
+    let grown = sizes(&session)[0].clone();
+    assert!(
+        grown.1 > before[0].1 && f64::from(grown.1) < 520.0,
+        "{grown:?}"
+    );
+    assert!(session.resize_image("image:없음", 2.0).is_err());
+}
