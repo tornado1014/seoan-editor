@@ -162,6 +162,8 @@ enum DocxInlineSeed {
     },
     Image {
         relationship_id: String,
+        /// Word 가 그리는 크기(mm · `wp:extent`). 없으면 화소 비율로 쪽에 맞춘다.
+        extent_mm: Option<(f64, f64)>,
     },
 }
 
@@ -759,6 +761,11 @@ fn collect_word_run_content(
             "t" => push_docx_text(inlines, child.text(), formats.to_vec(), size),
             "tab" => push_docx_text(inlines, "\t".to_string(), formats.to_vec(), size),
             "pict" | "drawing" | "object" => {
+                // ponytail: VML(`pict` · `object`)의 style 크기는 안 읽는다 — 그런 Word 가 오면 그때.
+                let extent_mm = child.first_descendant("extent").and_then(|extent| {
+                    let emu = |name| extent.attribute(name)?.parse::<f64>().ok();
+                    Some((emu("cx")? / 36_000.0, emu("cy")? / 36_000.0))
+                });
                 let mut image_nodes = Vec::new();
                 child.descendants_named("imagedata", &mut image_nodes);
                 child.descendants_named("blip", &mut image_nodes);
@@ -769,6 +776,7 @@ fn collect_word_run_content(
                         .ok_or_else(|| document_error(source))?;
                     inlines.push(DocxInlineSeed::Image {
                         relationship_id: relationship_id.to_string(),
+                        extent_mm,
                     });
                 }
             }
@@ -867,7 +875,10 @@ fn materialize_docx_inlines(
             } => {
                 push_hml_text(&mut inlines, text, formats, size);
             }
-            DocxInlineSeed::Image { relationship_id } => {
+            DocxInlineSeed::Image {
+                relationship_id,
+                extent_mm,
+            } => {
                 let asset = media
                     .get(relationship_id.as_str())
                     .ok_or_else(|| relationships_error(source))?;
@@ -883,9 +894,22 @@ fn materialize_docx_inlines(
                 } else {
                     extension
                 };
-                let (width_mm, height_mm) = fit_image_mm(asset.pixel_width, asset.pixel_height)?;
-                let width = image_display_units(width_mm);
-                let height = image_display_units(height_mm);
+                let (width, height) = match extent_mm {
+                    Some((width_mm, height_mm)) if width_mm > 0.0 && height_mm > 0.0 => {
+                        // Word 크기 그대로 · HLT 쪽 본문(가로 174 · 세로 240mm)보다 크면 비율대로 줄이기만 한다.
+                        let scale = (174.0 / width_mm).min(240.0 / height_mm).min(1.0);
+                        let units = |mm: f64| ((mm * scale * 1000.0 / 282.0).round() as u32).max(1);
+                        (units(width_mm), units(height_mm))
+                    }
+                    _ => {
+                        let (width_mm, height_mm) =
+                            fit_image_mm(asset.pixel_width, asset.pixel_height)?;
+                        (
+                            image_display_units(width_mm),
+                            image_display_units(height_mm),
+                        )
+                    }
+                };
                 document.images.push(HmlImage {
                     id: image_id.clone(),
                     occurrence,

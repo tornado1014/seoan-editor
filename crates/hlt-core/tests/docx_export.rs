@@ -133,6 +133,17 @@ fn exported_word_reads_back_as_the_same_document() {
     );
     assert_eq!(word.images.len(), model.images.len(), "그림 수");
     assert!(!word.images.is_empty());
+    // Word 가 그리는 크기(wp:extent = 40×20pt)를 그대로 읽는다 — 쪽 폭으로 키우지 않는다.
+    let mm = |units: Option<u32>| f64::from(units.unwrap()) * 0.282;
+    let figure = &word.images[0];
+    assert!(
+        (mm(figure.width) - 40.0 * 25.4 / 72.0).abs() < 0.5,
+        "{figure:?}"
+    );
+    assert!(
+        (mm(figure.height) - 20.0 * 25.4 / 72.0).abs() < 0.5,
+        "{figure:?}"
+    );
     let bold = |d: &HmlDocument| {
         d.paragraphs.iter().flat_map(|p| &p.inlines).any(|inline| {
             matches!(inline, HmlInline::Text { formats, .. } if formats.contains(&CharacterFormat::Bold))
