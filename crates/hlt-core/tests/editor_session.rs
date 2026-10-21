@@ -320,3 +320,100 @@ fn resizing_an_image_scales_only_that_image_keeping_its_ratio() {
     );
     assert!(session.resize_image("image:없음", 2.0).is_err());
 }
+
+/// 표 칸 안 그림 넣기: 커서 자리(칸 글의 그림 = `_`)에 들어가고, 칸 폭보다 크면 줄이며, 쪽 차례(앞 칸 그림이 앞)를 지킨다.
+/// 저장 · 다시 열어도 그림 수가 같고(겹쳐 읽히지 않는다), 넣은 그림 크기를 바꾸면 그 그림만 바뀐다.
+#[test]
+fn a_picture_goes_into_a_table_cell_at_the_caret() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("의견서.HLT");
+    hlt_core::save_new_opinion_as_new(&path, hlt_core::WriteOptions::default()).unwrap();
+    let mut session = EditorSession::open(&path).unwrap();
+    let body = session.paragraphs()[1].id.clone();
+    let encode = |width: u32, height: u32| {
+        let mut bytes = Vec::new();
+        image::RgbImage::from_pixel(width, height, image::Rgb([0, 0, 0]))
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        bytes
+    };
+    session.insert_table(&body, 1, 3).unwrap();
+    let table_cells = |session: &EditorSession| -> Vec<(String, f64)> {
+        let table = session.document.tables[0].id.clone();
+        session
+            .document
+            .cells
+            .iter()
+            .filter(|cell| cell.table_id == table)
+            .map(|cell| (cell.id.clone(), f64::from(cell.width) / 20.0))
+            .collect()
+    };
+    let cells = table_cells(&session);
+    session.replace_cell_text(&cells[0].0, "가나").unwrap();
+    // 둘째 칸에 작은 그림을 먼저, 그 뒤 첫째 칸 글 끝에 칸보다 넓은 그림.
+    session
+        .insert_picture_in_cell(&cells[1].0, 0, &encode(40, 20))
+        .unwrap();
+    let cells = table_cells(&session);
+    session
+        .insert_picture_in_cell(&cells[0].0, 2, &encode(2000, 500))
+        .unwrap();
+    let cells = table_cells(&session);
+    assert_eq!(session.cell_text(&cells[0].0).as_deref(), Some("가나_"));
+    assert_eq!(session.cell_text(&cells[1].0).as_deref(), Some("_"));
+    let images = session.document.images.clone();
+    assert_eq!(
+        images
+            .iter()
+            .map(|image| image.cell_id.clone())
+            .collect::<Vec<_>>(),
+        [Some(cells[0].0.clone()), Some(cells[1].0.clone())],
+        "쪽 차례 = 첫째 칸 그림이 앞"
+    );
+    assert!(
+        f64::from(images[0].display_width) <= cells[0].1,
+        "{:?} · 칸 {}pt",
+        images[0],
+        cells[0].1
+    );
+    assert_eq!(
+        (images[1].display_width, images[1].display_height),
+        (30, 15)
+    );
+
+    // 다시 열기 전(모델 차례 = 넣은 차례)에도 크기 바꾸기가 고른 그림을 맞힌다.
+    session.resize_image(&images[0].id, 0.5).unwrap();
+    let live = session.document.images.clone();
+    assert!(
+        live[0].display_width < images[0].display_width
+            && live[1].display_width == images[1].display_width,
+        "{images:?} → {live:?}"
+    );
+
+    let out = temp.path().join("칸 그림.HLT");
+    session.save_as(&out).unwrap();
+    let mut session = EditorSession::open(&out).unwrap();
+    assert_eq!(
+        session.document.images.len(),
+        2,
+        "다시 열어도 겹치지 않는다"
+    );
+    let small = session.document.images[1].clone();
+    let big = session.document.images[0].clone();
+    session.resize_image(&big.id, 0.5).unwrap();
+    let after = session.document.images.clone();
+    assert_eq!(after.len(), 2);
+    assert_eq!(
+        (after[1].display_width, after[1].display_height),
+        (small.display_width, small.display_height),
+        "다른 그림은 그대로"
+    );
+    assert!(
+        (f64::from(after[0].display_width) - f64::from(big.display_width) / 2.0).abs() <= 1.0,
+        "{big:?} → {:?}",
+        after[0]
+    );
+}

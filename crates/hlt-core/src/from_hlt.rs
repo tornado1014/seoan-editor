@@ -87,6 +87,12 @@ pub fn hml_document_from_hlt(
     let images_by_paragraph =
         anchor_map(&document.images, |image| Some(image.paragraph_id.as_str()));
     let images_by_cell = anchor_map(&document.images, |image| image.cell_id.as_deref());
+    let in_cells: std::collections::BTreeSet<&str> = document
+        .images
+        .iter()
+        .filter(|image| image.cell_id.is_some())
+        .map(|image| image.id.as_str())
+        .collect();
 
     // 원본 줄나눔. 줄마다 본문 바이트 범위를 들고 있으므로 길이만 뽑아 문단별로 모은다.
     let mut source_lines: BTreeMap<&str, Vec<u32>> = BTreeMap::new();
@@ -141,8 +147,15 @@ pub fn hml_document_from_hlt(
             text = full.text.clone();
         }
         let table_id_present = table_id.is_some();
+        // 글 속 그림 = 문단 자기 그림만. 표 닻 문단은 칸 그림도 닻으로 들지만 그건 칸이 따로 든다 —
+        // 꼬리 글이 빈 표 문단이 칸 그림을 글 속 그림으로 한 번 더 읽어 다시 굽으면 그림이 불었다.
+        let own: Vec<&str> = anchored
+            .iter()
+            .copied()
+            .filter(|id| !in_cells.contains(id))
+            .collect();
         let inlines = match paragraph_formats.get(record.id.as_str()) {
-            Some(formats) => inline_runs(&text, formats, head - terminators, anchored),
+            Some(formats) => inline_runs(&text, formats, head - terminators, &own),
             None => plain(&text),
         };
         // 생성기는 `text` 가 런의 글자와 정확히 같기를 요구한다. 그림 자리표는 런이 되므로

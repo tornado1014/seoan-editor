@@ -728,21 +728,7 @@ impl EditorSession {
                 .find(|cell| cell.id == cell_id)
                 .ok_or_else(|| editor_error("cell"))?;
             let edited = splice(&cells(&cell.inlines), &text.chars().collect::<Vec<_>>());
-            cell.inlines = inlines(&edited);
-            cell.text = edited
-                .iter()
-                .filter_map(|value| match value {
-                    Cell::Char(ch, ..) => Some(*ch),
-                    Cell::Image(_) => None,
-                })
-                .collect();
-            cell.image_ids = edited
-                .iter()
-                .filter_map(|value| match value {
-                    Cell::Image(id) => Some(id.clone()),
-                    Cell::Char(..) => None,
-                })
-                .collect();
+            set_cell(cell, &edited);
             Ok(())
         })
     }
@@ -1120,6 +1106,16 @@ impl EditorSession {
             .position(|image| image.id == image_id)
             .ok_or_else(|| editor_error("image"))?;
         let count = self.document.images.len();
+        // 표 칸 안 그림은 칸 폭(pt = 칸 폭 / 20 · 인쇄가 칸 상자를 그리는 값)보다 넓어지지 않는다.
+        let read = &self.document.images[index];
+        let cell_fit = read
+            .cell_id
+            .as_deref()
+            .and_then(|id| self.document.cells.iter().find(|cell| cell.id == id))
+            .filter(|_| read.display_width > 0)
+            .map_or(f64::INFINITY, |cell| {
+                f64::from(cell.width) / 20.0 / f64::from(read.display_width)
+            });
         self.edit_model(|model| {
             if model.images.len() != count {
                 return Err(editor_error("image"));
@@ -1128,7 +1124,7 @@ impl EditorSession {
             let (width, height) = (image.width.unwrap_or(1), image.height.unwrap_or(1));
             // 상자 단위 = 0.282mm(`docx.rs` 의 표시 단위와 같다).
             let fit = (174.0 / (f64::from(width) * 0.282)).min(240.0 / (f64::from(height) * 0.282));
-            let scale = scale.min(fit);
+            let scale = scale.min(fit).min(cell_fit);
             let scaled = |value: Option<u32>| {
                 value.map(|value| ((f64::from(value) * scale).round() as u32).max(1))
             };
@@ -1161,6 +1157,75 @@ impl EditorSession {
             (width * scale).max(1.0),
             (height * scale).max(1.0),
         )
+    }
+
+    /// 표 칸 안 그림 넣기: 칸 글의 `offset`(그림 = `_` 한 글자 · 화면 커서와 같은 셈) 자리에.
+    /// 크기 = 96dpi 화소 → pt, 칸 폭 · 세로 650pt 보다 크면 비율 그대로 줄인다.
+    /// 칸 `inlines` · `image_ids` 에 들고, 그림의 문단 = 표 닻 문단(판독 관례).
+    pub fn insert_picture_in_cell(
+        &mut self,
+        cell_id: &str,
+        offset: usize,
+        bytes: &[u8],
+    ) -> Result<(), CoreError> {
+        let picture = image::load_from_memory(bytes).map_err(|_| editor_error("figure_image"))?;
+        let cell_pt = self
+            .document
+            .cells
+            .iter()
+            .find(|cell| cell.id == cell_id)
+            .map(|cell| f64::from(cell.width) / 20.0)
+            .ok_or_else(|| editor_error("cell"))?;
+        let (width, height) = (
+            picture.width() as f64 * 0.75,
+            picture.height() as f64 * 0.75,
+        );
+        // ponytail: 칸 안 여백을 4pt 로 어림 — 칸 여백을 읽게 되면 그 값으로.
+        let scale = ((cell_pt - 4.0).max(1.0) / width)
+            .min(650.0 / height)
+            .min(1.0);
+        let (width_pt, height_pt) = ((width * scale).max(1.0), (height * scale).max(1.0));
+        let mut png = Vec::new();
+        picture
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .map_err(|_| editor_error("figure_image"))?;
+        self.edit_model_with(|model, payloads| {
+            let image_id = (model.images.len()..)
+                .map(|n| format!("image:new:{n}"))
+                .find(|id| model.images.iter().all(|image| &image.id != id))
+                .expect("unbounded");
+            let cell = model
+                .cells
+                .iter_mut()
+                .find(|cell| cell.id == cell_id)
+                .ok_or_else(|| editor_error("cell"))?;
+            let mut edited = cells(&cell.inlines);
+            edited.insert(offset.min(edited.len()), Cell::Image(image_id.clone()));
+            set_cell(cell, &edited);
+            let table_id = cell.table_id.clone();
+            let table = model
+                .tables
+                .iter()
+                .find(|table| table.id == table_id)
+                .ok_or_else(|| editor_error("cell"))?;
+            let anchor = table.paragraph_id.clone();
+            model.images.push(crate::HmlImage {
+                id: image_id.clone(),
+                occurrence: 0,
+                name: format!("{image_id}.png"),
+                width: Some((width_pt * 96.0 / 72.0).round() as u32),
+                height: Some((height_pt * 96.0 / 72.0).round() as u32),
+                secondary_width: Some(width_pt.round() as u32),
+                secondary_height: Some(height_pt.round() as u32),
+                paragraph_id: Some(anchor),
+                cell_id: Some(cell_id.to_string()),
+            });
+            payloads.push(GeneratedImagePayload {
+                image_id,
+                bytes: png,
+            });
+            Ok(())
+        })
     }
 
     /// 그림 문단 넣기 · `label` 이 있으면 그 표제를 앞에 달고 뒤 같은 표제 번호를 민다.
@@ -1942,13 +2007,28 @@ fn renumber(model: &mut HmlDocument) {
         }
     }
     old.sort_by_key(|image| image.occurrence);
+    // 자리 = (닻 문단 차례, 표 칸 그림이면 (표 안 칸 차례, 칸 안 그림 차례)) — 문단 자기 그림이 표 칸 그림보다 앞.
+    let place = |image: &crate::HmlImage| {
+        let cell = image.cell_id.as_deref().and_then(|cell_id| {
+            let cell = model.cells.iter().find(|cell| cell.id == cell_id)?;
+            let table = model
+                .tables
+                .iter()
+                .find(|table| table.id == cell.table_id)?;
+            let rank = table.cell_ids.iter().position(|id| id == cell_id)?;
+            let within = cell.image_ids.iter().position(|id| *id == image.id)?;
+            Some((rank, within))
+        });
+        (
+            paragraph_at(image.paragraph_id.as_deref()).unwrap_or(usize::MAX),
+            cell,
+        )
+    };
     for image in fresh {
-        let at = paragraph_at(image.paragraph_id.as_deref()).unwrap_or(usize::MAX);
+        let at = place(&image);
         let slot = old
             .iter()
-            .position(|other| {
-                paragraph_at(other.paragraph_id.as_deref()).unwrap_or(usize::MAX) > at
-            })
+            .position(|other| place(other) > at)
             .unwrap_or(old.len());
         old.insert(slot, image);
     }
@@ -2105,6 +2185,25 @@ fn cells(inlines: &[HmlInline]) -> Vec<Cell> {
 
 /// 글자열 바꾸기 — 앞뒤 같은 칸은 그대로(서식·그림 유지) · 가운데만 새 글자로. 새 글자는 바로 앞 칸 서식.
 /// 그림은 글자에서 `_` 로 보인다 — 새 글에 `_` 가 남은 만큼 앞뒤 그림이 산다.
+/// 칸 글자 · 그림 차례로 칸의 `inlines` · `text`(그림 뺌) · `image_ids` 를 다시 만든다.
+fn set_cell(cell: &mut crate::HmlCell, edited: &[Cell]) {
+    cell.inlines = inlines(edited);
+    cell.text = edited
+        .iter()
+        .filter_map(|value| match value {
+            Cell::Char(ch, ..) => Some(*ch),
+            Cell::Image(_) => None,
+        })
+        .collect();
+    cell.image_ids = edited
+        .iter()
+        .filter_map(|value| match value {
+            Cell::Image(id) => Some(id.clone()),
+            Cell::Char(..) => None,
+        })
+        .collect();
+}
+
 fn splice(old: &[Cell], new: &[char]) -> Vec<Cell> {
     let visible = |cell: &Cell| match cell {
         Cell::Char(ch, ..) => *ch,
@@ -2242,6 +2341,63 @@ pub(crate) fn editor_error(reason: &str) -> CoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 크기 바꾸기: 표 칸 안 그림은 칸 폭에서 멈추고, 본문 그림은 쪽 본문 폭(174mm)까지 큰다.
+    #[test]
+    fn a_picture_in_a_table_cell_grows_no_wider_than_its_cell() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("의견서.HLT");
+        crate::save_new_opinion_as_new(&path, crate::WriteOptions::default()).unwrap();
+        let mut session = EditorSession::open(&path).unwrap();
+        let body = session.paragraphs()[1].id.clone();
+        let mut png = Vec::new();
+        image::RgbImage::from_pixel(80, 40, image::Rgb([0, 0, 0]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        session.insert_picture(&body, &png).unwrap();
+        let cell = session.insert_table(&body, 1, 3).unwrap();
+        session.insert_picture_in_cell(&cell, 0, &png).unwrap();
+        let placed = session.document.images.clone();
+        assert_eq!(placed.len(), 2);
+        let in_cell = placed.iter().find(|image| image.cell_id.is_some()).unwrap();
+        let in_body = placed.iter().find(|image| image.cell_id.is_none()).unwrap();
+        let cell_pt = session
+            .document
+            .cells
+            .iter()
+            .find(|c| Some(&c.id) == in_cell.cell_id.as_ref())
+            .map(|c| f64::from(c.width) / 20.0)
+            .unwrap();
+        assert!(
+            f64::from(in_cell.display_width) < cell_pt,
+            "{in_cell:?} · 칸 {cell_pt}pt"
+        );
+
+        let (cell_id, body_id) = (in_cell.id.clone(), in_body.id.clone());
+        session.resize_image(&cell_id, 100.0).unwrap();
+        session.resize_image(&body_id, 100.0).unwrap();
+        let grown = session.document.images.clone();
+        assert_eq!(grown.len(), 2);
+        let width = |id: &str| {
+            f64::from(
+                grown
+                    .iter()
+                    .find(|image| image.id == id)
+                    .unwrap()
+                    .display_width,
+            )
+        };
+        assert!(
+            width(&cell_id) <= cell_pt + 1.0 && width(&cell_id) > cell_pt * 0.9,
+            "칸 그림 {} · 칸 {cell_pt}pt",
+            width(&cell_id)
+        );
+        assert!(
+            width(&body_id) > cell_pt + 50.0 && width(&body_id) < 520.0,
+            "본문 그림 {}",
+            width(&body_id)
+        );
+    }
 
     #[test]
     fn splice_keeps_formats_of_untouched_characters() {

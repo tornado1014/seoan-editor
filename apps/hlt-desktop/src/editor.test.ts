@@ -38,6 +38,7 @@ function view(texts: string[]): EditorViewDto {
       has_objects: false,
       spans: [],
     })),
+    cells: Object.fromEntries(cellLines.map((line) => [line.cell, line.text])),
   } as unknown as EditorViewDto;
 }
 
@@ -46,12 +47,12 @@ function page(texts: string[]): PlannedPageDto {
   return {
     number: 1,
     images: pageImages,
-    lines: texts.map((text, i) => {
+    lines: [...texts, ...cellLines.map((line) => line.text)].map((text, i) => {
       const stops = [50];
       for (const ch of text) stops.push(stops.at(-1)! + (ch.charCodeAt(0) < 0x80 ? 6 : 12));
       return {
         top: 100 + 20 * i,
-        paragraph: `paragraph:${i}`,
+        ...(i < texts.length ? { paragraph: `paragraph:${i}` } : { paragraph: null, cell: cellLines[i - texts.length].cell }),
         start: 0,
         stops,
         glyphs: Array.from(text)
@@ -64,6 +65,8 @@ function page(texts: string[]): PlannedPageDto {
 
 let texts: string[] = [];
 let pageImages: PlannedImageDto[] = [];
+/** 문단 줄들 아래 표 칸 줄(칸마다 한 줄). */
+let cellLines: { cell: string; text: string }[] = [];
 let numbers: (string | null)[] = [];
 let closeAnswer = true;
 const calls: [string, unknown][] = [];
@@ -71,6 +74,7 @@ const calls: [string, unknown][] = [];
 beforeEach(() => {
   texts = ['가나다', '라마'];
   pageImages = [];
+  cellLines = [];
   numbers = [];
   closeAnswer = true;
   calls.length = 0;
@@ -94,6 +98,7 @@ beforeEach(() => {
       case 'editor_image':
         return new Uint8Array();
       case 'editor_resize_image':
+      case 'editor_insert_picture':
         return view(texts);
       case 'editor_cp949_scan':
         return Array.from(String(args!.text))
@@ -558,6 +563,72 @@ describe('page editing', () => {
     // 그림 밖을 누르면 고르기가 풀린다.
     clickAt(root, 63, 104);
     expect(root.querySelector('.nk-image-frame')).toBeNull();
+  });
+
+  test('picture into a table cell: the menu works in a cell and inserts at the caret offset there', async () => {
+    cellLines = [{ cell: 'cell:0:0:1', text: '가나' }];
+    const root = await open();
+    clickAt(root, 63, 144); // 칸 줄 「가|나」
+    await settle(10);
+    root.querySelector('.nk-page')!.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 63 * SCALE, clientY: 144 * SCALE }),
+    );
+    await settle(10);
+    const item = menus.at(-1)!.find((entry) => entry.text === '이미지 파일 선택하기')!;
+    expect(item.enabled).toBe(true);
+    item.action!();
+    await settle(10);
+    expect(last('editor_insert_picture')).toEqual(['editor_insert_picture', { after: 'cell:0:0:1', offset: 1 }]);
+    // 문단에서는 칸 자리 없이 문단 뒤로.
+    clickAt(root, 63, 104);
+    await settle(10);
+    root.querySelector('.nk-page')!.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 63 * SCALE, clientY: 104 * SCALE }),
+    );
+    await settle(10);
+    menus.at(-1)!.find((entry) => entry.text === '이미지 파일 선택하기')!.action!();
+    await settle(10);
+    expect(last('editor_insert_picture')).toEqual(['editor_insert_picture', { after: 'paragraph:0', offset: null }]);
+  });
+
+  test('picture size by numbers: right-click a picture → mm fields, ratio locked → resize by that scale', async () => {
+    // 그린 크기 71.24 × 35.24pt → 표시 72 × 36pt = 25.4 × 12.7mm.
+    pageImages = [{ object_code: 3, image: 'image:0', x: 50, top: 200, width: 71.24, height: 35.24 }];
+    URL.createObjectURL = () => 'blob:x';
+    const root = await open();
+    const menu = async (x: number, y: number) => {
+      // 다시 그리면 그림 요소가 새로 생긴다.
+      const picture = root.querySelector<HTMLImageElement>('img.nk-image')!;
+      picture.getBoundingClientRect = () => ({ left: 65, top: 260, right: 195, bottom: 325 }) as DOMRect;
+      root.querySelector('.nk-page')!.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y }),
+      );
+      await settle(10);
+      return menus.at(-1)!.find((item) => item.text === '그림 크기…')!;
+    };
+    expect((await menu(30, 30)).enabled).toBe(false); // 그림 밖
+    (await menu(100, 300)).action!();
+    const across = root.querySelector<HTMLInputElement>('.picture-width')!;
+    const down = root.querySelector<HTMLInputElement>('.picture-height')!;
+    expect([across.value, down.value]).toEqual(['25.4', '12.7']);
+    across.value = '50.8';
+    across.dispatchEvent(new Event('input'));
+    expect(down.value).toBe('25.4');
+    down.value = '6.35';
+    down.dispatchEvent(new Event('input'));
+    expect(across.value).toBe('12.7');
+    root.querySelector<HTMLFormElement>('.item-ask')!.requestSubmit();
+    await settle(10);
+    const args = last('editor_resize_image')![1] as { image: string; scale: number };
+    expect(args.image).toBe('image:0');
+    expect(args.scale).toBeCloseTo(0.5);
+    expect(root.querySelector('.item-ask')).toBeNull();
+    // 취소는 부르지 않는다.
+    const count = calls.filter(([command]) => command === 'editor_resize_image').length;
+    (await menu(100, 300)).action!();
+    root.querySelector<HTMLButtonElement>('.item-cancel')!.click();
+    await settle(10);
+    expect(calls.filter(([command]) => command === 'editor_resize_image').length).toBe(count);
   });
 
   test('identification item: right-click submenu → number (next one filled in) → heading + empty paragraph below', async () => {

@@ -217,7 +217,9 @@ export const editorInsertFigure = (
 export const editorResizeImage = (image: string, scale: number) =>
   invoke<EditorViewDto>('editor_resize_image', { image, scale });
 /** 그림 파일(JPG · TIFF) 골라 `after` 문단 뒤에 넣기 · 취소하면 그대로인 화면. */
-export const editorInsertPicture = (after: string) => invoke<EditorViewDto>('editor_insert_picture', { after });
+/** `offset` 이 있으면 `after` 는 표 칸 id · 칸 글의 그 자리에 넣는다. */
+export const editorInsertPicture = (after: string, offset?: number) =>
+  invoke<EditorViewDto>('editor_insert_picture', { after, offset: offset ?? null });
 export type CharacterFormatDto = 'bold' | 'italic' | 'underline' | 'superscript' | 'subscript';
 export const editorToggleFormat = (paragraphId: string, start: number, end: number, format: CharacterFormatDto) =>
   invoke<EditorViewDto>('editor_toggle_format', { paragraphId, start, end, format });

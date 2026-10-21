@@ -27,6 +27,9 @@ export function renderPage(
     const element = document.createElement('img');
     element.className = 'nk-image';
     element.dataset.image = image.image;
+    // 그린 크기(pt) — 「그림 크기…」가 mm 로 바꿔 보여 준다.
+    element.dataset.width = String(image.width);
+    element.dataset.height = String(image.height);
     const url = imageUrl(image.object_code);
     if (url) element.src = url;
     place(element, image.x, image.top, scale);

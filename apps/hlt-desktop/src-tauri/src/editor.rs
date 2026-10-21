@@ -844,13 +844,15 @@ pub async fn editor_resize_image(
     })
 }
 
-/// 그림 파일 넣기: JPG · TIFF 를 골라 `after` 문단 뒤에 그림 문단으로. 고르기를 취소하면 문서는 그대로.
+/// 그림 파일 넣기: JPG · TIFF 를 골라 `after` 문단 뒤에 그림 문단으로 — `offset` 이 있으면 `after` 는 표 칸이고 칸 글의 그 자리에.
+/// 고르기를 취소하면 문서는 그대로.
 #[tauri::command]
 pub async fn editor_insert_picture(
     window: Window,
     app: AppHandle,
     state: State<'_, EditorState>,
     after: String,
+    offset: Option<usize>,
 ) -> Result<EditorViewDto, CoreError> {
     let source = state
         .slot(window.label())
@@ -876,7 +878,10 @@ pub async fn editor_insert_picture(
     };
     with_session(&state, &window, |session| {
         if let Some(bytes) = &bytes {
-            session.insert_picture(&after, bytes)?;
+            match offset {
+                Some(offset) => session.insert_picture_in_cell(&after, offset, bytes)?,
+                None => session.insert_picture(&after, bytes)?,
+            }
         }
         let title = title(session);
         Ok(view(session, title))

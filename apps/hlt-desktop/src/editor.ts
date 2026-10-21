@@ -1176,7 +1176,7 @@ export function mountEditor(root: HTMLElement): void {
     if (at && !inside) act(() => place(at, false));
     input.focus({ preventScroll: true });
     const cell = (event.target as HTMLElement).closest<HTMLElement>('[data-cell]')?.dataset.cell ?? null;
-    void contextMenu(cell).catch((error) => fail('메뉴', error));
+    void contextMenu(cell, pictureAt(event)).catch((error) => fail('메뉴', error));
   });
   /** 식별항목 넣기: 번호를 묻고(같은 종류 가장 큰 번호 + 1 을 채워 둔다) 커서 문단 아래(문단 맨 앞이면 위)에 표제 + 빈 문단. */
   async function insertItem(kind: string) {
@@ -1201,10 +1201,14 @@ export function mountEditor(root: HTMLElement): void {
   }
 
   /** 그림 파일(JPG · TIFF)을 골라 커서 문단 뒤에 그림 문단으로 넣는다 · 커서는 그대로. */
+  /** 표 칸이면 칸 글의 커서 자리에, 아니면 커서 문단 뒤에 그림 문단으로. */
   async function insertPicture() {
-    if (!caret || !canEdit() || inCell(caret.paragraph)) return;
-    const at = caret.paragraph;
-    await structural('이미지 넣기', async () => ({ next: await editorInsertPicture(at), caret: null }));
+    if (!caret || !canEdit()) return;
+    const { paragraph: at, offset } = caret;
+    await structural('이미지 넣기', async () => ({
+      next: await editorInsertPicture(at, isCell(at) ? offset : undefined),
+      caret: null,
+    }));
   }
 
   /** 식별항목 삭제(통특기 「단락삭제」 창): 종류 + 번호(쉼표 · 범위)를 묻고 지운다. 커서가 표제 위면 그 종류 · 번호를 채워 둔다.
@@ -1353,6 +1357,57 @@ export function mountEditor(root: HTMLElement): void {
     });
   }
 
+  /** 그림 크기를 mm 로 넣기(비율 고정 — 한 칸을 고치면 다른 칸이 따라온다) → 그 배율로 다시 굽는다. */
+  function pictureSize(picture: HTMLImageElement): Promise<void> {
+    // 인쇄는 그림을 표시 크기보다 0.76pt 작게 그린다(print.rs DRAW_INSET_WIDTH/HEIGHT) — 되돌려 표시 크기로 보인다.
+    const mm = (pt: number) => ((pt + 0.76) * 25.4) / 72;
+    const width = mm(parseFloat(picture.dataset.width ?? '0'));
+    const height = mm(parseFloat(picture.dataset.height ?? '0'));
+    if (!(width > 0 && height > 0)) return Promise.resolve();
+    return new Promise((resolve) => {
+      const box = document.createElement('form');
+      box.className = 'item-ask';
+      box.innerHTML = `<label>가로 <input class="picture-width" size="6" autocomplete="off"> mm</label>
+        <label>× 세로 <input class="picture-height" size="6" autocomplete="off"> mm</label>
+        <button type="submit">바꾸기</button><button type="button" class="item-cancel">취소</button>
+        <span class="item-hint">비율 고정 · 본문 174 × 240mm, 표 칸은 칸 폭보다 커지지 않습니다</span>`;
+      const across = box.querySelector<HTMLInputElement>('.picture-width')!;
+      const down = box.querySelector<HTMLInputElement>('.picture-height')!;
+      across.value = width.toFixed(1);
+      down.value = height.toFixed(1);
+      const follow = (from: HTMLInputElement, to: HTMLInputElement, ratio: number) =>
+        from.addEventListener('input', () => {
+          const value = parseFloat(from.value);
+          if (value > 0) to.value = (value * ratio).toFixed(1);
+        });
+      follow(across, down, height / width);
+      follow(down, across, width / height);
+      const done = () => {
+        box.remove();
+        input.focus({ preventScroll: true });
+        resolve();
+      };
+      box.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const value = parseFloat(across.value);
+        if (!(value > 0)) {
+          box.querySelector('.item-hint')!.textContent = '0 보다 큰 숫자를 넣어 주세요';
+          return;
+        }
+        done();
+        const scale = value / width;
+        if (Math.abs(scale - 1) >= 0.001) void run('그림 크기', () => editorResizeImage(picture.dataset.image!, scale));
+      });
+      box.querySelector('.item-cancel')!.addEventListener('click', done);
+      box.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') done();
+      });
+      root.append(box);
+      across.focus();
+      across.select();
+    });
+  }
+
   /** 우클릭한 표 칸 기준의 표 메뉴(줄 · 칸 번호는 0 부터 · 넣기 번호 = 새 줄/칸이 설 자리). */
   function tableItems(at: CellPositionDto) {
     const table_id = at.table_id;
@@ -1438,7 +1493,7 @@ export function mountEditor(root: HTMLElement): void {
     });
   }
 
-  async function contextMenu(cell: string | null) {
+  async function contextMenu(cell: string | null, picture: HTMLImageElement | null = null) {
     const has = span() !== null;
     const editable = Boolean(view?.editable);
     const at = cell && editable ? await editorCellPosition(cell).catch(() => null) : null;
@@ -1478,9 +1533,10 @@ export function mountEditor(root: HTMLElement): void {
         { text: '식별항목 삭제', enabled: editable, action: () => void removeItem() },
         {
           text: '이미지 파일 선택하기',
-          enabled: caret !== null && editable && !inCell(caret.paragraph),
+          enabled: caret !== null && editable,
           action: () => void insertPicture(),
         },
+        { text: '그림 크기…', enabled: picture !== null && editable, action: () => picture && void pictureSize(picture) },
         { text: '표', enabled: at !== null, items: at ? tableItems(at) : [] },
         { item: 'Separator' },
         { text: '찾기·바꾸기', accelerator: 'CmdOrCtrl+F', action: button('find') },
