@@ -178,6 +178,365 @@ pub fn amendment_marks(before: &[EditorParagraph], now: &[EditorParagraph]) -> A
     marks
 }
 
+/// 보정 근거 후보 하나: 기준(보정 전) 명세서의 식별번호 문단.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BasisHit {
+    pub number: String,
+    /// 구절 낱말이 문단에 든 비율(구절이 통째로 있으면 1).
+    pub score: f32,
+    /// 구절이 통째로(공백 무시) 들어 있다.
+    pub exact: bool,
+    /// 낱말을 가장 많이 담은 문장(길면 줄임).
+    pub quote: String,
+    /// 그 문단의 「도 N」.
+    pub figures: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PhraseBasis {
+    pub text: String,
+    pub hits: Vec<BasisHit>,
+}
+
+/// 바뀐(또는 새) 청구항 하나의 새로 넣은 말과 그 근거 후보.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ClaimBasis {
+    pub claim: u32,
+    pub added: bool,
+    pub phrases: Vec<PhraseBasis>,
+}
+
+/// 보정 근거 초안: 바뀐 청구항마다 새로 넣은 말(낱말 경계까지 넓힌 구절) → 보정 전 명세서 식별번호 문단 후보(위 3개).
+// ponytail: 낱말 포함 비율일 뿐 뜻은 안 본다 — 형태소 분석은 실물 재현율이 모자랄 때.
+pub fn amendment_basis(before: &[EditorParagraph], now: &[EditorParagraph]) -> Vec<ClaimBasis> {
+    let old_units = units(before);
+    let paragraphs: Vec<(&str, &str)> = old_units
+        .iter()
+        // 상세설명 문단만(네 자리 · 요약서 「0001a」는 근거가 아니다).
+        .filter(|unit| {
+            unit.key.len() == "p:0000".len() && unit.key[2..].chars().all(|ch| ch.is_ascii_digit())
+        })
+        .filter_map(|unit| {
+            Some((
+                unit.parts.first()?.number.as_deref()?,
+                unit.parts.first()?.text.as_str(),
+            ))
+        })
+        .collect();
+    let mut out = Vec::new();
+    for unit in units(now)
+        .iter()
+        .filter(|unit| unit.key.starts_with("claim:"))
+    {
+        let claim: u32 = unit.key["claim:".len()..].parse().unwrap_or(0);
+        let texts: Vec<&str> = unit.parts.iter().map(|p| p.text.as_str()).collect();
+        let new: Vec<char> = texts.join("\n").chars().collect();
+        let old = old_units.iter().find(|old| old.key == unit.key);
+        let phrases: Vec<String> = match old {
+            None => clauses(&new),
+            Some(old) => {
+                let texts: Vec<&str> = old.parts.iter().map(|p| p.text.as_str()).collect();
+                let old: Vec<char> = texts.join("\n").chars().collect();
+                if old == new {
+                    continue;
+                }
+                inserted_phrases(&old, &new)
+            }
+        };
+        // 쉼표 · 「;」로 한 번 더 나눈다(넣은 범위 하나가 여러 구절에 걸친다) · 인용만 바뀐 구절 · 같은 구절은 뺀다.
+        let mut seen = std::collections::BTreeSet::new();
+        let phrases: Vec<String> = phrases
+            .iter()
+            .flat_map(|phrase| {
+                phrase
+                    .split([',', ';'])
+                    .map(trim_phrase)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|phrase| citations(phrase).is_empty())
+            .filter(|phrase| {
+                words(phrase)
+                    .iter()
+                    .map(|w| w.chars().count())
+                    .sum::<usize>()
+                    >= 2
+            })
+            .filter(|phrase| seen.insert(phrase.clone()))
+            .collect();
+        // 같은 점수면 이 청구항에 새로 넣은 말 전체를 더 많이 담은 단락이 먼저(한 낱말 구절의 동점 풀기).
+        let context: Vec<String> = phrases.iter().flat_map(|phrase| words(phrase)).collect();
+        let phrases: Vec<PhraseBasis> = phrases
+            .into_iter()
+            .map(|text| PhraseBasis {
+                hits: support(&text, &context, &paragraphs),
+                text,
+            })
+            // 근거가 하나도 없는 한 낱말 구절은 이음말이다(「단계로서」 · 「확인하되」).
+            .filter(|phrase| !phrase.hits.is_empty() || words(&phrase.text).len() > 1)
+            .collect();
+        if !phrases.is_empty() {
+            out.push(ClaimBasis {
+                claim,
+                added: old.is_none(),
+                phrases,
+            });
+        }
+    }
+    out.sort_by_key(|basis| basis.claim);
+    out
+}
+
+/// 끝 조사(긴 것 먼저) — 낱말에서 떼고, 조사만 넣은 고침은 구절로 치지 않는다.
+const PARTICLES: [&str; 25] = [
+    "으로부터",
+    "로부터",
+    "에서의",
+    "에서",
+    "으로",
+    "에게",
+    "까지",
+    "부터",
+    "하는",
+    "되는",
+    "하고",
+    "하며",
+    "된",
+    "한",
+    "의",
+    "을",
+    "를",
+    "이",
+    "가",
+    "은",
+    "는",
+    "에",
+    "와",
+    "과",
+    "로",
+];
+
+const BREAKS: [char; 4] = [' ', ',', ';', '\n'];
+
+/// 넣은 범위를 낱말 경계까지 넓힌 구절(겹치거나 공백만 사이에 둔 것은 합친다).
+fn inserted_phrases(old: &[char], new: &[char]) -> Vec<String> {
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut matcher = SequenceMatcher::new(old, new);
+    for op in matcher.get_opcodes() {
+        if op.tag == "equal" || op.second_end == op.second_start {
+            continue;
+        }
+        // 조사 · 한 글자만 넣은 고침(「를 → 가」 · 오타 한 자)은 새 말이 아니다.
+        let put: String = new[op.second_start..op.second_end]
+            .iter()
+            .filter(|ch| ch.is_alphanumeric())
+            .collect();
+        if put.chars().count() <= 1 || PARTICLES.contains(&put.as_str()) {
+            continue;
+        }
+        // 낱말 가운데서 시작 · 끝난 고침만 넓힌다(넣은 글이 공백으로 끝나면 뒤 낱말은 원래 있던 말).
+        let mut start = op.second_start;
+        while start > 0 && !BREAKS.contains(&new[start]) && !BREAKS.contains(&new[start - 1]) {
+            start -= 1;
+        }
+        let mut end = op.second_end;
+        while end < new.len() && !BREAKS.contains(&new[end - 1]) && !BREAKS.contains(&new[end]) {
+            end += 1;
+        }
+        match spans.last_mut() {
+            Some(last) if new[last.1..start.max(last.1)].iter().all(|ch| *ch == ' ') => {
+                last.1 = last.1.max(end)
+            }
+            _ => spans.push((start, end)),
+        }
+    }
+    spans
+        .into_iter()
+        .map(|(a, b)| trim_phrase(&new[a..b].iter().collect::<String>()))
+        .filter(|phrase| !phrase.is_empty())
+        .collect()
+}
+
+/// 새 항: 쉼표 · 「;」 · 줄로 나눈 구절(인용 구절 「제1항에 있어서」는 뺀다).
+fn clauses(text: &[char]) -> Vec<String> {
+    let text: String = text.iter().collect();
+    text.split([',', ';', '\n'])
+        .map(trim_phrase)
+        .filter(|clause| !clause.is_empty() && citations(clause).is_empty())
+        .collect()
+}
+
+fn trim_phrase(text: &str) -> String {
+    text.trim_matches(|ch: char| ch.is_whitespace() || ",.;:".contains(ch))
+        .to_string()
+}
+
+/// 구절의 내용 낱말: 문장부호를 떼고 끝 조사 하나를 떼어 2자 이상만 · 흔한 청구항 말은 뺀다.
+fn words(phrase: &str) -> Vec<String> {
+    const COMMON: [&str; 12] = [
+        "상기",
+        "또는",
+        "및",
+        "포함",
+        "포함하는",
+        "것",
+        "있는",
+        "경우",
+        "적어도",
+        "각각",
+        "더",
+        "통해",
+    ];
+    phrase
+        .split_whitespace()
+        .filter_map(|word| {
+            let word = word.trim_matches(|ch: char| !ch.is_alphanumeric());
+            let stripped = PARTICLES
+                .iter()
+                .find_map(|particle| {
+                    word.strip_suffix(particle)
+                        .filter(|rest| rest.chars().count() >= 2)
+                })
+                .unwrap_or(word);
+            (stripped.chars().count() >= 2 && !COMMON.contains(&stripped))
+                .then(|| stripped.to_string())
+        })
+        .collect()
+}
+
+/// 구절의 근거 후보: 통째로 들면 1 · 아니면 낱말이 든 비율 0.6 이상 · 위 3개. 같은 점수면 구절과 가장 길게 이어서 같은
+/// 단락(「표기 그대로」) → 이 청구항의 새 말을 더 많이 담은 단락 → 번호 차례.
+fn support(phrase: &str, context: &[String], paragraphs: &[(&str, &str)]) -> Vec<BasisHit> {
+    let compact =
+        |text: &str| -> String { text.chars().filter(|ch| !ch.is_whitespace()).collect() };
+    let whole = compact(phrase);
+    let words = words(phrase);
+    let around = |text: &str| {
+        context
+            .iter()
+            .filter(|word| text.contains(word.as_str()))
+            .count()
+    };
+    let whole_chars: Vec<char> = whole.chars().collect();
+    let mut hits: Vec<(BasisHit, usize, usize)> = paragraphs
+        .iter()
+        .filter_map(|(number, text)| {
+            let exact = compact(text).contains(&whole);
+            let found = words
+                .iter()
+                .filter(|word| text.contains(word.as_str()))
+                .count();
+            let score = if exact {
+                1.0
+            } else if words.is_empty() {
+                0.0
+            } else {
+                found as f32 / words.len() as f32
+            };
+            (score >= 0.6).then(|| {
+                let hit = BasisHit {
+                    number: number.to_string(),
+                    score,
+                    exact,
+                    quote: quote(text, &words),
+                    figures: figures(text),
+                };
+                (
+                    hit,
+                    longest_common(&whole_chars, &compact(text)),
+                    around(text),
+                )
+            })
+        })
+        .collect();
+    hits.sort_by(|(a, a_run, a_around), (b, b_run, b_around)| {
+        // 통째로(exact)는 점수 1 · 이어진 길이 최대라 따로 세지 않는다.
+        b.score
+            .total_cmp(&a.score)
+            .then(b_run.cmp(a_run))
+            .then(b_around.cmp(a_around))
+            .then(a.number.cmp(&b.number))
+    });
+    hits.into_iter().take(3).map(|(hit, _, _)| hit).collect()
+}
+
+/// 가장 길게 이어서 같은 글자 수(공백 뺀 글끼리).
+fn longest_common(phrase: &[char], text: &str) -> usize {
+    let text: Vec<char> = text.chars().collect();
+    let mut best = 0;
+    let mut row = vec![0usize; text.len() + 1];
+    for a in phrase {
+        let mut previous = 0;
+        for (j, b) in text.iter().enumerate() {
+            let keep = row[j + 1];
+            row[j + 1] = if a == b { previous + 1 } else { 0 };
+            best = best.max(row[j + 1]);
+            previous = keep;
+        }
+    }
+    best
+}
+
+/// 낱말을 가장 많이 담은 문장(「다.」로 끊음) · 160자 넘으면 첫 낱말 둘레로 줄인다.
+fn quote(text: &str, words: &[String]) -> String {
+    let sentences: Vec<&str> = text
+        .split_inclusive("다.")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    let best = sentences
+        .iter()
+        .max_by_key(|sentence| {
+            words
+                .iter()
+                .filter(|word| sentence.contains(word.as_str()))
+                .count()
+        })
+        .copied()
+        .unwrap_or(text);
+    let chars: Vec<char> = best.chars().collect();
+    if chars.len() <= 160 {
+        return best.to_string();
+    }
+    let first = words
+        .iter()
+        .filter_map(|word| best.find(word.as_str()))
+        .min()
+        .map_or(0, |byte| best[..byte].chars().count());
+    let start = first.saturating_sub(60).min(chars.len() - 160);
+    let mut out: String = chars[start..start + 160].iter().collect();
+    if start > 0 {
+        out.insert(0, '…');
+    }
+    if start + 160 < chars.len() {
+        out.push('…');
+    }
+    out
+}
+
+/// 문단의 「도 N」(「도 3a」 · 「도3」) — 「온도 3」처럼 앞 글자가 한글이면 도면이 아니다.
+fn figures(text: &str) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out: Vec<String> = Vec::new();
+    for at in 0..chars.len() {
+        if chars[at] != '도'
+            || at
+                .checked_sub(1)
+                .is_some_and(|prev| ('가'..='힣').contains(&chars[prev]))
+        {
+            continue;
+        }
+        let digits_at = at + 1 + spaces(&chars, at + 1);
+        let number: String = chars[digits_at..]
+            .iter()
+            .take_while(|ch| ch.is_ascii_alphanumeric())
+            .collect();
+        if number.starts_with(|ch: char| ch.is_ascii_digit()) && !out.contains(&number) {
+            out.push(number);
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CitationKind {
@@ -677,6 +1036,79 @@ mod tests {
             has_objects: false,
             spans: Vec::new(),
         }
+    }
+
+    #[test]
+    fn finds_basis_paragraphs_for_new_claim_words() {
+        let before = vec![
+            paragraph("a", "【발명의 설명】", None),
+            // 낱말은 다 있지만 통째로는 아니다 — 이어진 길이로 0002 뒤에 선다.
+            paragraph(
+                "p1",
+                "본 발명은 바퀴와 고무가 결합된 장치에 관한 것이다.",
+                Some("0001"),
+            ),
+            paragraph(
+                "p2",
+                "몸체에는 고무 바퀴가 결합된다. 도 3에 바퀴를 보인다.",
+                Some("0002"),
+            ),
+            paragraph(
+                "p3",
+                "바퀴는 고무로 만든다. 손잡이는 금속이다.",
+                Some("0003"),
+            ),
+            paragraph("p4", "덮개는 손잡이를 감싼다.", Some("0004")),
+            paragraph("s", "【청구항 1】", None),
+            paragraph("c1", "몸체를 포함하는 장치.", None),
+            paragraph("s2", "【청구항 2】", None),
+            // 청구항 안 문단은 근거가 아니다(번호가 붙어 있어도).
+            paragraph(
+                "c2",
+                "제1항에 있어서, 손잡이를 포함하는 장치. 손잡이와 덮개를",
+                Some("0009"),
+            ),
+            paragraph("s3", "【청구항 3】", None),
+            paragraph("c3", "제1항에 있어서, 바퀴를 갖는 장치.", None),
+            paragraph("y", "【요약서】", None),
+            // 요약서 문단도 근거가 아니다.
+            paragraph("y1", "손잡이와 덮개를 갖는 장치.", Some("0001a")),
+        ];
+        let mut now = before.clone();
+        now[6].text = "고무 바퀴가 결합된 몸체를 포함하는 장치.".into();
+        now[8].text = "제1항에 있어서, 손잡이와 덮개를 포함하는 장치. 손잡이와 덮개를".into();
+        now[10].text = "제1항에 있어서, 바퀴가 갖는 장치.".into(); // 조사만 바꿈
+        now.insert(11, paragraph("s4", "【청구항 4】", None));
+        now.insert(
+            12,
+            paragraph("c4", "제1항에 있어서, 바퀴는 고무로 만든다.", None),
+        );
+        let basis = amendment_basis(&before, &now);
+        let claims: Vec<(u32, bool)> = basis.iter().map(|b| (b.claim, b.added)).collect();
+        assert_eq!(
+            claims,
+            [(1, false), (2, false), (4, true)],
+            "청구항 3 = 조사만"
+        );
+        let numbers = |phrase: &PhraseBasis| -> Vec<String> {
+            phrase.hits.iter().map(|hit| hit.number.clone()).collect()
+        };
+        // 청구항 1: 통째로 든 단락이 1위(도 3 · 그 문장 인용) · 낱말이 흩어진 단락이 다음.
+        let first = &basis[0].phrases[0];
+        assert_eq!(first.text, "고무 바퀴가 결합된");
+        assert_eq!(numbers(first), ["0002", "0001", "0003"]);
+        assert!(first.hits[0].exact && !first.hits[1].exact);
+        assert_eq!(first.hits[0].figures, ["3"]);
+        assert_eq!(first.hits[0].quote, "몸체에는 고무 바퀴가 결합된다.");
+        // 청구항 2: 청구항 안(0009) · 요약서(0001a)는 빼고 0004 만(0003 은 낱말 절반).
+        assert_eq!(basis[1].phrases[0].text, "손잡이와 덮개를");
+        assert_eq!(numbers(&basis[1].phrases[0]), ["0004"]);
+        // 새 항: 인용 구절은 빼고 나머지 구절.
+        let added: Vec<&str> = basis[2].phrases.iter().map(|p| p.text.as_str()).collect();
+        assert_eq!(added, ["바퀴는 고무로 만든다"]);
+        assert_eq!(numbers(&basis[2].phrases[0])[0], "0003");
+        // 「온도 30」은 도면이 아니다.
+        assert_eq!(figures("온도 30에서 도 3a와 도5를"), ["3a", "5"]);
     }
 
     #[test]

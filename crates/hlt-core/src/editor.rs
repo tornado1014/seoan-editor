@@ -1360,6 +1360,13 @@ impl EditorSession {
         Some(crate::amendment_marks(baseline, &self.paragraphs()))
     }
 
+    /// 보정 근거 초안(최종본으로 연 문서만): 바뀐 청구항의 새 말 → 보정 전 명세서 식별번호 문단 후보.
+    pub fn amendment_basis(&mut self) -> Option<Vec<crate::ClaimBasis>> {
+        self.settle();
+        let baseline = self.baseline.as_ref()?;
+        Some(crate::amendment_basis(baseline, &self.paragraphs()))
+    }
+
     /// 청구항 인용 검사(지금 판 · 줄은 구분자 없이 이어 특허로 점검 목록과 같은 꼴로).
     pub fn claim_citation_issues(&self) -> Vec<crate::CitationIssue> {
         let paragraphs = self.paragraphs();

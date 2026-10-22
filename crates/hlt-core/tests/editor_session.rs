@@ -1241,6 +1241,10 @@ fn applies_a_review_report_proposal() {
     expected.sort();
     assert_eq!(shown, expected, "{marks:?}");
     assert!(session.claim_citation_issues().is_empty());
+    // 보정 근거: 바뀐 항(1)과 새 항(3)이 다 덮인다(지운 항 2 는 새 말이 없다).
+    let basis = session.amendment_basis().unwrap();
+    let claims: Vec<(u32, bool)> = basis.iter().map(|b| (b.claim, b.added)).collect();
+    assert_eq!(claims, [(1, false), (3, true)], "{basis:?}");
 
     // 되돌리기 한 번에 전부.
     session.undo().unwrap();

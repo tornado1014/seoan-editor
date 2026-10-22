@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 import type { EditorViewDto, PlannedImageDto, PlannedPageDto } from './contracts';
-import { mountEditor } from './editor';
+import { basisDraft, mountEditor } from './editor';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('./figure-editor', () => ({}));
@@ -71,6 +71,7 @@ let numbers: (string | null)[] = [];
 let closeAnswer = true;
 let marksAnswer: unknown = null;
 let issuesAnswer: unknown[] = [];
+let basisAnswer: unknown = null;
 const calls: [string, unknown][] = [];
 
 beforeEach(() => {
@@ -81,6 +82,7 @@ beforeEach(() => {
   closeAnswer = true;
   marksAnswer = null;
   issuesAnswer = [];
+  basisAnswer = null;
   calls.length = 0;
   // 쪽이 보이면 바로 그린다.
   globalThis.IntersectionObserver = class {
@@ -109,6 +111,8 @@ beforeEach(() => {
         return marksAnswer;
       case 'editor_claim_issues':
         return issuesAnswer;
+      case 'editor_amendment_basis':
+        return basisAnswer;
       case 'editor_export_amendment':
         return null;
       case 'editor_read_review':
@@ -750,6 +754,51 @@ describe('page editing', () => {
     expect(root.querySelector('.nk-ins')).toBeNull();
   });
 
+  test('보정 근거: candidates per new phrase (best ones checked) → draft follows the checks → copy · new opinion', async () => {
+    const root = await open();
+    root.querySelector<HTMLButtonElement>('[data-action="basis"]')!.click();
+    await settle(10);
+    expect(root.querySelector('.editor-status')!.textContent).toContain('최종본(.fin)');
+    basisAnswer = [
+      {
+        claim: 1,
+        added: false,
+        phrases: [
+          {
+            text: '고무 바퀴',
+            hits: [
+              { number: '0002', score: 1, exact: true, quote: '고무 바퀴가 있다.', figures: ['3'] },
+              { number: '0003', score: 0.7, exact: false, quote: '바퀴는 고무다.', figures: [] },
+            ],
+          },
+        ],
+      },
+    ];
+    root.querySelector<HTMLButtonElement>('[data-action="basis"]')!.click();
+    await settle(10);
+    const box = root.querySelector<HTMLFormElement>('.basis-ask')!;
+    const checks = [...box.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+    expect(checks.map((c) => c.checked)).toEqual([true, false]); // 통째로 든 1위만
+    const draft = box.querySelector<HTMLTextAreaElement>('.basis-draft')!;
+    expect(draft.value).toContain('단락 【0002】 및 도 3');
+    checks[1].checked = true;
+    checks[1].dispatchEvent(new Event('change', { bubbles: true }));
+    expect(draft.value).toContain('단락 【0002】~【0003】 및 도 3');
+    const written: string[] = [];
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (text: string) => void written.push(text) }, configurable: true });
+    box.querySelector<HTMLButtonElement>('.basis-copy')!.click();
+    await settle(10);
+    expect(written[0]).toBe(draft.value);
+    expect(root.querySelector('.basis-ask')).toBeNull();
+    root.querySelector<HTMLButtonElement>('[data-action="basis"]')!.click();
+    await settle(10);
+    const again = root.querySelector<HTMLFormElement>('.basis-ask')!;
+    const text = again.querySelector<HTMLTextAreaElement>('.basis-draft')!.value;
+    again.querySelector<HTMLButtonElement>('.basis-opinion')!.click();
+    await settle(10);
+    expect(last('editor_new_opinion')).toEqual(['editor_new_opinion', { body: text }]);
+  });
+
   test('보정서: citation problems are listed first — 취소 stops, 그래도 만들기 goes on', async () => {
     texts = ['가나다', '【청구항 3】', '제2항에 있어서'];
     issuesAnswer = [
@@ -861,6 +910,37 @@ describe('page editing', () => {
     expect(last('editor_toggle_format')).toEqual([
       'editor_toggle_format',
       { paragraphId: 'paragraph:0', start: 1, end: 2, format: 'bold' },
+    ]);
+  });
+});
+
+describe('basisDraft', () => {
+  test('writes the opinion paragraph: ranges, figures, quotes, the particle after a claim number, and the closing line', () => {
+    const hit = (number: string, figures: string[] = []) => ({ number, score: 1, exact: true, quote: `${number} 문장.`, figures });
+    const text = basisDraft([
+      {
+        claim: 1,
+        added: false,
+        phrases: [
+          { text: 'A', hits: [hit('0070', ['9']), hit('0071', ['10']), hit('0072')] },
+          { text: 'B', hits: [hit('0015', ['3a']), hit('0070')] },
+        ],
+      },
+      { claim: 4, added: true, phrases: [{ text: 'C', hits: [hit('0020')] }] },
+      { claim: 5, added: true, phrases: [{ text: 'D', hits: [] }] },
+    ]);
+    expect(text.split('\n')).toEqual([
+      '청구항 1의 보정 사항(“A”, “B”)은 원출원 명세서의 단락 【0015】, 【0070】~【0072】 및 도 3a, 9~10에 기재된 내용에 근거한 것입니다.',
+      '- 【0070】: "0070 문장."',
+      '- 【0071】: "0071 문장."',
+      '- 【0072】: "0072 문장."',
+      '- 【0015】: "0015 문장."',
+      '',
+      '새로 추가한 청구항 4는 원출원 명세서의 단락 【0020】에 기재된 내용에 근거한 것입니다.',
+      '- 【0020】: "0020 문장."',
+      '',
+      '새로 추가한 청구항 5는 (근거 단락을 고르지 않았습니다 — 직접 쓰세요.)', // 5 = 오 → 는
+      '따라서 본 보정은 신규사항 추가에 해당하지 않습니다.',
     ]);
   });
 });

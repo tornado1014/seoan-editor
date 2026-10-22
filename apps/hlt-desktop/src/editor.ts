@@ -17,6 +17,7 @@ import {
   type CellPositionDto,
   editorExportAmendment,
   editorReadReview,
+  editorAmendmentBasis,
   editorAmendmentMarks,
   editorApplyReview,
   editorClaimIssues,
@@ -67,6 +68,7 @@ import {
   type AmendmentDoneDto,
   type AmendmentMarksDto,
   type CitationIssueDto,
+  type ClaimBasisDto,
   type ParagraphMarkDto,
   type DescriptionNoteDto,
   type ProposedClaimDto,
@@ -169,6 +171,7 @@ export function mountEditor(root: HTMLElement): void {
           <button type="button" data-action="fin" disabled title="제출파일(.hlz · .fin) 만들기">${icon('send')}<span>제출파일</span></button>
           <button type="button" data-action="review" disabled title="OA 검토보고서의 보정안을 불러와 편집기에 건다">${icon('amend')}<span>보정안</span></button>
           <button type="button" data-action="amend-marks" aria-pressed="false" disabled title="보정 표시 — 최종본(.fin)에 견준 바뀐 글(넣은 글 · 지운 자리 · 바뀐 문단)">${icon('marks')}<span>보정 표시</span></button>
+          <button type="button" data-action="basis" disabled title="보정 근거 — 바뀐 청구항의 새 말이 있는 원출원 명세서 단락 · 인용 문장 초안">${icon('find')}<span>보정 근거</span></button>
           <button type="button" data-action="amend" disabled title="보정서 만들기(청구항 인용을 먼저 점검)">${icon('amend')}<span>보정서</span></button>
         </div>
         <span class="editor-status" aria-live="polite"></span>
@@ -341,7 +344,7 @@ export function mountEditor(root: HTMLElement): void {
     void editorLog(`${label} 실패 ${JSON.stringify(error)}`).catch(() => {});
   };
   const enable = () => {
-    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'docx', 'fin', 'review', 'amend-marks', 'amend', 'math', 'chem', 'table', 'align-justified', 'align-center', 'align-left', 'indent', 'outdent']) {
+    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'docx', 'fin', 'review', 'amend-marks', 'basis', 'amend', 'math', 'chem', 'table', 'align-justified', 'align-center', 'align-left', 'indent', 'outdent']) {
       q<HTMLButtonElement>(`[data-action="${action}"]`).disabled = !view;
     }
   };
@@ -1525,6 +1528,78 @@ export function mountEditor(root: HTMLElement): void {
       .join(' · ') || '바뀐 것이 없습니다';
   }
 
+  /** 보정 근거 창: 청구항 · 새 말마다 근거 후보(체크 · 누르면 그 단락으로) → 초안 글(고쳐 쓸 수 있다) → 복사 · 새 의견서. */
+  function askBasis(basis: ClaimBasisDto[]): Promise<{ kind: 'copy' | 'opinion'; text: string } | null> {
+    const escape = (text: string) =>
+      text.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]!);
+    return new Promise((resolve) => {
+      const box = document.createElement('form');
+      box.className = 'item-ask basis-ask';
+      const rows = basis
+        .map(
+          (claim, c) => `<fieldset><legend>청구항 ${claim.claim}${claim.added ? ' (새 항)' : ''}</legend>${claim.phrases
+            .map(
+              (phrase, p) => `<div class="basis-phrase">“${escape(phrase.text)}”${
+                phrase.hits.length
+                  ? phrase.hits
+                      .map(
+                        (hit, h) => `<label><input type="checkbox" data-c="${c}" data-p="${p}" data-h="${h}"${
+                          (h === 0 && (hit.exact || hit.score >= 0.8)) || (h === 1 && hit.exact) ? ' checked' : ''
+                        }> <button type="button" class="basis-go" data-number="${hit.number}">【${hit.number}】</button> <small>(${
+                          hit.exact ? '통째로' : `낱말 ${Math.round(hit.score * 100)}%`
+                        })</small> ${escape(hit.quote)}</label>`,
+                      )
+                      .join('')
+                  : ' <small>— 근거 단락을 찾지 못했습니다</small>'
+              }</div>`,
+            )
+            .join('')}</fieldset>`,
+        )
+        .join('');
+      box.innerHTML = `<strong>보정 근거</strong>${rows}
+        <label class="basis-draft-label">초안(고쳐 쓸 수 있다 · 체크를 바꾸면 다시 만든다)<textarea class="basis-draft" rows="8"></textarea></label>
+        <button type="button" class="basis-copy">글 복사</button><button type="button" class="basis-opinion">새 의견서로 열기</button><button type="button" class="item-cancel">닫기</button>`;
+      const draft = box.querySelector<HTMLTextAreaElement>('.basis-draft')!;
+      const redraft = () => {
+        draft.value = basisDraft(
+          basis.map((claim, c) => ({
+            ...claim,
+            phrases: claim.phrases.map((phrase, p) => ({
+              ...phrase,
+              hits: phrase.hits.filter(
+                (_, h) => box.querySelector<HTMLInputElement>(`input[data-c="${c}"][data-p="${p}"][data-h="${h}"]`)!.checked,
+              ),
+            })),
+          })),
+        );
+      };
+      redraft();
+      box.addEventListener('change', (event) => {
+        if ((event.target as HTMLElement).matches('input[type="checkbox"]')) redraft();
+      });
+      const done = (value: { kind: 'copy' | 'opinion'; text: string } | null) => {
+        box.remove();
+        input.focus({ preventScroll: true });
+        resolve(value);
+      };
+      box.querySelector('.basis-copy')!.addEventListener('click', () => done({ kind: 'copy', text: draft.value }));
+      box.querySelector('.basis-opinion')!.addEventListener('click', () => done({ kind: 'opinion', text: draft.value }));
+      box.querySelector('.item-cancel')!.addEventListener('click', () => done(null));
+      box.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') done(null);
+      });
+      for (const button of box.querySelectorAll<HTMLButtonElement>('.basis-go')) {
+        button.addEventListener('click', () => {
+          const target = view?.paragraphs.find((paragraph) => paragraph.number === button.dataset.number);
+          if (target) place({ paragraph: target.id, offset: 0 }, false);
+        });
+      }
+      box.addEventListener('submit', (event) => event.preventDefault());
+      root.append(box);
+      box.querySelector<HTMLButtonElement>('.basis-copy')!.focus();
+    });
+  }
+
   /** 보정서 앞 청구항 인용 점검: 문제 목록(누르면 그 항으로) · 「그래도 만들기」면 true. */
   function askCitations(issues: CitationIssueDto[]): Promise<boolean> {
     const what: Record<CitationIssueDto['kind'], (cited: string) => string> = {
@@ -2015,6 +2090,35 @@ export function mountEditor(root: HTMLElement): void {
         }
         break;
       }
+      case 'basis': {
+        try {
+          const basis = await editorAmendmentBasis();
+          if (!basis) {
+            say('보정 근거는 최종본(.fin)으로 연 문서에서만 찾을 수 있습니다.');
+            break;
+          }
+          if (basis.length === 0) {
+            say('청구항에 새로 넣은 말이 없습니다.');
+            break;
+          }
+          const action = await askBasis(basis);
+          if (action?.kind === 'copy') {
+            await navigator.clipboard.writeText(action.text);
+            say('보정 근거 초안을 복사했습니다 — 의견서에 붙여 넣으세요.');
+          } else if (action?.kind === 'opinion') {
+            // 이 탭에 문서가 있으면 새 탭으로 연다(null) — 빈 탭이면 여기서.
+            const opened = await editorNewOpinion(action.text);
+            if (opened) {
+              images.clear();
+              panel.hidden = true;
+              layout(opened, false);
+            }
+          }
+        } catch (error) {
+          fail('보정 근거', error);
+        }
+        break;
+      }
       case 'new-tab':
         await editorNewTab().catch((error) => fail('새 탭', error));
         break;
@@ -2305,6 +2409,49 @@ const ITEM_KINDS = ['도', '표', '청구항', '수학식', '화학식', '반응
 const ITEM_HEADING = new RegExp(`^【(${ITEM_KINDS.join('|')}) [A-Za-z0-9]+】$`);
 
 /** 「3, 5-7」 → ['3', '5', '6', '7'] · 틀리면 null. 범위는 숫자만(번호 1000 개까지). */
+/** 이어진 번호를 범위로(【0070】~【0076】 · 도 9~13) — 숫자가 아닌 번호(3a)는 따로. */
+function ranges(items: string[], wrap: (item: string) => string): string {
+  const sorted = [...new Set(items)].sort((a, b) => (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0) || a.localeCompare(b));
+  const out: string[] = [];
+  for (let i = 0; i < sorted.length; ) {
+    let j = i;
+    while (j + 1 < sorted.length && /^\d+$/.test(sorted[j]) && /^\d+$/.test(sorted[j + 1]) && Number(sorted[j + 1]) === Number(sorted[j]) + 1) j += 1;
+    out.push(j > i ? `${wrap(sorted[i])}~${wrap(sorted[j])}` : wrap(sorted[i]));
+    i = j + 1;
+  }
+  return out.join(', ');
+}
+
+/** 숫자 끝 읽기의 받침으로 고른 조사(1 일 → 은 · 2 이 → 는 · 10 십 → 은). */
+const topic = (number: number) => ('2459'.includes(String(number).slice(-1)) ? '는' : '은');
+
+/** 보정 근거 초안(실제 의견서 「보정 근거」 꼴): 청구항마다 근거 단락 · 도면 한 문장 + 단락 인용 줄 · 끝 문장. */
+export function basisDraft(basis: ClaimBasisDto[]): string {
+  const lines: string[] = [];
+  for (const claim of basis) {
+    const hits = claim.phrases.flatMap((phrase) => phrase.hits);
+    const subject = claim.added
+      ? `새로 추가한 청구항 ${claim.claim}${topic(claim.claim)}`
+      : `청구항 ${claim.claim}의 보정 사항(${claim.phrases.map((phrase) => `“${phrase.text}”`).join(', ')})은`;
+    if (hits.length === 0) {
+      lines.push(`${subject} (근거 단락을 고르지 않았습니다 — 직접 쓰세요.)`);
+      continue;
+    }
+    const figures = hits.flatMap((hit) => hit.figures);
+    const where = `단락 ${ranges(hits.map((hit) => hit.number), (n) => `【${n}】`)}${figures.length ? ` 및 도 ${ranges(figures, (n) => n)}` : ''}`;
+    lines.push(`${subject} 원출원 명세서의 ${where}에 기재된 내용에 근거한 것입니다.`);
+    const quoted = new Set<string>();
+    for (const hit of hits) {
+      if (quoted.has(hit.number)) continue;
+      quoted.add(hit.number);
+      lines.push(`- 【${hit.number}】: "${hit.quote}"`);
+    }
+    lines.push('');
+  }
+  lines.push('따라서 본 보정은 신규사항 추가에 해당하지 않습니다.');
+  return lines.join('\n');
+}
+
 export function parseNumbers(text: string): string[] | null {
   const out: string[] = [];
   for (const part of text.split(',').map((piece) => piece.trim()).filter(Boolean)) {

@@ -287,6 +287,11 @@ progress {
 .nk-chg { position: absolute; background: #d29922; pointer-events: none; }
 .citation-ask ul { margin: 6px 0; padding-left: 18px; max-height: 40vh; overflow: auto; }
 .citation-ask .citation-go { margin-right: 4px; }
+.basis-ask { max-height: 80vh; overflow: auto; }
+.basis-ask fieldset { margin: 6px 0; }
+.basis-ask .basis-phrase { margin: 4px 0; }
+.basis-ask .basis-phrase label { display: block; margin-left: 12px; font-size: 12px; }
+.basis-ask .basis-draft { display: block; width: 100%; font: inherit; font-size: 12px; margin: 4px 0; }
 .nk-compose { position: absolute; background: #fff; font-family: BatangChe, "바탕체", AppleMyungjo, serif; line-height: 1; white-space: pre; text-decoration: underline; pointer-events: none; }
 .caret-input { position: fixed; left: 0; top: 0; width: 2px; height: 18px; padding: 0; border: 0; opacity: 0; resize: none; overflow: hidden; pointer-events: none; z-index: -1; }
 .editor-error { flex-basis: 100%; color: #8a1c12; background: #fdecea; border: 1px solid #f3b8b1; border-radius: 4px; padding: 2px 8px; cursor: pointer; white-space: pre-wrap; font-size: 12px; }

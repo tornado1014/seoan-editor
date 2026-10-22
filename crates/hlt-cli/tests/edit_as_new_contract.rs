@@ -262,4 +262,12 @@ fn applies_a_review_report_and_writes_the_amendment() {
         serde_json::json!([]),
         "{value}"
     );
+    // 보정 근거: 바뀐 청구항 1 의 새 말이 실린다.
+    assert_eq!(value["result"]["basis"][0]["claim"], 1, "{value}");
+    assert!(
+        value["result"]["basis"][0]["phrases"]
+            .as_array()
+            .is_some_and(|phrases| !phrases.is_empty()),
+        "{value}"
+    );
 }

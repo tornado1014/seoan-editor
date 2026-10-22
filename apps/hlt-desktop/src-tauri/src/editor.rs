@@ -427,18 +427,22 @@ async fn bake_import(
 }
 
 /// 새 의견서: 의견서 서식(빈 문서 + 【의견내용】)으로 새 `.HLT` 를 만들고 연다(이 탭에 문서가 있으면 새 탭).
+/// `body` 가 있으면 그 글(줄 하나 = 본문 문단 하나)로 채운다 — 「보정 근거」 초안의 「새 의견서로 열기」.
 #[tauri::command]
 pub async fn editor_new_opinion(
     window: Window,
     app: AppHandle,
     state: State<'_, EditorState>,
+    body: Option<String>,
 ) -> Result<Option<EditorViewDto>, CoreError> {
     let Some(output) = pick_save(&app, "의견서.HLT", "HLT") else {
         return Ok(None);
     };
     let target = output.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        hlt_core::save_new_opinion_as_new(&target, hlt_core::WriteOptions::default())
+    tauri::async_runtime::spawn_blocking(move || match body {
+        Some(body) => hlt_core::opinion_hlt_from_text(&body, &target),
+        None => hlt_core::save_new_opinion_as_new(&target, hlt_core::WriteOptions::default())
+            .map(|_| ()),
     })
     .await
     .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "worker", false))??;
@@ -921,6 +925,15 @@ pub async fn editor_amendment_marks(
     state: State<'_, EditorState>,
 ) -> Result<Option<hlt_core::AmendmentMarks>, CoreError> {
     with_session(&state, &window, |session| Ok(session.amendment_marks()))
+}
+
+/// 보정 근거 초안: 최종본(.fin)으로 연 문서만(아니면 `null`).
+#[tauri::command]
+pub async fn editor_amendment_basis(
+    window: Window,
+    state: State<'_, EditorState>,
+) -> Result<Option<Vec<hlt_core::ClaimBasis>>, CoreError> {
+    with_session(&state, &window, |session| Ok(session.amendment_basis()))
 }
 
 /// 청구항 인용 검사(보정서를 만들기 전에 화면이 묻는다).

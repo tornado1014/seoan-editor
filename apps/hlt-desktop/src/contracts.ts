@@ -171,7 +171,9 @@ export const editorImportFinish = (choices: Record<string, string> | null) =>
 /** 글에서 CP949 밖 글자 찾기(바꾸지 않는다). */
 export const editorCp949Scan = (text: string) => invoke<Cp949FindingDto[]>('editor_cp949_scan', { text });
 /** 새 의견서: 빈 문서 + 【의견내용】 을 만들고 연다(이 탭에 문서가 있으면 새 탭 · `null`). */
-export const editorNewOpinion = () => invoke<EditorViewDto | null>('editor_new_opinion');
+/** 새 의견서(`body` = 본문 글 · 줄 하나 = 문단 하나 — 없으면 빈 의견서). */
+export const editorNewOpinion = (body?: string) =>
+  invoke<EditorViewDto | null>('editor_new_opinion', body === undefined ? undefined : { body });
 export const editorNewTab = () => invoke<void>('editor_new_tab');
 /** 닫기: 고친 것이 있으면 저장을 묻고 창을 닫는다. `false` = 취소. */
 export const editorClose = () => invoke<boolean>('editor_close');
@@ -312,6 +314,10 @@ export type CitationKindDto =
   | 'range_no_alternative';
 export type CitationIssueDto = { claim: number; kind: CitationKindDto; cited: number[] };
 export const editorClaimIssues = () => invoke<CitationIssueDto[]>('editor_claim_issues');
+/** 보정 근거 후보: 보정 전 명세서 식별번호 문단 · 점수(통째로면 1) · 인용 문장 · 그 문단의 도면. */
+export type BasisHitDto = { number: string; score: number; exact: boolean; quote: string; figures: string[] };
+export type ClaimBasisDto = { claim: number; added: boolean; phrases: { text: string; hits: BasisHitDto[] }[] };
+export const editorAmendmentBasis = () => invoke<ClaimBasisDto[] | null>('editor_amendment_basis');
 export const editorSetSize = (paragraphId: string, start: number, end: number, size: number) =>
   invoke<EditorViewDto>('editor_set_size', { paragraphId, start, end, size });
 

@@ -50,8 +50,8 @@ mod verify;
 mod write;
 
 pub use amend_marks::{
-    AmendmentMarks, CitationIssue, CitationKind, ParagraphMark, amendment_marks,
-    claim_citation_issues,
+    AmendmentMarks, BasisHit, CitationIssue, CitationKind, ClaimBasis, ParagraphMark, PhraseBasis,
+    amendment_basis, amendment_marks, claim_citation_issues,
 };
 pub use cancel::{CancellationToken, ProgressEvent, ProgressSink, ProgressTotals, VerifyOptions};
 pub use cell_format_edit::{
