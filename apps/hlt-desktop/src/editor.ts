@@ -16,6 +16,8 @@ import {
   type TableOperationDto,
   type CellPositionDto,
   editorExportAmendment,
+  editorReadReview,
+  editorApplyReview,
   editorExportFin,
   editorFind,
   editorReplace,
@@ -61,6 +63,10 @@ import {
   type EditorViewDto,
   type PlannedPageDto,
   type AmendmentDoneDto,
+  type DescriptionNoteDto,
+  type ProposedClaimDto,
+  type ReviewOutcomeDto,
+  type ReviewReportDto,
 } from './contracts';
 import { outlineTree, renderPage, richParagraph, selectOffsets, selectionOffsets } from './editor-view';
 import type { OutlineNode } from './editor-view';
@@ -156,6 +162,7 @@ export function mountEditor(root: HTMLElement): void {
           <button type="button" data-action="pdf" disabled title="인쇄 PDF">${icon('print')}<span>PDF</span></button>
           <button type="button" data-action="docx" disabled title="Word 파일로 저장(표제 포함 · 식별번호 없음)">${icon('save')}<span>Word</span></button>
           <button type="button" data-action="fin" disabled title="제출파일(.hlz · .fin) 만들기">${icon('send')}<span>제출파일</span></button>
+          <button type="button" data-action="review" disabled title="OA 검토보고서의 보정안을 불러와 편집기에 건다">${icon('amend')}<span>보정안</span></button>
           <button type="button" data-action="amend" disabled title="보정서 만들기">${icon('amend')}<span>보정서</span></button>
         </div>
         <span class="editor-status" aria-live="polite"></span>
@@ -328,7 +335,7 @@ export function mountEditor(root: HTMLElement): void {
     void editorLog(`${label} 실패 ${JSON.stringify(error)}`).catch(() => {});
   };
   const enable = () => {
-    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'docx', 'fin', 'amend', 'math', 'chem', 'table', 'align-justified', 'align-center', 'align-left', 'indent', 'outdent']) {
+    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'docx', 'fin', 'review', 'amend', 'math', 'chem', 'table', 'align-justified', 'align-center', 'align-left', 'indent', 'outdent']) {
       q<HTMLButtonElement>(`[data-action="${action}"]`).disabled = !view;
     }
   };
@@ -1359,6 +1366,100 @@ export function mountEditor(root: HTMLElement): void {
   }
 
   /** 그림 크기를 mm 로 넣기(비율 고정 — 한 칸을 고치면 다른 칸이 따라온다) → 그 배율로 다시 굽는다. */
+  /** 보정안 불러오기 창: 보정안 고르기 · 상세설명 오기 후보(바른 말 고쳐 쓰기) · 도면 할 일. 취소면 null. */
+  function askReview(
+    report: ReviewReportDto,
+  ): Promise<{ claims: ProposedClaimDto[]; tracked: boolean; notes: DescriptionNoteDto[] } | null> {
+    const escape = (text: string) =>
+      text.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]!);
+    const summary = (claims: ProposedClaimDto[]) => {
+      const changed = claims.filter((c) => c.before.length > 0 && c.after.length > 0 && c.before.join() !== c.after.join());
+      const deleted = claims.filter((c) => c.after.length === 0);
+      const added = claims.filter((c) => c.before.length === 0);
+      const list = (items: ProposedClaimDto[]) => items.map((c) => c.number).join(', ');
+      return [
+        changed.length ? `바뀐 항 ${list(changed)}` : '',
+        deleted.length ? `삭제 ${list(deleted)}` : '',
+        added.length ? `새 항 ${list(added)}` : '',
+      ]
+        .filter(Boolean)
+        .join(' · ');
+    };
+    return new Promise((resolve) => {
+      const box = document.createElement('form');
+      box.className = 'item-ask review-ask';
+      const proposals = report.proposals
+        .map(
+          (proposal, index) => `<label class="review-proposal"><input type="radio" name="proposal" value="${index}"${
+            index === 0 ? ' checked' : ''
+          }> ${escape(proposal.label)} — ${escape(summary(proposal.claims) || '바뀐 청구항 없음')}${
+            proposal.tracked ? '' : ' <em>(추적 변경 없음 · 보정 전 대조 생략)</em>'
+          }</label>`,
+        )
+        .join('');
+      const notes = report.notes
+        .map(
+          (note, index) => `<label class="review-note" title="${escape(note.sentence)}"><input type="checkbox" data-note="${index}"${
+            note.right && !note.positional && report.matches[index] > 0 ? ' checked' : ''
+          }> [${note.paragraphs.join('], [')}] “${escape(note.wrong)}” → <input class="review-right" data-note="${index}" size="16" value="${escape(
+            note.right ?? '',
+          )}" placeholder="바른 말"> <small>(${report.matches[index]}곳${
+            note.positional ? ' · 한 자리만 고치라는 정정 — 화면에서 직접' : ''
+          })</small></label>`,
+        )
+        .join('');
+      const figures = report.figures
+        .map((figure) => `<li title="${escape(figure.sentence)}">도 ${escape(figure.number)} — 그림 위 오른쪽 클릭 「그림 바꾸기…」</li>`)
+        .join('');
+      box.innerHTML = `<strong>보정안 불러오기</strong>
+        ${report.proposals.length ? `<fieldset><legend>청구항</legend>${proposals}<label class="review-proposal"><input type="radio" name="proposal" value="-1"> 청구항은 걸지 않음</label></fieldset>` : ''}
+        ${notes ? `<fieldset><legend>상세설명 오기 정정(고른 것만 · 그 번호 문단 안에서)</legend>${notes}</fieldset>` : ''}
+        ${figures ? `<fieldset><legend>도면(새 그림이 있어야 한다)</legend><ul>${figures}</ul></fieldset>` : ''}
+        <button type="submit">걸기</button><button type="button" class="item-cancel">취소</button>
+        <span class="item-hint">걸고 나서 화면에서 확인 · 손본 뒤 「보정서」를 누르세요 · 되돌리기 한 번에 전부 돌아갑니다</span>`;
+      const done = (value: { claims: ProposedClaimDto[]; tracked: boolean; notes: DescriptionNoteDto[] } | null) => {
+        box.remove();
+        input.focus({ preventScroll: true });
+        resolve(value);
+      };
+      box.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const chosen = Number(box.querySelector<HTMLInputElement>('input[name="proposal"]:checked')?.value ?? -1);
+        const proposal = report.proposals[chosen];
+        const picked = report.notes.flatMap((note, index) => {
+          const on = box.querySelector<HTMLInputElement>(`input[type="checkbox"][data-note="${index}"]`)!.checked;
+          const right = box.querySelector<HTMLInputElement>(`.review-right[data-note="${index}"]`)!.value;
+          return on && right ? [{ ...note, right }] : [];
+        });
+        done({ claims: proposal?.claims ?? [], tracked: proposal?.tracked ?? false, notes: picked });
+      });
+      box.querySelector('.item-cancel')!.addEventListener('click', () => done(null));
+      box.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') done(null);
+      });
+      root.append(box);
+      box.querySelector<HTMLButtonElement>('button[type="submit"]')!.focus();
+    });
+  }
+
+  /** 보정안을 건 결과 한 줄. */
+  function reviewSummary(outcome: ReviewOutcomeDto, figures: number): string {
+    const list = (items: string[]) => items.join(', ');
+    const notes = outcome.notes_applied.reduce((sum, [, count]) => sum + count, 0);
+    return [
+      outcome.claims_changed.length ? `바뀐 항 ${list(outcome.claims_changed)}` : '',
+      outcome.claims_deleted.length ? `삭제 ${list(outcome.claims_deleted)}` : '',
+      outcome.claims_added.length ? `새 항 ${list(outcome.claims_added)}` : '',
+      outcome.claims_failed.length
+        ? `못 건 항 ${outcome.claims_failed.map(([number, why]) => `${number}(${why})`).join(', ')}`
+        : '',
+      notes ? `오기 ${notes}곳 정정` : '',
+      figures ? `도면 ${figures}개는 「그림 바꾸기…」로` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ') || '바뀐 것이 없습니다';
+  }
+
   function pictureSize(picture: HTMLImageElement): Promise<void> {
     // 인쇄는 그림을 표시 크기보다 0.76pt 작게 그린다(print.rs DRAW_INSET_WIDTH/HEIGHT) — 되돌려 표시 크기로 보인다.
     const mm = (pt: number) => ((pt + 0.76) * 25.4) / 72;
@@ -1884,6 +1985,29 @@ export function mountEditor(root: HTMLElement): void {
           say(path ? `제출파일: ${path}` : '');
         } catch (error) {
           fail('제출파일', error);
+        }
+        break;
+      }
+      case 'review': {
+        if (!canEdit()) break;
+        try {
+          const report = await editorReadReview();
+          if (!report) break;
+          if (report.proposals.length === 0 && report.notes.length === 0 && report.figures.length === 0) {
+            say('보고서에서 보정안(「보정안」 표의 【청구항】)과 오기 정정 문장을 찾지 못했습니다.');
+            break;
+          }
+          const picked = await askReview(report);
+          if (!picked) break;
+          let outcome: ReviewOutcomeDto | null = null;
+          await structural('보정안 불러오기', async () => {
+            const done = await editorApplyReview(picked.claims, picked.tracked, picked.notes);
+            outcome = done.outcome;
+            return { next: done.view, caret: null };
+          });
+          if (outcome) say(reviewSummary(outcome, report.figures.length));
+        } catch (error) {
+          fail('보정안', error);
         }
         break;
       }

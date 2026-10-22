@@ -261,6 +261,9 @@ where
     {
         return run_set_paragraph_shapes(&args, stdout);
     }
+    if args.first().is_some_and(|value| value == "review-report") {
+        return run_review_report(&args, stdout);
+    }
     if args.first().is_some_and(|value| value == "edit-as-new") {
         return run_edit_as_new(&args, stdout);
     }
@@ -1486,6 +1489,27 @@ fn run_set_paragraph_shapes(args: &[String], stdout: &mut impl Write) -> u8 {
     EXIT_OK
 }
 
+/// OA 검토보고서(docx)에서 읽은 보정안(청구항 보정 전 · 후) · 상세설명 오기 후보 · 도면 할 일.
+fn run_review_report(args: &[String], stdout: &mut impl Write) -> u8 {
+    const COMMAND: &str = "review-report";
+    let [_, input] = args else {
+        let error = CoreError::new(ErrorCode::VerificationFailed, "usage", false);
+        let envelope: CommandEnvelope<hlt_core::ReviewReport> = error_envelope(COMMAND, error);
+        let _ = write_envelope(stdout, &envelope);
+        return EXIT_USAGE;
+    };
+    let result = hlt_core::read_review_report(Path::new(input));
+    let failed = result.is_err();
+    let envelope = match result {
+        Ok(report) => success_envelope(COMMAND, report),
+        Err(error) => error_envelope(COMMAND, error),
+    };
+    if write_envelope(stdout, &envelope).is_err() || failed {
+        return EXIT_VERIFY_FAILED;
+    }
+    EXIT_OK
+}
+
 #[derive(serde::Deserialize)]
 struct EditRequest {
     operations: Vec<EditOperation>,
@@ -1495,9 +1519,24 @@ struct EditRequest {
 #[derive(serde::Deserialize)]
 #[serde(untagged)]
 enum EditOperation {
-    Text { paragraph_id: String, text: String },
-    Merge { merge: String },
-    Picture { image_id: String, image: String },
+    Text {
+        paragraph_id: String,
+        text: String,
+    },
+    Merge {
+        merge: String,
+    },
+    Picture {
+        image_id: String,
+        image: String,
+    },
+    /// OA 검토보고서의 보정안(1부터) · 걸 오기 후보 차례(없으면 바른 말이 있는 것 전부).
+    Review {
+        review: String,
+        proposal: usize,
+        #[serde(default)]
+        notes: Option<Vec<usize>>,
+    },
 }
 
 #[derive(Serialize)]
@@ -1508,6 +1547,9 @@ struct EditResult {
     /// `--amendment` 를 줬으면 보정서 항목 수.
     #[serde(skip_serializing_if = "Option::is_none")]
     amendment_items: Option<usize>,
+    /// 보정안을 걸었으면 그 결과(바뀐 · 지운 · 새 · 못 건 항 · 오기 정정 수).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    review: Option<hlt_core::ReviewOutcome>,
 }
 
 /// 편집기 고침을 걸고 새 이름으로 저장한다(보정서생성 앞 단계: `edit-as-new` → `export-amendment <fin> <after.HLT> <out.fin>`).
@@ -1548,9 +1590,12 @@ fn run_edit_as_new(args: &[String], stdout: &mut impl Write) -> u8 {
             return Err(CoreError::new(ErrorCode::OutputExists, COMMAND, false));
         }
         let mut session = hlt_core::EditorSession::open(Path::new(input))?;
+        let mut review_outcome = None;
         let mut order: Vec<&EditOperation> = request.operations.iter().collect();
         order.sort_by_key(|operation| match operation {
             EditOperation::Picture { .. } => (0, 0),
+            // 보정안은 문단 차례를 바꾸니 맨 나중에(다른 고침의 id 는 입력 파일 기준).
+            EditOperation::Review { .. } => (2, 0),
             EditOperation::Text {
                 paragraph_id: id, ..
             }
@@ -1572,6 +1617,35 @@ fn run_edit_as_new(args: &[String], stdout: &mut impl Write) -> u8 {
                     let bytes = std::fs::read(image)
                         .map_err(|_| CoreError::new(ErrorCode::IoError, COMMAND, false))?;
                     session.replace_picture(image_id, &bytes)?;
+                }
+                EditOperation::Review {
+                    review,
+                    proposal,
+                    notes,
+                } => {
+                    let report = hlt_core::read_review_report(Path::new(review))?;
+                    let chosen = proposal
+                        .checked_sub(1)
+                        .and_then(|index| report.proposals.get(index))
+                        .ok_or_else(|| {
+                            CoreError::new(ErrorCode::VerificationFailed, "proposal", false)
+                        })?;
+                    let picked: Vec<hlt_core::DescriptionNote> = report
+                        .notes
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, note)| {
+                            note.right.is_some()
+                                && match notes {
+                                    Some(wanted) => wanted.contains(index),
+                                    // 목록이 없으면 한 자리 정정(「뒤의 …」)은 빼고 — 바꾸기는 모든 자리를 바꾼다.
+                                    None => !note.positional,
+                                }
+                        })
+                        .map(|(_, note)| note.clone())
+                        .collect();
+                    review_outcome =
+                        Some(session.apply_review(&chosen.claims, chosen.tracked, &picked)?);
                 }
             }
         }
@@ -1601,6 +1675,7 @@ fn run_edit_as_new(args: &[String], stdout: &mut impl Write) -> u8 {
             output_source: file_name(output),
             operation_count: request.operations.len(),
             amendment_items,
+            review: review_outcome,
         })
     })();
     let failed = result.is_err();

@@ -1206,6 +1206,181 @@ impl EditorSession {
         })
     }
 
+    /// 검토보고서 보정안 걸기(한 번의 고침 · 되돌리기 한 번): 청구항은 보고서의 보정 후 줄로 갈고(바뀐 줄만 · 글자 단위로 고쳐
+    /// 안 바뀐 글자 서식은 남는다) · 삭제항은 표제째 지우고 · 새 항은 앞 항 뒤에 세운다. `tracked`(추적 변경 있는 보고서)면
+    /// 보정 전 줄이 지금 글과 같은 항만 고친다 — 다르면 엉뚱한 글을 덮지 않게 건너뛰고 알린다.
+    /// 오기 정정은 바른 말이 있는 것만 그 번호 문단 안에서 바꾼다.
+    pub fn apply_review(
+        &mut self,
+        claims: &[crate::ProposedClaim],
+        tracked: bool,
+        notes: &[crate::DescriptionNote],
+    ) -> Result<ReviewOutcome, CoreError> {
+        let mut outcome = ReviewOutcome::default();
+        let compact =
+            |text: &str| -> String { text.chars().filter(|ch| !ch.is_whitespace()).collect() };
+        self.edit_model(|model| {
+            let heading_of = |number: &str| format!("【청구항 {number}】");
+            let find = |model: &HmlDocument, number: &str| {
+                model
+                    .paragraphs
+                    .iter()
+                    .position(|p| p.text.trim_matches('\u{c}').trim() == heading_of(number))
+            };
+            let body_end = |model: &HmlDocument, heading: usize| {
+                heading
+                    + 1
+                    + model.paragraphs[heading + 1..]
+                        .iter()
+                        .take_while(|p| !is_bracket_heading(p.text.trim_matches('\u{c}')))
+                        .count()
+            };
+            for claim in claims {
+                let Some(heading) = find(model, &claim.number) else {
+                    if claim.after.is_empty() {
+                        continue;
+                    }
+                    // 새 항: 번호가 작은 항 가운데 마지막 항 뒤.
+                    let previous = model
+                        .paragraphs
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(at, p)| {
+                            let number = p
+                                .text
+                                .trim()
+                                .strip_prefix("【청구항 ")?
+                                .strip_suffix('】')?
+                                .parse::<u32>()
+                                .ok()?;
+                            (number < claim.number.parse::<u32>().unwrap_or(u32::MAX)).then_some(at)
+                        })
+                        .next_back();
+                    let Some(previous) = previous else {
+                        outcome
+                            .claims_failed
+                            .push((claim.number.clone(), "청구항 자리 없음".into()));
+                        continue;
+                    };
+                    let at = body_end(model, previous);
+                    let mut heading = model.paragraphs[previous].clone();
+                    let text = heading_of(&claim.number);
+                    heading.id = format!("{}:claim{}", heading.id, claim.number);
+                    set_plain(&mut heading, &text);
+                    heading.marker = Some(text);
+                    let template = model.paragraphs[previous + 1..at]
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| heading.clone());
+                    let mut added = vec![heading];
+                    for (k, line) in claim.after.iter().enumerate() {
+                        let mut paragraph = template.clone();
+                        paragraph.id = format!("{}:claim{}:{k}", template.id, claim.number);
+                        paragraph.marker = None;
+                        set_plain(&mut paragraph, line);
+                        added.push(paragraph);
+                    }
+                    model.paragraphs.splice(at..at, added);
+                    outcome.claims_added.push(claim.number.clone());
+                    continue;
+                };
+                let end = body_end(model, heading);
+                let body = &model.paragraphs[heading + 1..end];
+                if body
+                    .iter()
+                    .any(|p| p.table_id.is_some() || !p.image_ids.is_empty())
+                {
+                    outcome
+                        .claims_failed
+                        .push((claim.number.clone(), "표 · 그림이 든 청구항".into()));
+                    continue;
+                }
+                let current: Vec<String> = body.iter().map(|p| p.text.clone()).collect();
+                if compact(&current.concat()) == compact(&claim.after.concat())
+                    && !claim.after.is_empty()
+                {
+                    continue;
+                }
+                if tracked && compact(&current.concat()) != compact(&claim.before.concat()) {
+                    outcome.claims_failed.push((
+                        claim.number.clone(),
+                        "보정 전 문언이 최종본과 다르다".into(),
+                    ));
+                    continue;
+                }
+                if claim.after.is_empty() {
+                    model.paragraphs.drain(heading..end);
+                    outcome.claims_deleted.push(claim.number.clone());
+                    continue;
+                }
+                let mut lines: Vec<crate::HmlParagraph> = Vec::with_capacity(claim.after.len());
+                for (k, line) in claim.after.iter().enumerate() {
+                    match body.get(k) {
+                        Some(old) if compact(&old.text) == compact(line) => lines.push(old.clone()),
+                        Some(old) => {
+                            let mut paragraph = old.clone();
+                            let new: Vec<char> = line.chars().collect();
+                            let edited = splice(&cells(&old.inlines), &new);
+                            set_cells(&mut paragraph, &edited);
+                            lines.push(paragraph);
+                        }
+                        None => {
+                            let template = body
+                                .last()
+                                .cloned()
+                                .unwrap_or_else(|| model.paragraphs[heading].clone());
+                            let mut paragraph = template.clone();
+                            paragraph.id = format!("{}:line{k}", template.id);
+                            paragraph.marker = None;
+                            set_plain(&mut paragraph, line);
+                            lines.push(paragraph);
+                        }
+                    }
+                }
+                model.paragraphs.splice(heading + 1..end, lines);
+                outcome.claims_changed.push(claim.number.clone());
+            }
+            for (index, note) in notes.iter().enumerate() {
+                let Some(right) = &note.right else {
+                    continue;
+                };
+                let mut count = 0;
+                for paragraph in model.paragraphs.iter_mut().filter(|p| {
+                    p.number
+                        .as_ref()
+                        .is_some_and(|number| note.paragraphs.contains(number))
+                }) {
+                    let shown = visible(paragraph);
+                    let found = shown.matches(note.wrong.as_str()).count();
+                    if found == 0 {
+                        continue;
+                    }
+                    let new: Vec<char> =
+                        shown.replace(note.wrong.as_str(), right).chars().collect();
+                    let edited = splice(&cells(&paragraph.inlines), &new);
+                    set_cells(paragraph, &edited);
+                    count += found;
+                }
+                outcome.notes_applied.push((index, count));
+            }
+            Ok(())
+        })?;
+        Ok(outcome)
+    }
+
+    /// 오기 후보가 걸릴 곳 수(그 번호 문단들에서 틀린 말이 나오는 수) — 걸기 전에 보여 준다.
+    pub fn review_note_matches(&self, note: &crate::DescriptionNote) -> usize {
+        self.paragraphs()
+            .iter()
+            .filter(|p| {
+                p.number
+                    .as_ref()
+                    .is_some_and(|number| note.paragraphs.contains(number))
+            })
+            .map(|p| p.text.matches(note.wrong.as_str()).count())
+            .sum()
+    }
+
     /// 그림 바꾸기(도면 보정): 판독 그림 `image_id` 자리에 새 그림 파일. 표시 폭은 그대로 · 높이는 새 그림 비율로
     /// (세로 650pt 를 넘으면 둘 다 줄인다). 새 id 를 달아 옛 그림 본문은 버려진다 — 보정서에서 `figure A`.
     pub fn replace_picture(&mut self, image_id: &str, bytes: &[u8]) -> Result<(), CoreError> {
@@ -2336,6 +2511,46 @@ fn set_cell(cell: &mut crate::HmlCell, edited: &[Cell]) {
         .collect();
 }
 
+/// 문단 글을 칸들로 다시 세운다(`replace_text` 와 같은 규칙 — 글 · 그림 목록 · 저장 줄나눔 버림).
+fn set_cells(paragraph: &mut crate::HmlParagraph, edited: &[Cell]) {
+    paragraph.inlines = inlines(edited);
+    paragraph.text = edited
+        .iter()
+        .filter_map(|value| match value {
+            Cell::Char(ch, ..) => Some(*ch),
+            Cell::Image(_) => None,
+        })
+        .collect();
+    paragraph.image_ids = edited
+        .iter()
+        .filter_map(|value| match value {
+            Cell::Image(id) => Some(id.clone()),
+            Cell::Char(..) => None,
+        })
+        .collect();
+    paragraph.source_line_bytes.clear();
+}
+
+/// 서식 없는 글 한 줄로.
+fn set_plain(paragraph: &mut crate::HmlParagraph, text: &str) {
+    let cells: Vec<Cell> = text
+        .chars()
+        .map(|ch| Cell::Char(ch, Vec::new(), None))
+        .collect();
+    set_cells(paragraph, &cells);
+}
+
+/// 문단 글을 그림 자리(`_`)까지 넣어 본다 — `splice` 가 맞추는 글.
+fn visible(paragraph: &crate::HmlParagraph) -> String {
+    cells(&paragraph.inlines)
+        .iter()
+        .map(|cell| match cell {
+            Cell::Char(ch, ..) => *ch,
+            Cell::Image(_) => '_',
+        })
+        .collect()
+}
+
 fn splice(old: &[Cell], new: &[char]) -> Vec<Cell> {
     let visible = |cell: &Cell| match cell {
         Cell::Char(ch, ..) => *ch,
@@ -2582,6 +2797,18 @@ fn is_bracket_heading(text: &str) -> bool {
 }
 
 /// 최종본에서 읽은 식별번호를 첫 판 모델에 입힌다. 문단 수가 같을 때만(어긋나면 엉뚱한 문단에 붙지 않게 버린다).
+/// 검토보고서 보정안을 건 결과(청구항 번호 · 오기 후보 차례).
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct ReviewOutcome {
+    pub claims_changed: Vec<String>,
+    pub claims_deleted: Vec<String>,
+    pub claims_added: Vec<String>,
+    /// (청구항 번호, 이유) — 고치지 않았다.
+    pub claims_failed: Vec<(String, String)>,
+    /// (오기 후보 차례, 바꾼 곳 수).
+    pub notes_applied: Vec<(usize, usize)>,
+}
+
 /// 문단 번호 `+` = 새 문단(번호를 받은 문단을 나눠 생긴 것 · 통특기 식별번호 0xFFFFFFFF).
 pub(crate) const NEW_PARAGRAPH: &str = "+";
 

@@ -1569,6 +1569,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "uuid",
+ "zip 3.0.0",
 ]
 
 [[package]]

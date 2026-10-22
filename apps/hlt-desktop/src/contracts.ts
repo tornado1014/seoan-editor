@@ -270,6 +270,28 @@ export interface AmendmentDoneDto {
   items: AmendItemDto[];
 }
 export const editorExportAmendment = () => invoke<AmendmentDoneDto | null>('editor_export_amendment');
+/** OA 검토보고서(docx)에서 읽은 보정안 · 상세설명 오기 후보 · 도면 할 일. */
+export type ProposedClaimDto = { number: string; before: string[]; after: string[] };
+export type DescriptionNoteDto = { paragraphs: string[]; wrong: string; right: string | null; sentence: string; positional: boolean };
+export type ReviewReportDto = {
+  proposals: { label: string; claims: ProposedClaimDto[]; tracked: boolean }[];
+  notes: DescriptionNoteDto[];
+  figures: { number: string; sentence: string }[];
+  /** 오기 후보마다 지금 문서에서 걸릴 곳 수. */
+  matches: number[];
+};
+export type ReviewOutcomeDto = {
+  claims_changed: string[];
+  claims_deleted: string[];
+  claims_added: string[];
+  claims_failed: [string, string][];
+  notes_applied: [number, number][];
+};
+/** 보고서 고르기(취소면 null). */
+export const editorReadReview = () => invoke<ReviewReportDto | null>('editor_read_review');
+/** 고른 보정안 청구항 · 고른 오기 정정을 한 번의 고침으로 건다. */
+export const editorApplyReview = (claims: ProposedClaimDto[], tracked: boolean, notes: DescriptionNoteDto[]) =>
+  invoke<{ view: EditorViewDto; outcome: ReviewOutcomeDto }>('editor_apply_review', { claims, tracked, notes });
 export const editorSetSize = (paragraphId: string, start: number, end: number, size: number) =>
   invoke<EditorViewDto>('editor_set_size', { paragraphId, start, end, size });
 

@@ -1178,7 +1178,7 @@ fn append_word_node(
     Ok(())
 }
 
-fn resolve_xml_reference(name: &str) -> Option<char> {
+pub(crate) fn resolve_xml_reference(name: &str) -> Option<char> {
     match name {
         "amp" => Some('&'),
         "lt" => Some('<'),

@@ -1062,3 +1062,170 @@ fn a_formula_heading_carries_the_identification_number() {
         ]
     );
 }
+
+/// 검토보고서 보정안 걸기: 보고서(docx)의 「보정안 1」 표(추적 변경) → 청구항 바꾸기 · 지우기 · 새 항, 고른 오기 정정 →
+/// 보정서에 `claim A` · `claim D` · `claim I` · `p A`. 보정 전 문언이 최종본과 다른 항은 건너뛰고 알린다 · 되돌리기 한 번.
+#[test]
+fn applies_a_review_report_proposal() {
+    use std::io::Write;
+    let temp = tempfile::tempdir().unwrap();
+    let fin = synthetic_fin(temp.path());
+    let p = |runs: String| format!("<w:p>{runs}</w:p>");
+    let r = |text: &str| format!("<w:r><w:t xml:space=\"preserve\">{text}</w:t></w:r>");
+    let ins = |text: &str| format!("<w:ins><w:r><w:t>{text}</w:t></w:r></w:ins>");
+    let del = |text: &str| format!("<w:del><w:r><w:delText>{text}</w:delText></w:r></w:del>");
+    let table = |label: &str, body: String| {
+        format!(
+            "<w:tbl><w:tr><w:tc>{}</w:tc><w:tc>{body}</w:tc></w:tr></w:tbl>",
+            p(r(label))
+        )
+    };
+    let first = [
+        p(r("【청구항 1】")),
+        p([
+            r("몸체"),
+            del("를"),
+            ins("와 바닥을"),
+            r(" 포함하는 장치"),
+            del("."),
+            ins(","),
+        ]
+        .concat()),
+        p(ins("덮개를 더 포함하는 장치.")),
+        p(del("【청구항 2】")),
+        p(del("제1항에 있어서, 덮개를 더 포함하는 장치.")),
+        p(ins("【청구항 3】")),
+        p(ins("제1항에 있어서, 손잡이를 더 포함하는 장치.")),
+    ]
+    .concat();
+    // 보정 전 문언이 최종본과 다르다(보고서를 다른 판에서 썼다).
+    let second = [
+        p(r("【청구항 1】")),
+        p(format!("{}{}", del("다른 글."), ins("새 글."))),
+    ]
+    .concat();
+    let xml = format!(
+        "<w:document xmlns:w=\"w\"><w:body>{}{}{}{}</w:body></w:document>",
+        p(r("4. 보정안")),
+        table("보정안 1", first),
+        table("보정안 2", second),
+        p(r(
+            "5. 기타: 단락 [0001]의 “시험 장치”는 “검사 장치”의 오기입니다."
+        )),
+    );
+    let docx = temp.path().join("검토보고서.docx");
+    {
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&docx).unwrap());
+        zip.start_file(
+            "word/document.xml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(xml.as_bytes()).unwrap();
+        zip.finish().unwrap();
+    }
+    let report = hlt_core::read_review_report(&docx).unwrap();
+    assert_eq!(report.proposals.len(), 2);
+    assert_eq!(report.notes.len(), 1, "{:?}", report.notes);
+
+    let mut session = EditorSession::open(&fin).unwrap();
+    let texts_before: Vec<String> = session.paragraphs().into_iter().map(|p| p.text).collect();
+    let failed = session
+        .apply_review(
+            &report.proposals[1].claims,
+            report.proposals[1].tracked,
+            &[],
+        )
+        .unwrap();
+    assert_eq!(
+        failed.claims_failed,
+        [(
+            "1".to_string(),
+            "보정 전 문언이 최종본과 다르다".to_string()
+        )]
+    );
+    let outcome = session
+        .apply_review(
+            &report.proposals[0].claims,
+            report.proposals[0].tracked,
+            &report.notes,
+        )
+        .unwrap();
+    assert_eq!(outcome.claims_changed, ["1"]);
+    assert_eq!(outcome.claims_deleted, ["2"]);
+    assert_eq!(outcome.claims_added, ["3"]);
+    assert!(
+        outcome.claims_failed.is_empty(),
+        "{:?}",
+        outcome.claims_failed
+    );
+    assert_eq!(outcome.notes_applied, [(0, 1)]);
+    let texts: Vec<String> = session.paragraphs().into_iter().map(|p| p.text).collect();
+    let at = texts.iter().position(|t| t == "【청구항 1】").unwrap();
+    assert_eq!(
+        texts[at..at + 5],
+        [
+            "【청구항 1】",
+            "몸체와 바닥을 포함하는 장치,",
+            "덮개를 더 포함하는 장치.",
+            "【청구항 3】",
+            "제1항에 있어서, 손잡이를 더 포함하는 장치."
+        ]
+    );
+    assert!(texts.contains(&"본 발명은 검사 장치에 관한 것이다.".to_string()));
+    assert!(
+        texts.contains(&"시험 장치{TEST APPARATUS}".to_string()),
+        "번호 문단 밖은 그대로"
+    );
+
+    let after = session.materialize().unwrap();
+    let export = hlt_core::export_amendment_from_fin(
+        &fin,
+        &after,
+        "spec_1.dta",
+        "2026-10-22",
+        &hlt_core::KipoExportOptions {
+            paragraph_numbers: session.paragraph_numbers(),
+            ..Default::default()
+        },
+        &hlt_core::AmendmentOptions {
+            dta_version: String::new(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let items: Vec<String> = export
+        .xml
+        .split("<AmendBody elementName=\"")
+        .skip(1)
+        .map(|item| {
+            let kind = item.split('"').next().unwrap();
+            let status = item
+                .split("status=\"")
+                .nth(1)
+                .unwrap()
+                .split('"')
+                .next()
+                .unwrap();
+            let number = item
+                .split("attributeValue=\"")
+                .nth(1)
+                .unwrap()
+                .split('"')
+                .next()
+                .unwrap();
+            format!("{kind} {status} {number}")
+        })
+        .collect();
+    assert_eq!(
+        items,
+        ["p A 0001", "claim A 1", "claim D 2", "claim I 3"],
+        "{}",
+        export.xml
+    );
+
+    // 되돌리기 한 번에 전부.
+    session.undo().unwrap();
+    let texts: Vec<String> = session.paragraphs().into_iter().map(|p| p.text).collect();
+    assert_eq!(texts, texts_before);
+}

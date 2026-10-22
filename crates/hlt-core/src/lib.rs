@@ -37,6 +37,7 @@ mod pdf;
 mod print;
 mod read_model;
 mod reflow;
+mod review_report;
 mod save;
 mod schema;
 mod serde_u64;
@@ -78,7 +79,7 @@ pub use edit::{
 };
 pub use editor::{
     EditorParagraph, EditorSession, EditorSpan, FigureKind, FindFormat, FindMatch, FindQuery,
-    ReplaceFormat,
+    ReplaceFormat, ReviewOutcome,
 };
 pub use error::{CoreError, ErrorCode};
 pub use export_fin::{
@@ -153,6 +154,10 @@ pub use read_model::{
     CharacterFormatSpan, CharacterSizeRun, DocumentTreeKind, FixedBlockFingerprints,
     FormatInventory, FormatParagraph, ImageOccurrence, InspectSummary, LineRecord, ParagraphRecord,
     SectionRecord, ShapeRecord, SourceRange, TableRecord, UnresolvedCellFormat, UnresolvedFormat,
+};
+pub use review_report::{
+    DescriptionNote, FigureNote, Proposal, ProposedClaim, ReviewReport, read_review_report,
+    review_from_document_xml,
 };
 pub use save::{
     GeneratedHltSaveResult, SaveAsNewResult, StructuralParity, WriteOptions, repack_as_new,

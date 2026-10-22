@@ -288,6 +288,13 @@ progress {
 
 .item-ask { position: fixed; left: 50%; top: 140px; transform: translateX(-50%); z-index: 20; display: flex; gap: 6px; align-items: center; padding: 10px 14px; background: #fffdf8; border: 1px solid #c9bfae; border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.18); font-size: 14px; }
 .item-ask .item-hint { color: #8a7f70; font-size: 12px; }
+/* 보정안 불러오기 창: 세로로 쌓고 길면 스크롤 */
+.review-ask { flex-direction: column; align-items: stretch; width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 180px); overflow: auto; }
+.review-ask fieldset { border: 1px solid #e2dccf; border-radius: 4px; padding: 6px 10px; margin: 0; }
+.review-ask legend { color: #6b6255; font-size: 12px; }
+.review-ask label { display: block; padding: 2px 0; }
+.review-ask ul { margin: 0; padding-left: 18px; }
+.review-ask button { align-self: flex-start; }
 .nk-pmark { position: absolute; display: block; color: #6f9bd1; pointer-events: none; user-select: none; }
 .nk-pmark svg { display: block; overflow: visible; }
 [data-action="marks"][aria-pressed="true"] { background: #e3edf8; border-color: #6f9bd1; }

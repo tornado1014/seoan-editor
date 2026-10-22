@@ -844,6 +844,76 @@ pub async fn editor_resize_image(
     })
 }
 
+#[derive(serde::Serialize)]
+pub struct ReviewReadDto {
+    #[serde(flatten)]
+    report: hlt_core::ReviewReport,
+    /// 오기 후보마다 지금 문서에서 걸릴 곳 수.
+    matches: Vec<usize>,
+}
+
+/// 보정안 불러오기 ①: OA 검토보고서(docx)를 골라 읽는다(문서 폴더에서 연다 · 취소면 `None`).
+#[tauri::command]
+pub async fn editor_read_review(
+    window: Window,
+    app: AppHandle,
+    state: State<'_, EditorState>,
+) -> Result<Option<ReviewReadDto>, CoreError> {
+    let source = state
+        .slot(window.label())
+        .lock()
+        .ok()
+        .and_then(|slot| slot.source.clone());
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_title("OA 검토보고서 고르기")
+        .add_filter("Word(docx)", &["docx"]);
+    if let Some(folder) = source.as_deref().and_then(|path| path.parent()) {
+        dialog = dialog.set_directory(folder);
+    }
+    let Some(path) = dialog
+        .blocking_pick_file()
+        .and_then(|path| path.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    let report = hlt_core::read_review_report(&path)?;
+    let matches = with_session(&state, &window, |session| {
+        Ok(report
+            .notes
+            .iter()
+            .map(|note| session.review_note_matches(note))
+            .collect())
+    })?;
+    Ok(Some(ReviewReadDto { report, matches }))
+}
+
+#[derive(serde::Serialize)]
+pub struct ReviewAppliedDto {
+    view: EditorViewDto,
+    outcome: hlt_core::ReviewOutcome,
+}
+
+/// 보정안 불러오기 ②: 고른 보정안의 청구항 · 고른 오기 정정을 한 번의 고침으로 건다.
+#[tauri::command]
+pub async fn editor_apply_review(
+    window: Window,
+    state: State<'_, EditorState>,
+    claims: Vec<hlt_core::ProposedClaim>,
+    tracked: bool,
+    notes: Vec<hlt_core::DescriptionNote>,
+) -> Result<ReviewAppliedDto, CoreError> {
+    with_session(&state, &window, |session| {
+        let outcome = session.apply_review(&claims, tracked, &notes)?;
+        let title = title(session);
+        Ok(ReviewAppliedDto {
+            view: view(session, title),
+            outcome,
+        })
+    })
+}
+
 /// 그림 바꾸기(도면 보정): JPG · TIFF 를 골라 판독 그림 `image` 자리에 · 고르기를 취소하면 문서는 그대로.
 #[tauri::command]
 pub async fn editor_replace_picture(

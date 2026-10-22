@@ -101,6 +101,26 @@ beforeEach(() => {
       case 'editor_insert_picture':
       case 'editor_replace_picture':
         return view(texts);
+      case 'editor_read_review':
+        return {
+          proposals: [
+            { label: '보정안 1', tracked: true, claims: [{ number: '1', before: ['가'], after: ['나'] }] },
+            { label: '보정안 2', tracked: false, claims: [{ number: '2', before: ['다'], after: [] }] },
+          ],
+          notes: [
+            { paragraphs: ['0001'], wrong: '가나', right: '가다', sentence: '…', positional: false },
+            { paragraphs: ['0002'], wrong: '갉', right: null, sentence: '…', positional: false },
+            { paragraphs: ['0003'], wrong: '라', right: '마', sentence: '…', positional: false },
+            { paragraphs: ['0004'], wrong: '제1', right: '제2', sentence: '…', positional: true },
+          ],
+          figures: [{ number: '5', sentence: '…' }],
+          matches: [3, 1, 2, 2],
+        };
+      case 'editor_apply_review':
+        return {
+          view: view(texts),
+          outcome: { claims_changed: [], claims_deleted: ['2'], claims_added: [], claims_failed: [], notes_applied: [[0, 3], [1, 1]] },
+        };
       case 'editor_cp949_scan':
         return Array.from(String(args!.text))
           .filter((ch) => ch === '\u2212' || ch === '\u2075')
@@ -651,6 +671,42 @@ describe('page editing', () => {
     (await menu(100, 300)).action!();
     await settle(10);
     expect(last('editor_replace_picture')).toEqual(['editor_replace_picture', { image: 'image:0' }]);
+  });
+
+  test('review report: 보정안 → pick a proposal and the typo fixes (right word editable) → applied in one edit', async () => {
+    const root = await open();
+    root.querySelector<HTMLButtonElement>('[data-action="review"]')!.click();
+    await settle(10);
+    const box = root.querySelector<HTMLFormElement>('.review-ask')!;
+    expect(box.querySelectorAll('input[name="proposal"]').length).toBe(3); // 두 안 + 걸지 않음
+    expect(box.textContent).toContain('바뀐 항 1');
+    expect(box.textContent).toContain('추적 변경 없음');
+    expect(box.textContent).toContain('도 5');
+    // 바른 말이 없는 후보 · 한 자리만 고치라는 후보는 꺼져 있다 · 걸릴 곳 수를 보여 준다.
+    const checks = [...box.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+    expect(checks.map((c) => c.checked)).toEqual([true, false, true, false]);
+    expect(box.textContent).toContain('(3곳)');
+    expect(box.textContent).toContain('한 자리만');
+    box.querySelector<HTMLInputElement>('input[name="proposal"][value="1"]')!.checked = true;
+    checks[2].checked = false;
+    box.querySelector<HTMLInputElement>('.review-right[data-note="1"]')!.value = '…';
+    checks[1].checked = true;
+    box.requestSubmit();
+    await settle(30);
+    expect(last('editor_apply_review')).toEqual([
+      'editor_apply_review',
+      {
+        claims: [{ number: '2', before: ['다'], after: [] }],
+        tracked: false,
+        notes: [
+          { paragraphs: ['0001'], wrong: '가나', right: '가다', sentence: '…', positional: false },
+          { paragraphs: ['0002'], wrong: '갉', right: '…', sentence: '…', positional: false },
+        ],
+      },
+    ]);
+    expect(root.querySelector('.review-ask')).toBeNull();
+    expect(root.querySelector('.editor-status')!.textContent).toContain('삭제 2 · 오기 4곳 정정 · 도면 1개');
+    await settle(500);
   });
 
   test('identification item: right-click submenu → number (next one filled in) → heading + empty paragraph below', async () => {
