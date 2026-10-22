@@ -69,6 +69,8 @@ let pageImages: PlannedImageDto[] = [];
 let cellLines: { cell: string; text: string }[] = [];
 let numbers: (string | null)[] = [];
 let closeAnswer = true;
+let marksAnswer: unknown = null;
+let issuesAnswer: unknown[] = [];
 const calls: [string, unknown][] = [];
 
 beforeEach(() => {
@@ -77,6 +79,8 @@ beforeEach(() => {
   cellLines = [];
   numbers = [];
   closeAnswer = true;
+  marksAnswer = null;
+  issuesAnswer = [];
   calls.length = 0;
   // 쪽이 보이면 바로 그린다.
   globalThis.IntersectionObserver = class {
@@ -101,6 +105,12 @@ beforeEach(() => {
       case 'editor_insert_picture':
       case 'editor_replace_picture':
         return view(texts);
+      case 'editor_amendment_marks':
+        return marksAnswer;
+      case 'editor_claim_issues':
+        return issuesAnswer;
+      case 'editor_export_amendment':
+        return null;
       case 'editor_read_review':
         return {
           proposals: [
@@ -707,6 +717,59 @@ describe('page editing', () => {
     expect(root.querySelector('.review-ask')).toBeNull();
     expect(root.querySelector('.editor-status')!.textContent).toContain('삭제 2 · 오기 4곳 정정 · 도면 1개');
     await settle(500);
+  });
+
+  test('amendment marks: 보정 표시 draws inserted text, deletion wedges and change bars (only for a final .fin)', async () => {
+    const root = await open();
+    const toggle = root.querySelector<HTMLButtonElement>('[data-action="amend-marks"]')!;
+    toggle.click(); // 최종본이 아니다(null) → 꺼지고 알린다
+    await settle(10);
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    expect(root.querySelector('.editor-status')!.textContent).toContain('최종본(.fin)');
+    marksAnswer = {
+      paragraphs: [{ id: 'paragraph:0', inserted: [[1, 3]], deleted: [[0, '지운']] }],
+      changed: ['【0001】'],
+      added: [],
+      removed: ['청구항 2'],
+    };
+    issuesAnswer = [{ claim: 3, kind: 'removed', cited: [2] }];
+    toggle.click();
+    await settle(10);
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    const ins = root.querySelector<HTMLElement>('.nk-ins')!;
+    expect(ins.style.left).toBe(`${62 * SCALE}px`); // 「나다」: 글자 1 경계 x = 50 + 12
+    expect(ins.style.width).toBe(`${24 * SCALE}px`);
+    expect(root.querySelector<HTMLElement>('.nk-del')!.title).toBe('지움: 지운');
+    expect(root.querySelectorAll('.nk-chg').length).toBe(1); // 바뀐 문단 줄에만
+    const status = root.querySelector('.editor-status')!.textContent!;
+    expect(status).toContain('바뀐 것: 【0001】');
+    expect(status).toContain('지운 것: 청구항 2');
+    expect(status).toContain('청구항 인용 문제 1건');
+    toggle.click();
+    await settle(10);
+    expect(root.querySelector('.nk-ins')).toBeNull();
+  });
+
+  test('보정서: citation problems are listed first — 취소 stops, 그래도 만들기 goes on', async () => {
+    texts = ['가나다', '【청구항 3】', '제2항에 있어서'];
+    issuesAnswer = [
+      { claim: 3, kind: 'removed', cited: [2] },
+      { claim: 3, kind: 'and_citation', cited: [1, 2] },
+    ];
+    const root = await open();
+    root.querySelector<HTMLButtonElement>('[data-action="amend"]')!.click();
+    await settle(10);
+    const box = root.querySelector<HTMLFormElement>('.citation-ask')!;
+    expect(box.textContent).toContain('지운 청구항 2');
+    expect(box.textContent).toContain('특허로 점검 페이지는 못 잡는 것');
+    box.querySelector<HTMLButtonElement>('.item-cancel')!.click();
+    await settle(10);
+    expect(calls.some(([command]) => command === 'editor_export_amendment')).toBe(false);
+    root.querySelector<HTMLButtonElement>('[data-action="amend"]')!.click();
+    await settle(10);
+    root.querySelector<HTMLFormElement>('.citation-ask')!.requestSubmit();
+    await settle(10);
+    expect(calls.some(([command]) => command === 'editor_export_amendment')).toBe(true);
   });
 
   test('identification item: right-click submenu → number (next one filled in) → heading + empty paragraph below', async () => {

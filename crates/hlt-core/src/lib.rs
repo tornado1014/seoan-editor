@@ -1,5 +1,6 @@
 #![allow(clippy::result_large_err)]
 
+mod amend_marks;
 mod cancel;
 mod cell_format_edit;
 mod claim_check;
@@ -48,6 +49,10 @@ mod variable_edit;
 mod verify;
 mod write;
 
+pub use amend_marks::{
+    AmendmentMarks, CitationIssue, CitationKind, ParagraphMark, amendment_marks,
+    claim_citation_issues,
+};
 pub use cancel::{CancellationToken, ProgressEvent, ProgressSink, ProgressTotals, VerifyOptions};
 pub use cell_format_edit::{
     CellFormatEdit, CellFormatEditDecision, CellFormatEditDecisionStatus, CellFormatEditPlan,
@@ -87,8 +92,8 @@ pub use export_fin::{
     FinAmendmentExport, FinExport, FinExportOptions, amendable_elements, apply_amendment,
     build_amendment_dta, build_amendment_dta_with_images, build_amendment_xml, build_fin,
     build_hlz, build_xresult, diff_elements, diff_elements_named, dta_version,
-    export_amendment_from_fin, export_amendment_path, export_fin_path, invention_titles,
-    sha256_hex,
+    export_amendment_from_fin, export_amendment_path, export_fin_path, final_version_from_fin,
+    invention_titles, sha256_hex,
 };
 pub use export_kipo::{
     KipoExport, KipoExportImage, KipoExportOptions, display_units_to_mm,

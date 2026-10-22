@@ -17,7 +17,9 @@ import {
   type CellPositionDto,
   editorExportAmendment,
   editorReadReview,
+  editorAmendmentMarks,
   editorApplyReview,
+  editorClaimIssues,
   editorExportFin,
   editorFind,
   editorReplace,
@@ -63,6 +65,9 @@ import {
   type EditorViewDto,
   type PlannedPageDto,
   type AmendmentDoneDto,
+  type AmendmentMarksDto,
+  type CitationIssueDto,
+  type ParagraphMarkDto,
   type DescriptionNoteDto,
   type ProposedClaimDto,
   type ReviewOutcomeDto,
@@ -163,7 +168,8 @@ export function mountEditor(root: HTMLElement): void {
           <button type="button" data-action="docx" disabled title="Word 파일로 저장(표제 포함 · 식별번호 없음)">${icon('save')}<span>Word</span></button>
           <button type="button" data-action="fin" disabled title="제출파일(.hlz · .fin) 만들기">${icon('send')}<span>제출파일</span></button>
           <button type="button" data-action="review" disabled title="OA 검토보고서의 보정안을 불러와 편집기에 건다">${icon('amend')}<span>보정안</span></button>
-          <button type="button" data-action="amend" disabled title="보정서 만들기">${icon('amend')}<span>보정서</span></button>
+          <button type="button" data-action="amend-marks" aria-pressed="false" disabled title="보정 표시 — 최종본(.fin)에 견준 바뀐 글(넣은 글 · 지운 자리 · 바뀐 문단)">${icon('marks')}<span>보정 표시</span></button>
+          <button type="button" data-action="amend" disabled title="보정서 만들기(청구항 인용을 먼저 점검)">${icon('amend')}<span>보정서</span></button>
         </div>
         <span class="editor-status" aria-live="polite"></span>
         <span class="editor-error" role="alert" hidden title="눌러서 닫기"></span>
@@ -335,7 +341,7 @@ export function mountEditor(root: HTMLElement): void {
     void editorLog(`${label} 실패 ${JSON.stringify(error)}`).catch(() => {});
   };
   const enable = () => {
-    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'docx', 'fin', 'review', 'amend', 'math', 'chem', 'table', 'align-justified', 'align-center', 'align-left', 'indent', 'outdent']) {
+    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'docx', 'fin', 'review', 'amend-marks', 'amend', 'math', 'chem', 'table', 'align-justified', 'align-center', 'align-left', 'indent', 'outdent']) {
       q<HTMLButtonElement>(`[data-action="${action}"]`).disabled = !view;
     }
   };
@@ -358,6 +364,7 @@ export function mountEditor(root: HTMLElement): void {
     host.replaceChildren(renderPage(page, SCALE, (code) => images.get(code) ?? null, panel.hidden ? null : selected));
     drawNumbers(host, page);
     drawMarks(host, page);
+    drawAmendMarks(host, page);
     paint();
   }
 
@@ -400,6 +407,62 @@ export function mountEditor(root: HTMLElement): void {
     }
   }
 
+  /** 보정 표시: 최종본에 견준 넣은 글(연두 바탕) · 지운 자리(빨간 쐐기 — 올리면 지운 글) · 바뀐 문단(왼쪽 막대). */
+  let showAmend = false;
+  let amendMarks = new Map<string, ParagraphMarkDto>();
+  function drawAmendMarks(host: HTMLElement, page: PlannedPageDto) {
+    if (!showAmend) return;
+    for (const line of page.lines) {
+      if (!line.paragraph || line.cell || line.start === undefined || !line.stops?.length) continue;
+      const mark = amendMarks.get(line.paragraph);
+      if (!mark) continue;
+      const stops = line.stops;
+      const from = line.start;
+      const to = from + stops.length - 1;
+      const last = to === charsOf(line.paragraph).length;
+      overlay(host, 'nk-chg', stops[0] - 7, line.top, 2);
+      for (const [a, b] of mark.inserted) {
+        const start = Math.max(a, from);
+        const end = Math.min(b, to);
+        if (end > start) overlay(host, 'nk-ins', stops[start - from], line.top, stops[end - from] - stops[start - from]);
+      }
+      for (const [at, text] of mark.deleted) {
+        if (at < from || at > to || (at === to && !last)) continue;
+        const wedge = overlay(host, 'nk-del', stops[at - from] - 1.5, line.top, 3);
+        wedge.title = `지움: ${text}`;
+      }
+    }
+  }
+  /** 보정 표시를 새로 받아 그린다(켜 둔 동안 고칠 때마다). `announce` = 상태줄에 요약. */
+  async function refreshAmend(announce: boolean) {
+    if (!showAmend) return;
+    const marks = await editorAmendmentMarks().catch(() => null);
+    if (!marks) {
+      showAmend = false;
+      amendMarks = new Map();
+      q<HTMLButtonElement>('[data-action="amend-marks"]').setAttribute('aria-pressed', 'false');
+      for (const index of pages.keys()) redraw(index);
+      say('보정 표시는 최종본(.fin)으로 연 문서에서만 볼 수 있습니다.');
+      return;
+    }
+    amendMarks = new Map(marks.paragraphs.map((mark) => [mark.id, mark]));
+    for (const index of pages.keys()) redraw(index);
+    paint();
+    if (announce) {
+      const issues = await editorClaimIssues().catch(() => []);
+      say(amendSummary(marks, issues));
+    }
+  }
+  function amendSummary(marks: AmendmentMarksDto, issues: CitationIssueDto[]): string {
+    const parts = [
+      marks.changed.length ? `바뀐 것: ${marks.changed.join(', ')}` : '',
+      marks.added.length ? `새로 넣은 것: ${marks.added.join(', ')}` : '',
+      marks.removed.length ? `지운 것: ${marks.removed.join(', ')}` : '',
+      issues.length ? `청구항 인용 문제 ${issues.length}건(「보정서」를 누르면 목록)` : '',
+    ].filter(Boolean);
+    return parts.length ? `보정 표시 — ${parts.join(' · ')}` : '보정 표시 — 최종본과 같습니다';
+  }
+
   /** 표 칸 글(쪽 위 칸 편집) — 화면 판마다 바탕이 실어 준다. 모델 준비 전이면 칸을 누를 때 묻는다(`loadCell`). */
   const cellTexts = new Map<string, string>();
 
@@ -439,6 +502,7 @@ export function mountEditor(root: HTMLElement): void {
     say(`${next.title} · ${next.page_count}쪽${next.editable ? '' : ' · 보기 전용(이 서식은 고칠 수 없다)'}`);
     enable();
     watchPreparing(next);
+    void refreshAmend(false);
   }
 
   /** 문서 닫기 뒤: 쪽 · 구조 창 · 커서 · 찾기 결과를 비우고 처음 화면으로(단추는 다시 잠근다). */
@@ -679,6 +743,7 @@ export function mountEditor(root: HTMLElement): void {
       host.replaceChildren(renderPage(page, SCALE, (code) => images.get(code) ?? null, null));
       drawNumbers(host, page);
       drawMarks(host, page);
+      drawAmendMarks(host, page);
     }
   }
 
@@ -1460,6 +1525,54 @@ export function mountEditor(root: HTMLElement): void {
       .join(' · ') || '바뀐 것이 없습니다';
   }
 
+  /** 보정서 앞 청구항 인용 점검: 문제 목록(누르면 그 항으로) · 「그래도 만들기」면 true. */
+  function askCitations(issues: CitationIssueDto[]): Promise<boolean> {
+    const what: Record<CitationIssueDto['kind'], (cited: string) => string> = {
+      mis_reference: (cited) => `자기 항 · 뒤 항 · 없는 항(${cited})을 인용`,
+      removed: (cited) => `지운 청구항 ${cited}을(를) 인용`,
+      duplicate_multiple: () => '다중 인용 항을 다시 다중 인용(중복 다중참조)',
+      no_alternative: () => '「내지」 범위 뒤에 「어느」가 없다(택일어 미사용)',
+      range_mis_reference: (cited) => `범위 안에 자기 항 · 뒤 항 · 없는 항(${cited})`,
+      and_citation: () => '「및 · 과 · 와」로 묶어 인용(택일적이 아니다)',
+      range_no_alternative: () => '범위 인용 뒤에 「어느」가 없다',
+    };
+    const app = new Set<CitationIssueDto['kind']>(['removed', 'range_mis_reference', 'and_citation', 'range_no_alternative']);
+    return new Promise((resolve) => {
+      const box = document.createElement('form');
+      box.className = 'item-ask citation-ask';
+      box.innerHTML = `<strong>청구항 인용 점검 — ${issues.length}건</strong><ul>${issues
+        .map(
+          (issue, index) => `<li><button type="button" class="citation-go" data-index="${index}">청구항 ${issue.claim}</button> ${what[
+            issue.kind
+          ](issue.cited.join(', '))}${app.has(issue.kind) ? ' <small>(특허로 점검 페이지는 못 잡는 것)</small>' : ''}</li>`,
+        )
+        .join('')}</ul>
+        <button type="submit">그래도 만들기</button><button type="button" class="item-cancel">취소</button>`;
+      const done = (value: boolean) => {
+        box.remove();
+        input.focus({ preventScroll: true });
+        resolve(value);
+      };
+      box.addEventListener('submit', (event) => {
+        event.preventDefault();
+        done(true);
+      });
+      box.querySelector('.item-cancel')!.addEventListener('click', () => done(false));
+      box.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') done(false);
+      });
+      for (const button of box.querySelectorAll<HTMLButtonElement>('.citation-go')) {
+        button.addEventListener('click', () => {
+          const heading = `【청구항 ${issues[Number(button.dataset.index)].claim}】`;
+          const target = view?.paragraphs.find((paragraph) => paragraph.text.trim() === heading);
+          if (target) place({ paragraph: target.id, offset: 0 }, false);
+        });
+      }
+      root.append(box);
+      box.querySelector<HTMLButtonElement>('button[type="submit"]')!.focus();
+    });
+  }
+
   function pictureSize(picture: HTMLImageElement): Promise<void> {
     // 인쇄는 그림을 표시 크기보다 0.76pt 작게 그린다(print.rs DRAW_INSET_WIDTH/HEIGHT) — 되돌려 표시 크기로 보인다.
     const mm = (pt: number) => ((pt + 0.76) * 25.4) / 72;
@@ -1890,6 +2003,18 @@ export function mountEditor(root: HTMLElement): void {
         paint();
         break;
       }
+      case 'amend-marks': {
+        showAmend = !showAmend;
+        q<HTMLButtonElement>('[data-action="amend-marks"]').setAttribute('aria-pressed', String(showAmend));
+        if (showAmend) await refreshAmend(true);
+        else {
+          amendMarks = new Map();
+          for (const index of pages.keys()) redraw(index);
+          paint();
+          say('');
+        }
+        break;
+      }
       case 'new-tab':
         await editorNewTab().catch((error) => fail('새 탭', error));
         break;
@@ -2013,8 +2138,13 @@ export function mountEditor(root: HTMLElement): void {
       }
       case 'amend': {
         // 통특기와 같게: 최종본에서만 · 고친 것이 없으면 「변경된 내용이 없습니다.」 · 끝나면 읽기 전용 보정서.
-        say('보정서 만드는 중…');
         try {
+          const issues = await editorClaimIssues();
+          if (issues.length > 0 && !(await askCitations(issues))) {
+            say('보정서 만들기를 멈췄습니다 — 청구항 인용을 고친 뒤 다시 누르세요.');
+            break;
+          }
+          say('보정서 만드는 중…');
           const done = await editorExportAmendment();
           if (done) {
             say(`보정서(${done.order}차) 생성작업을 완료하였습니다. ${done.dta} · 최종본 갱신 ${done.fin}`);

@@ -282,6 +282,11 @@ progress {
 .nk-caret { position: absolute; width: 1.5px; background: #111; pointer-events: none; animation: nk-blink 1.06s steps(1) infinite; }
 @keyframes nk-blink { 50% { opacity: 0; } }
 .nk-sel { position: absolute; background: rgba(56, 117, 215, .28); pointer-events: none; }
+.nk-ins { position: absolute; background: rgba(46, 160, 67, .22); border-bottom: 1.5px solid #2ea043; pointer-events: none; }
+.nk-del { position: absolute; background: #d1242f; border-radius: 1px; cursor: help; }
+.nk-chg { position: absolute; background: #d29922; pointer-events: none; }
+.citation-ask ul { margin: 6px 0; padding-left: 18px; max-height: 40vh; overflow: auto; }
+.citation-ask .citation-go { margin-right: 4px; }
 .nk-compose { position: absolute; background: #fff; font-family: BatangChe, "바탕체", AppleMyungjo, serif; line-height: 1; white-space: pre; text-decoration: underline; pointer-events: none; }
 .caret-input { position: fixed; left: 0; top: 0; width: 2px; height: 18px; padding: 0; border: 0; opacity: 0; resize: none; overflow: hidden; pointer-events: none; z-index: -1; }
 .editor-error { flex-basis: 100%; color: #8a1c12; background: #fdecea; border: 1px solid #f3b8b1; border-radius: 4px; padding: 2px 8px; cursor: pointer; white-space: pre-wrap; font-size: 12px; }

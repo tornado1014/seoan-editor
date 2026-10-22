@@ -34,6 +34,9 @@ pub struct EditorSession {
     numbers: Vec<Option<String>>,
     /// 마지막 고침이 CP949 에 없어 바꾼 글자들(붙여넣기 · 타이핑) — 화면이 알린다.
     pub cp949_substitutions: Vec<crate::Cp949Substitution>,
+    /// 최종본(.fin)을 열었나 · 그 첫 판 문단(서식 구간까지 — 모델이 다 되면 찍는다). 보정 표시의 「보정 전」.
+    from_final: bool,
+    baseline: Option<Vec<EditorParagraph>>,
 }
 
 /// 판 하나: 파일 · 그 판의 의미 모델(있으면 다시 해석하지 않는다) · 다시 구운 판인가(저장 때 전체 검증).
@@ -131,7 +134,7 @@ pub struct EditorParagraph {
     pub spans: Vec<EditorSpan>,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct EditorSpan {
     pub start: u32,
     pub end: u32,
@@ -223,6 +226,8 @@ impl EditorSession {
             numbers: opened_numbers.clone(),
             opened_numbers,
             cp949_substitutions: Vec::new(),
+            from_final: package,
+            baseline: None,
         }
         .with_spans()
         .centered_items()
@@ -268,6 +273,9 @@ impl EditorSession {
             self.versions[0].model = Some(model);
             if self.current == 0 {
                 self.refresh_spans();
+                if self.from_final {
+                    self.baseline = Some(self.paragraphs());
+                }
             }
         }
     }
@@ -1221,48 +1229,26 @@ impl EditorSession {
             |text: &str| -> String { text.chars().filter(|ch| !ch.is_whitespace()).collect() };
         self.edit_model(|model| {
             let heading_of = |number: &str| format!("【청구항 {number}】");
-            let find = |model: &HmlDocument, number: &str| {
-                model
-                    .paragraphs
-                    .iter()
-                    .position(|p| p.text.trim_matches('\u{c}').trim() == heading_of(number))
-            };
-            let body_end = |model: &HmlDocument, heading: usize| {
-                heading
-                    + 1
-                    + model.paragraphs[heading + 1..]
-                        .iter()
-                        .take_while(|p| !is_bracket_heading(p.text.trim_matches('\u{c}')))
-                        .count()
+            let blocks = |model: &HmlDocument| {
+                let texts: Vec<&str> = model.paragraphs.iter().map(|p| p.text.as_str()).collect();
+                claim_blocks(&texts)
             };
             for claim in claims {
-                let Some(heading) = find(model, &claim.number) else {
+                let wanted = claim.number.parse::<u32>().unwrap_or(u32::MAX);
+                let now = blocks(model);
+                let Some(&(_, heading, end)) = now.iter().find(|block| block.0 == wanted) else {
                     if claim.after.is_empty() {
                         continue;
                     }
                     // 새 항: 번호가 작은 항 가운데 마지막 항 뒤.
-                    let previous = model
-                        .paragraphs
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(at, p)| {
-                            let number = p
-                                .text
-                                .trim()
-                                .strip_prefix("【청구항 ")?
-                                .strip_suffix('】')?
-                                .parse::<u32>()
-                                .ok()?;
-                            (number < claim.number.parse::<u32>().unwrap_or(u32::MAX)).then_some(at)
-                        })
-                        .next_back();
-                    let Some(previous) = previous else {
+                    let Some(&(_, previous, at)) =
+                        now.iter().filter(|block| block.0 < wanted).next_back()
+                    else {
                         outcome
                             .claims_failed
                             .push((claim.number.clone(), "청구항 자리 없음".into()));
                         continue;
                     };
-                    let at = body_end(model, previous);
                     let mut heading = model.paragraphs[previous].clone();
                     let text = heading_of(&claim.number);
                     heading.id = format!("{}:claim{}", heading.id, claim.number);
@@ -1284,7 +1270,6 @@ impl EditorSession {
                     outcome.claims_added.push(claim.number.clone());
                     continue;
                 };
-                let end = body_end(model, heading);
                 let body = &model.paragraphs[heading + 1..end];
                 if body
                     .iter()
@@ -1366,6 +1351,24 @@ impl EditorSession {
             Ok(())
         })?;
         Ok(outcome)
+    }
+
+    /// 보정 표시: 최종본(.fin)으로 연 문서만 · 첫 판에 견준 지금 판의 바뀐 글. 모델이 아직이면 기다린다.
+    pub fn amendment_marks(&mut self) -> Option<crate::AmendmentMarks> {
+        self.settle();
+        let baseline = self.baseline.as_ref()?;
+        Some(crate::amendment_marks(baseline, &self.paragraphs()))
+    }
+
+    /// 청구항 인용 검사(지금 판 · 줄은 구분자 없이 이어 특허로 점검 목록과 같은 꼴로).
+    pub fn claim_citation_issues(&self) -> Vec<crate::CitationIssue> {
+        let paragraphs = self.paragraphs();
+        let texts: Vec<&str> = paragraphs.iter().map(|p| p.text.as_str()).collect();
+        let claims: Vec<(u32, String)> = claim_blocks(&texts)
+            .into_iter()
+            .map(|(number, heading, end)| (number, texts[heading + 1..end].concat()))
+            .collect();
+        crate::claim_citation_issues(&claims)
     }
 
     /// 오기 후보가 걸릴 곳 수(그 번호 문단들에서 틀린 말이 나오는 수) — 걸기 전에 보여 준다.
@@ -2794,6 +2797,30 @@ fn is_item_heading(text: &str) -> bool {
 fn is_bracket_heading(text: &str) -> bool {
     let text = text.trim();
     text.starts_with('【') && text.ends_with('】') && text.matches('】').count() == 1
+}
+
+/// 청구항 자리: (번호, 【청구항 N】 표제 자리, 본문 끝 — 다음 【…】 표제 앞). 문단 글 차례대로 받는다.
+pub(crate) fn claim_blocks(texts: &[&str]) -> Vec<(u32, usize, usize)> {
+    texts
+        .iter()
+        .enumerate()
+        .filter_map(|(at, text)| {
+            let number = text
+                .trim_matches('\u{c}')
+                .trim()
+                .strip_prefix("【청구항 ")?
+                .strip_suffix('】')?
+                .parse::<u32>()
+                .ok()?;
+            let end = at
+                + 1
+                + texts[at + 1..]
+                    .iter()
+                    .take_while(|text| !is_bracket_heading(text.trim_matches('\u{c}')))
+                    .count();
+            Some((number, at, end))
+        })
+        .collect()
 }
 
 /// 최종본에서 읽은 식별번호를 첫 판 모델에 입힌다. 문단 수가 같을 때만(어긋나면 엉뚱한 문단에 붙지 않게 버린다).

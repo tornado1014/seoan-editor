@@ -1550,6 +1550,12 @@ struct EditResult {
     /// 보정안을 걸었으면 그 결과(바뀐 · 지운 · 새 · 못 건 항 · 오기 정정 수).
     #[serde(skip_serializing_if = "Option::is_none")]
     review: Option<hlt_core::ReviewOutcome>,
+    /// `--amendment` 를 줬으면 청구항 인용 문제(경고 — 보정서는 낸다).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    claim_issues: Option<Vec<hlt_core::CitationIssue>>,
+    /// `--amendment` 를 줬으면 보정 표시의 요소 이름(바뀐 · 새 · 지운 — 문단 좌표는 뺀다).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    marks: Option<hlt_core::AmendmentMarks>,
 }
 
 /// 편집기 고침을 걸고 새 이름으로 저장한다(보정서생성 앞 단계: `edit-as-new` → `export-amendment <fin> <after.HLT> <out.fin>`).
@@ -1650,8 +1656,13 @@ fn run_edit_as_new(args: &[String], stdout: &mut impl Write) -> u8 {
             }
         }
         session.save_as(Path::new(output))?;
-        let mut amendment_items = None;
+        let (mut amendment_items, mut claim_issues, mut marks) = (None, None, None);
         if let Some((fin, dta, date)) = amendment {
+            claim_issues = Some(session.claim_citation_issues());
+            marks = session.amendment_marks().map(|mut marks| {
+                marks.paragraphs.clear();
+                marks
+            });
             let export = hlt_core::export_amendment_from_fin(
                 Path::new(input),
                 Path::new(output),
@@ -1676,6 +1687,8 @@ fn run_edit_as_new(args: &[String], stdout: &mut impl Write) -> u8 {
             operation_count: request.operations.len(),
             amendment_items,
             review: review_outcome,
+            claim_issues,
+            marks,
         })
     })();
     let failed = result.is_err();

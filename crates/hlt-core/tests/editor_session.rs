@@ -1223,9 +1223,31 @@ fn applies_a_review_report_proposal() {
         "{}",
         export.xml
     );
+    // 이음매: 보정 표시가 「바뀐 것」으로 보이는 요소 = 보정서가 내는 항목.
+    let marks = session.amendment_marks().expect("최종본으로 연 문서");
+    let element = |label: &str, status: &str| match label.strip_prefix("청구항 ") {
+        Some(number) => format!("claim {status} {number}"),
+        None => format!("p {status} {}", label.trim_matches(['【', '】'])),
+    };
+    let mut shown: Vec<String> = marks
+        .changed
+        .iter()
+        .map(|label| element(label, "A"))
+        .chain(marks.removed.iter().map(|label| element(label, "D")))
+        .chain(marks.added.iter().map(|label| element(label, "I")))
+        .collect();
+    let mut expected = items.clone();
+    shown.sort();
+    expected.sort();
+    assert_eq!(shown, expected, "{marks:?}");
+    assert!(session.claim_citation_issues().is_empty());
 
     // 되돌리기 한 번에 전부.
     session.undo().unwrap();
     let texts: Vec<String> = session.paragraphs().into_iter().map(|p| p.text).collect();
     assert_eq!(texts, texts_before);
+    assert_eq!(
+        session.amendment_marks().unwrap(),
+        hlt_core::AmendmentMarks::default()
+    );
 }

@@ -292,6 +292,26 @@ export const editorReadReview = () => invoke<ReviewReportDto | null>('editor_rea
 /** 고른 보정안 청구항 · 고른 오기 정정을 한 번의 고침으로 건다. */
 export const editorApplyReview = (claims: ProposedClaimDto[], tracked: boolean, notes: DescriptionNoteDto[]) =>
   invoke<{ view: EditorViewDto; outcome: ReviewOutcomeDto }>('editor_apply_review', { claims, tracked, notes });
+/** 보정 표시: 바뀐 문단(지금 글 좌표 — 넣은 [start, end) · 지운 (자리, 글)) · 바뀐/새/지운 요소 이름. */
+export type ParagraphMarkDto = { id: string; inserted: [number, number][]; deleted: [number, string][] };
+export type AmendmentMarksDto = {
+  paragraphs: ParagraphMarkDto[];
+  changed: string[];
+  added: string[];
+  removed: string[];
+};
+export const editorAmendmentMarks = () => invoke<AmendmentMarksDto | null>('editor_amendment_marks');
+/** 청구항 인용 문제. 앞 넷은 특허로 점검 페이지와 같은 판정 · 뒤 셋은 앱만 보는 규칙. */
+export type CitationKindDto =
+  | 'mis_reference'
+  | 'removed'
+  | 'duplicate_multiple'
+  | 'no_alternative'
+  | 'range_mis_reference'
+  | 'and_citation'
+  | 'range_no_alternative';
+export type CitationIssueDto = { claim: number; kind: CitationKindDto; cited: number[] };
+export const editorClaimIssues = () => invoke<CitationIssueDto[]>('editor_claim_issues');
 export const editorSetSize = (paragraphId: string, start: number, end: number, size: number) =>
   invoke<EditorViewDto>('editor_set_size', { paragraphId, start, end, size });
 

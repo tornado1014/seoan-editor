@@ -914,6 +914,26 @@ pub async fn editor_apply_review(
     })
 }
 
+/// 보정 표시: 최종본(.fin)으로 연 문서만(아니면 `null`) · 첫 판에 견준 바뀐 글.
+#[tauri::command]
+pub async fn editor_amendment_marks(
+    window: Window,
+    state: State<'_, EditorState>,
+) -> Result<Option<hlt_core::AmendmentMarks>, CoreError> {
+    with_session(&state, &window, |session| Ok(session.amendment_marks()))
+}
+
+/// 청구항 인용 검사(보정서를 만들기 전에 화면이 묻는다).
+#[tauri::command]
+pub async fn editor_claim_issues(
+    window: Window,
+    state: State<'_, EditorState>,
+) -> Result<Vec<hlt_core::CitationIssue>, CoreError> {
+    with_session(&state, &window, |session| {
+        Ok(session.claim_citation_issues())
+    })
+}
+
 /// 그림 바꾸기(도면 보정): JPG · TIFF 를 골라 판독 그림 `image` 자리에 · 고르기를 취소하면 문서는 그대로.
 #[tauri::command]
 pub async fn editor_replace_picture(

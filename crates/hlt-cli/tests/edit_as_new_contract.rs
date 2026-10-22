@@ -248,4 +248,18 @@ fn applies_a_review_report_and_writes_the_amendment() {
         "{value}"
     );
     assert_eq!(value["result"]["amendment_items"], 3, "{value}");
+    // 보정 표시 요소 = 보정서 항목(3) · 인용 문제 없음.
+    let marks = &value["result"]["marks"];
+    let count = |key: &str| marks[key].as_array().map_or(0, Vec::len);
+    assert_eq!(
+        count("changed") + count("added") + count("removed"),
+        3,
+        "{value}"
+    );
+    assert_eq!(marks["removed"], serde_json::json!(["청구항 2"]), "{value}");
+    assert_eq!(
+        value["result"]["claim_issues"],
+        serde_json::json!([]),
+        "{value}"
+    );
 }
