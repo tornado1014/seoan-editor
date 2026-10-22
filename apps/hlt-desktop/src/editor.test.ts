@@ -99,6 +99,7 @@ beforeEach(() => {
         return new Uint8Array();
       case 'editor_resize_image':
       case 'editor_insert_picture':
+      case 'editor_replace_picture':
         return view(texts);
       case 'editor_cp949_scan':
         return Array.from(String(args!.text))
@@ -537,6 +538,8 @@ describe('page editing', () => {
     await settle(10);
     expect(document.querySelector('.cp949-review')).toBeNull();
     expect(glyphs(root)).toBe('가a-b김나다라마');
+    // 친 글의 반영(지연 저장)까지 끝낸다 — 남겨 두면 뒤 테스트 도중에 나가 그 테스트의 문서를 바꾼다(가짜 문서는 공유).
+    await settle(500);
   });
 
   test('a picture is picked by clicking it and resized by dragging its corner, ratio locked', async () => {
@@ -629,6 +632,25 @@ describe('page editing', () => {
     root.querySelector<HTMLButtonElement>('.item-cancel')!.click();
     await settle(10);
     expect(calls.filter(([command]) => command === 'editor_resize_image').length).toBe(count);
+  });
+
+  test('replace picture: right-click a picture → 그림 바꾸기… replaces that image (off a picture it is disabled)', async () => {
+    pageImages = [{ object_code: 3, image: 'image:0', x: 50, top: 200, width: 71.24, height: 35.24 }];
+    URL.createObjectURL = () => 'blob:x';
+    const root = await open();
+    const menu = async (x: number, y: number) => {
+      const picture = root.querySelector<HTMLImageElement>('img.nk-image')!;
+      picture.getBoundingClientRect = () => ({ left: 65, top: 260, right: 195, bottom: 325 }) as DOMRect;
+      root.querySelector('.nk-page')!.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y }),
+      );
+      await settle(10);
+      return menus.at(-1)!.find((item) => item.text === '그림 바꾸기…')!;
+    };
+    expect((await menu(30, 30)).enabled).toBe(false);
+    (await menu(100, 300)).action!();
+    await settle(10);
+    expect(last('editor_replace_picture')).toEqual(['editor_replace_picture', { image: 'image:0' }]);
   });
 
   test('identification item: right-click submenu → number (next one filled in) → heading + empty paragraph below', async () => {

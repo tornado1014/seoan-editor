@@ -267,7 +267,12 @@ impl SemanticBuilder {
         if visible.trim().is_empty() && !has_image {
             return;
         }
+        self.push_seeds(seeds, align, indent_raw, lspace);
+    }
 
+    /// 글이 없어도(빈 줄 · 탭만) 문단 하나를 세운다 — 번호 문단 `<p num="0078"></p>` · 청구항 끝 빈 줄(`…<br/></claim-text>`)이
+    /// 보정서 대조에서 그대로 돌아오게(빠지면 손대지 않은 최종본이 `p D` · `claim A` 로 잡혔다).
+    fn push_seeds(&mut self, seeds: Vec<InlineSeed>, align: &str, indent_raw: i32, lspace: u32) {
         let paragraph_id = format!("paragraph:{}", self.document.paragraphs.len() + 1);
         let mut inlines = Vec::new();
         let mut image_ids = Vec::new();
@@ -370,6 +375,17 @@ impl SemanticBuilder {
                 }
             }
             for seeds in inline_segments(paragraph) {
+                // 번호 문단 안 빈 줄(`…다.<br/> </p>`)은 둔다 — 번호 없는 줄은 보정서에서 앞 줄에 `<br/>` 로 이어진다.
+                if number.is_some()
+                    && self.document.paragraphs.len() > first_new
+                    && seed_text(&seeds).trim().is_empty()
+                    && seeds
+                        .iter()
+                        .all(|seed| matches!(seed, InlineSeed::Text { .. }))
+                {
+                    self.push_seeds(seeds, "justified", 1000, 280);
+                    continue;
+                }
                 let visible = seed_text(&seeds).trim().to_string();
                 let centered =
                     matches!(visible.as_str(), "관련 출원" | "발명의 분야" | "정부 지원");
@@ -379,6 +395,22 @@ impl SemanticBuilder {
                     if centered { 0 } else { 1000 },
                     if centered { 160 } else { 280 },
                 );
+            }
+            // 번호 문단이 글 없이 끝났으면(빈 `<p num="0078"></p>` · 탭만) 번호를 들 빈 문단을 세운다.
+            if number.is_some() && self.document.paragraphs.len() == first_new {
+                let seeds = inline_segments(paragraph).into_iter().flatten().collect();
+                self.push_seeds(seeds, "justified", 1000, 280);
+            }
+            // 번호 문단 하나가 `<br/>` 로 여러 줄이면 둘째 줄부터는 새 문단(`+` · 통특기 식별번호 0xFFFFFFFF)이다 —
+            // 보정서에서 다시 앞 번호 문단에 `<br/>` 로 이어진다(앞 보정서가 이어 붙인 줄 · 끝 빈 줄).
+            if number.is_some() {
+                for paragraph in self.document.paragraphs[first_new..]
+                    .iter_mut()
+                    .filter(|paragraph| paragraph.marker.is_none())
+                    .skip(1)
+                {
+                    paragraph.number = Some(crate::editor::NEW_PARAGRAPH.to_string());
+                }
             }
             self.number_first(first_new, number);
             paragraph_index += 1;
@@ -748,8 +780,13 @@ fn normalize_patent(
     builder.emit_section("【발명의 설명】");
     if let Some(title) = description.first_child("invention-title") {
         builder.emit_section("【발명의 명칭】");
-        let text = title.text().trim().to_string();
-        if !text.is_empty() {
+        // 끝 공백은 둔다(실물 `…EXAM} </invention-title>` — 깎으면 손대지 않은 명칭이 보정으로 잡혔다).
+        let text = title
+            .text()
+            .trim_start()
+            .trim_end_matches(['\r', '\n'])
+            .to_string();
+        if !text.trim().is_empty() {
             // 명칭 문단 정렬은 서식마다 다르다: 국내 = 양쪽(2048), PCT = 왼쪽
             // (통특기 RTF `\ql`). 둘 다 들여쓰기 800.
             let align = match dialect {
@@ -771,6 +808,69 @@ fn normalize_patent(
             KipoXmlDialect::PctPatentCafdoc => "【배경기술】",
         });
         builder.emit_node_paragraphs(section)?;
+    }
+    // 선행기술문헌: 문헌 하나 = 「(특허문헌 1) 글」 한 줄(통특기 「최종본 불러오기」 실측) · 문단의 첫 줄이 식별번호를 들고
+    // 같은 문단의 다음 문헌 줄은 번호가 없다(새 문단이 아니다 · 보정서에서 같은 `<p>` 로 돌아간다).
+    if let Some(list) = description.first_child("citation-list") {
+        builder.emit_section("【선행기술문헌】");
+        for (tag, title, label, element) in [
+            ("patent-literature", "【특허문헌】", "특허문헌", "patcit"),
+            (
+                "non-patent-literature",
+                "【비특허문헌】",
+                "비특허문헌",
+                "nplcit",
+            ),
+        ] {
+            let Some(section) = list.first_child(tag) else {
+                continue;
+            };
+            builder.emit_section(title);
+            for paragraph in section
+                .child_elements()
+                .filter(|child| child.name.eq_ignore_ascii_case("p"))
+            {
+                let first_new = builder.document.paragraphs.len();
+                for citation in paragraph
+                    .child_elements()
+                    .filter(|child| child.name.eq_ignore_ascii_case(element))
+                {
+                    let number = citation
+                        .attributes
+                        .get("num")
+                        .map_or("", |number| number.trim_start_matches('0'));
+                    let field = |name: &str| {
+                        citation
+                            .first_descendant(name)
+                            .map(|node| node.text().replace(['\r', '\n'], ""))
+                            .unwrap_or_default()
+                    };
+                    // 서지 꼴(`<document-id><country>KR</country><doc-number>…</doc-number><kind>A</kind>`)은
+                    // 통특기가 괄호 뒤 공백 둘로 싣는다: 「(특허문헌 1)  KR10-2099-0000001 A」.
+                    // 글 꼴은 글 앞 공백을 지운다(`<text> 홍길동…` → 「(비특허문헌 1) 홍길동…」).
+                    let text = if citation.first_descendant("document-id").is_some() {
+                        format!(
+                            " {}{} {}",
+                            field("country"),
+                            field("doc-number"),
+                            field("kind")
+                        )
+                    } else {
+                        field("text").trim_start().to_string()
+                    };
+                    builder.push_seeds(
+                        vec![InlineSeed::Text {
+                            text: format!("({label} {number}) {text}"),
+                            formats: Vec::new(),
+                        }],
+                        "justified",
+                        1000,
+                        280,
+                    );
+                }
+                builder.number_first(first_new, paragraph.attributes.get("num").cloned());
+            }
+        }
     }
     if let Some(summary) = description.first_child("summary-of-invention") {
         builder.emit_section("【발명의 내용】");
@@ -819,8 +919,9 @@ fn normalize_patent(
                     .unwrap_or_else(|| (index + 1).to_string());
                 builder.emit_section(&format!("【청구항 {number}】"));
                 if let Some(claim_text) = claim.first_descendant("claim-text") {
+                    // 청구항 줄은 빈 줄도 줄이다(`<br/>` 하나 = 줄 하나) — 다시 낼 때 같은 `<br/>` 차례가 된다.
                     for seeds in inline_segments(claim_text) {
-                        builder.emit_seeds(seeds, "justified", 1000, 280);
+                        builder.push_seeds(seeds, "justified", 1000, 280);
                     }
                 }
             }

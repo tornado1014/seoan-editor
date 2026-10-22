@@ -40,6 +40,9 @@ pub struct KipoExportOptions {
     /// 문단 번호를 HLT 식별번호로 매긴다(보정서). 제출 변환은 저장된 식별번호를 무시하고 차례로 센다
     /// (식별번호가 38 을 건너뛰어도 XML 은 0038).
     pub number_by_id: bool,
+    /// 문단마다의 식별번호(`<p num>` · 문단 차례) — 서안으로 연 최종본은 HLT 에 식별번호를 싣지 않으니(생성기는
+    /// 매달린 번호를 쓰지 않는다) 편집 세션이 든 번호를 여기로 넘긴다. HLT 에 식별번호가 있으면 그것을 쓴다.
+    pub paragraph_numbers: Vec<Option<String>>,
 }
 
 impl Default for KipoExportOptions {
@@ -52,6 +55,7 @@ impl Default for KipoExportOptions {
             image_stem: String::new(),
             image_format: String::new(),
             number_by_id: false,
+            paragraph_numbers: Vec::new(),
         }
     }
 }
@@ -368,6 +372,49 @@ pub fn export_kipo_xml(
         }
         if !joined_element.is_empty() {
             joined_lines.push(markup);
+            continue;
+        }
+        // 선행기술문헌 줄 「(특허문헌 1) 글」 → `<patcit num="0001"><text>글</text></patcit>` · 번호 없는 줄(보정 명세서)은
+        // 앞 문헌과 같은 `<p>` 에 든다(통특기 최종본: 한 `<p>` 에 문헌 둘 = 번호 한 줄 + 번호 없는 줄).
+        let citation = sections.last().and_then(|section| match section.element {
+            "patent-literature" => Some(("특허문헌", "patcit")),
+            "non-patent-literature" => Some(("비특허문헌", "nplcit")),
+            _ => None,
+        });
+        if let Some((label, element)) = citation
+            && let Some(rest) = markup.strip_prefix(&format!("({label} "))
+            && let Some((number, text)) = rest.split_once(") ")
+        {
+            let number: String = number.chars().filter(char::is_ascii_digit).collect();
+            // 괄호 뒤 공백 둘 = 서지 꼴(「(특허문헌 1)  KR10-2099-0000001 A」 · 실물 43건 모두 이름 · 날짜 빈 칸).
+            let bibliographic = text.strip_prefix(' ').and_then(|rest| {
+                let (id, kind) = rest.rsplit_once(' ')?;
+                let split = id.find(|ch: char| !ch.is_ascii_uppercase())?;
+                (split == 2).then(|| (&id[..2], &id[2..], kind, id))
+            });
+            let cited = match bibliographic {
+                Some((country, doc_number, kind, id)) => format!(
+                    "<{element} num=\"{number:0>4}\" dnum=\"{id}\" dnum-type=\"publication number\"><document-id>\
+                     <country>{country}</country><doc-number>{doc_number}</doc-number><kind>{kind}</kind>\
+                     <name></name><date></date></document-id></{element}>\n"
+                ),
+                None => {
+                    format!("<{element} num=\"{number:0>4}\"><text>{text}</text></{element}>\n")
+                }
+            };
+            let section = sections
+                .last_mut()
+                .ok_or_else(|| export_error("no_section"))?;
+            let continues = numbered_by_id && paragraph.wipo_id.is_none_or(|id| id == 0);
+            match section.body.strip_suffix("</p>\n") {
+                Some(open) if continues => section.body = format!("{open}{cited}</p>\n"),
+                _ => {
+                    counter += 1;
+                    section
+                        .body
+                        .push_str(&format!("<p num=\"{counter:04}\">{cited}</p>\n"));
+                }
+            }
             continue;
         }
 
@@ -731,6 +778,7 @@ fn image_format_of(
 /// `【발명의 내용】` 은 자기 요소 없이 그 상위 요소를 여는 표제다.
 fn container_element(marker: &str) -> Option<(&'static str, Option<&'static str>)> {
     const SUMMARY: Option<&'static str> = Some("summary-of-invention");
+    const CITATIONS: Option<&'static str> = Some("citation-list");
     let title = marker.trim_matches(['【', '】']);
     Some(match title {
         "기술분야" => ("technical-field", None),
@@ -744,6 +792,9 @@ fn container_element(marker: &str) -> Option<(&'static str, Option<&'static str>
         "도면의 간단한 설명" => ("description-of-drawings", None),
         "발명을 실시하기 위한 구체적인 내용" => ("description-of-embodiments", None),
         "부호의 설명" => ("reference-signs-list", None),
+        "선행기술문헌" => ("", CITATIONS),
+        "특허문헌" => ("patent-literature", CITATIONS),
+        "비특허문헌" => ("non-patent-literature", CITATIONS),
         _ => return None,
     })
 }

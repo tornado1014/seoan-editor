@@ -85,8 +85,9 @@ pub use export_fin::{
     AMENDABLE, AmendmentEntry, AmendmentExport, AmendmentOptions, ElementKey, FinAmendment,
     FinAmendmentExport, FinExport, FinExportOptions, amendable_elements, apply_amendment,
     build_amendment_dta, build_amendment_dta_with_images, build_amendment_xml, build_fin,
-    build_hlz, build_xresult, diff_elements, dta_version, export_amendment_from_fin,
-    export_amendment_path, export_fin_path, invention_titles, sha256_hex,
+    build_hlz, build_xresult, diff_elements, diff_elements_named, dta_version,
+    export_amendment_from_fin, export_amendment_path, export_fin_path, invention_titles,
+    sha256_hex,
 };
 pub use export_kipo::{
     KipoExport, KipoExportImage, KipoExportOptions, display_units_to_mm,
@@ -123,7 +124,10 @@ pub use generate_images::{
     build_hlt_image_record, build_rgb_tiff, build_tiff, load_hml_image_payloads_from_directory,
     plan_hlt_images,
 };
-pub use generate_profile::{GenerationDialect, GenerationProfile, generation_profile};
+pub use generate_profile::{
+    AMENDMENT_DOCUMENT_TYPE, GenerationDialect, GenerationProfile, amendment_profile,
+    generation_profile,
+};
 pub use generate_tail::{
     GeneratedCellLineRange, GeneratedCellRecord, GeneratedRowRecord, GeneratedTableTailPlan,
     GeneratedTerminalCell, generate_cell_table, generate_font_table, generate_line_array,

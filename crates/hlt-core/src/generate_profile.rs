@@ -95,3 +95,15 @@ pub fn generation_profile(dialect: GenerationDialect) -> GenerationProfile {
         }
     }
 }
+
+/// 문서 종류 111 = 최종본을 불러온 보정 명세서(통특기 「최종본 불러오기」 · 국내). 식별번호(`<p num>`)를 HLT 에 싣는다.
+pub const AMENDMENT_DOCUMENT_TYPE: u32 = 111;
+
+/// 보정 명세서 틀: 국내 내장 틀 + 종류 111(`0x8000 + 111` = 32879 · 통특기 「최종본 불러오기」 산출과 같은 값).
+/// 생성기는 이 종류일 때만 식별번호를 쓴다(통특기가 내장 틀 문서에 매달린 번호를 「문단 정보가 없습니다」로 거절했다 —
+/// 종류 111 문서는 통특기가 경고 없이 연다 · 2026-10-22 실측).
+pub fn amendment_profile() -> GenerationProfile {
+    let mut profile = generation_profile(GenerationDialect::PatentSpecificationKo);
+    profile.header[0x20..0x24].copy_from_slice(&(0x8000 + AMENDMENT_DOCUMENT_TYPE).to_le_bytes());
+    profile
+}

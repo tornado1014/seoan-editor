@@ -68,7 +68,13 @@ pub fn generate_hlt_document_with_profile(
     // Built-in new-document profiles do not contain the separate paragraph-information
     // objects that nonzero WIPO IDs reference. Emitting dangling IDs makes NKEditor report
     // "문단 정보가 없습니다", so only verified section slots are serialized here.
-    let wipo_ids = vec![None; body.lines.len()];
+    // 보정 명세서(종류 111)만은 식별번호를 싣는다 — 보정서의 문단 번호가 이것이다.
+    let document_type = u32::from_le_bytes(profile.header[0x20..0x24].try_into().expect("type"));
+    let wipo_ids = if document_type & 0x7fff == crate::AMENDMENT_DOCUMENT_TYPE {
+        amendment_wipo_ids(document, &body)
+    } else {
+        vec![None; body.lines.len()]
+    };
     let register = generate_section_register(&title_indices, &wipo_ids, true)?;
     let geometry = patched_geometry(&profile.geometry, line_count)?;
 
@@ -391,4 +397,52 @@ pub fn load_generation_source(
             Err(error)
         }
     }
+}
+
+/// 보정 명세서의 줄마다 식별번호(통특기 「최종본 불러오기」 HLT 와 줄마다 같다 · 실측 328/328):
+/// 문단 첫 줄에만 · 번호 없는 줄(명칭 · 도면 설명 · 청구항 · 식 그림) = 0 · 새 문단(`+`) = 0xFFFFFFFF ·
+/// 【표 N】·【수학식 N】·【화학식 N】 표제가 번호를 든다(들여올 때는 다음 문단에 달려 온다 — 표제로 옮긴다).
+fn amendment_wipo_ids(document: &HmlDocument, body: &crate::HltBodyPlan) -> Vec<Option<u32>> {
+    let parse = |number: Option<&str>| match number? {
+        "+" => Some(u32::MAX),
+        number => number.parse().ok(),
+    };
+    let mut numbers: BTreeMap<&str, Option<u32>> = BTreeMap::new();
+    let paragraphs = &document.paragraphs;
+    let mut moved: Option<usize> = None;
+    for (index, paragraph) in paragraphs.iter().enumerate() {
+        let text = paragraph.text.trim_matches('\u{c}').trim();
+        let carrier = ["【표 ", "【수학식 ", "【화학식 "]
+            .iter()
+            .any(|head| text.starts_with(head));
+        let number = if carrier && paragraph.number.is_none() {
+            let next = paragraphs[index + 1..]
+                .iter()
+                .position(|next| next.number.is_some())
+                .map(|offset| index + 1 + offset);
+            moved = next;
+            next.and_then(|next| parse(paragraphs[next].number.as_deref()))
+        } else if moved == Some(index) {
+            None
+        } else {
+            parse(paragraph.number.as_deref())
+        };
+        numbers.insert(paragraph.id.as_str(), number);
+    }
+    let mut previous: Option<&str> = None;
+    body.lines
+        .iter()
+        .map(|line| {
+            if line.text == "\x0c" {
+                return None;
+            }
+            let first = line.cell_id.is_none() && previous != Some(line.paragraph_id.as_str());
+            previous = Some(line.paragraph_id.as_str());
+            if first {
+                numbers.get(line.paragraph_id.as_str()).copied().flatten()
+            } else {
+                None
+            }
+        })
+        .collect()
 }

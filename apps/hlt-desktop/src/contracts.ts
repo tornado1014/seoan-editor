@@ -220,6 +220,8 @@ export const editorResizeImage = (image: string, scale: number) =>
 /** `offset` 이 있으면 `after` 는 표 칸 id · 칸 글의 그 자리에 넣는다. */
 export const editorInsertPicture = (after: string, offset?: number) =>
   invoke<EditorViewDto>('editor_insert_picture', { after, offset: offset ?? null });
+/** 그림 바꾸기(도면 보정): 판독 그림 id 자리에 고른 그림 파일 · 취소하면 그대로인 화면. */
+export const editorReplacePicture = (image: string) => invoke<EditorViewDto>('editor_replace_picture', { image });
 export type CharacterFormatDto = 'bold' | 'italic' | 'underline' | 'superscript' | 'subscript';
 export const editorToggleFormat = (paragraphId: string, start: number, end: number, format: CharacterFormatDto) =>
   invoke<EditorViewDto>('editor_toggle_format', { paragraphId, start, end, format });

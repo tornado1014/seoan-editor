@@ -167,9 +167,22 @@ impl EditorSession {
             std::fs::copy(source, &first).map_err(|_| editor_error("copy"))?;
         }
         let (document, plan) = load(&first, PrintOptions::default())?;
+        // 보정 명세서 HLT 는 식별번호를 들고 있다 — 문단 번호로 읽는다(다시 열어도 보정서 번호가 남는다).
+        if !package && document.summary.document_type_raw & 0x7fff == crate::AMENDMENT_DOCUMENT_TYPE
+        {
+            opened_numbers = document
+                .paragraphs
+                .iter()
+                .map(|paragraph| number_from_wipo(paragraph.wipo_id))
+                .collect();
+        }
         let dialect = match document.summary.document_type_raw & 0x7fff {
             113 => Some(Recipe::builtin(GenerationDialect::PctPatent)),
             140 => Some(Recipe::builtin(GenerationDialect::PatentSpecificationKo)),
+            crate::AMENDMENT_DOCUMENT_TYPE => Some(Recipe {
+                dialect: GenerationDialect::PatentSpecificationKo,
+                profile: std::sync::Arc::new(crate::amendment_profile()),
+            }),
             // 의견서는 내장 틀이 없고 파일마다 모양 표가 다르다 — 그 파일 틀로 다시 굽는다(본문 규칙은 국내).
             7 => crate::source_generation_profile(&first)
                 .ok()
@@ -337,6 +350,11 @@ impl EditorSession {
             .collect()
     }
 
+    /// 지금 판 문단마다의 식별번호(`paragraphs()` 와 같은 차례) — 최종본(.fin)을 연 문서의 보정서생성에 넘긴다.
+    pub fn paragraph_numbers(&self) -> Vec<Option<String>> {
+        self.numbers.clone()
+    }
+
     /// 문단 글 바꾸기. 줄바꿈(`\n`)은 문단 나누기다. 그림 자리표 `_` 수가 줄면 그 그림이 빠진다.
     pub fn replace_text(&mut self, paragraph_id: &str, text: &str) -> Result<(), CoreError> {
         self.replace_text_breaking(paragraph_id, text, false)
@@ -392,8 +410,8 @@ impl EditorSession {
                     paragraph.id = format!("{}:{part}", template.id);
                     paragraph.marker = None;
                     paragraph.page_break = page_break && part == 1;
-                    // 나눠서 새로 생긴 문단은 식별번호가 없다(보정서에서 새 문단).
-                    paragraph.number = None;
+                    // 나눠서 새로 생긴 문단은 새 문단이다(통특기 식별번호 0xFFFFFFFF · 보정서에서 앞 번호 문단에 `<br/>`).
+                    paragraph.number = template.number.as_ref().map(|_| NEW_PARAGRAPH.to_string());
                 }
                 paragraph.inlines = inlines(&cells);
                 // 모델의 문단 글은 그림을 뺀 글자다(생성기가 런과 대조한다).
@@ -515,6 +533,31 @@ impl EditorSession {
                 .position(|paragraph| paragraph.id == paragraph_id)
                 .filter(|index| *index > 0)
                 .ok_or_else(|| editor_error("paragraph"))?;
+            // 표제 · 표에 빈 줄을 붙이는 것은 그 빈 줄을 지우는 것이다(표제 【도 3b】 앞 빈 줄에서 Delete).
+            let empty = |paragraph: &crate::HmlParagraph| {
+                paragraph.table_id.is_none()
+                    && paragraph.marker.is_none()
+                    && paragraph.inlines.is_empty()
+                    && paragraph.image_ids.is_empty()
+                    && paragraph.text.is_empty()
+            };
+            let fixed = |paragraph: &crate::HmlParagraph| {
+                paragraph.table_id.is_some() || paragraph.marker.is_some()
+            };
+            let (previous, current) = (&model.paragraphs[index - 1], &model.paragraphs[index]);
+            let gone = if !fixed(previous) && !fixed(current) {
+                None
+            } else if empty(previous) {
+                Some(index - 1)
+            } else if empty(current) {
+                Some(index)
+            } else {
+                None
+            };
+            if let Some(gone) = gone {
+                model.paragraphs.remove(gone);
+                return Ok(());
+            }
             let (before, after) = model.paragraphs.split_at_mut(index);
             let (previous, current) = (before.last_mut().unwrap(), &after[0]);
             if previous.table_id.is_some() || current.table_id.is_some() {
@@ -636,11 +679,38 @@ impl EditorSession {
                 return Err(editor_error("range"));
             }
             let span = &model.paragraphs[first..=last];
-            if span.iter().any(|paragraph| paragraph.table_id.is_some()) {
-                return Err(editor_error("table_paragraph"));
-            }
-            if span.iter().any(|paragraph| paragraph.marker.is_some()) {
-                return Err(editor_error("heading_paragraph"));
+            let blocked = |paragraphs: &[crate::HmlParagraph]| {
+                if paragraphs
+                    .iter()
+                    .any(|paragraph| paragraph.table_id.is_some())
+                {
+                    Some("table_paragraph")
+                } else if paragraphs
+                    .iter()
+                    .any(|paragraph| paragraph.marker.is_some())
+                {
+                    Some("heading_paragraph")
+                } else {
+                    None
+                }
+            };
+            if let Some(reason) = blocked(span) {
+                // 문단 맨 앞에서 고르기 시작(빈 줄 클릭 → Shift+↓): 남는 글은 끝 문단 통째 — 그 문단(표제여도)을 두고
+                // 앞 문단들만 지운다(표제 【도 3b】 앞 빈 줄).
+                if from_offset == 0 && blocked(&span[..span.len() - 1]).is_none() {
+                    model.paragraphs.drain(first..last);
+                    return Ok(());
+                }
+                // 앞 문단 끝부터 뒤 문단 앞까지(사이 줄만 고른 것): 둘을 이을 수 없으니 사이 문단만 지운다.
+                if from_offset == cells(&model.paragraphs[first].inlines).len()
+                    && to_offset == 0
+                    && last > first + 1
+                    && blocked(&span[1..span.len() - 1]).is_none()
+                {
+                    model.paragraphs.drain(first + 1..last);
+                    return Ok(());
+                }
+                return Err(editor_error(reason));
             }
             let head = cells(&model.paragraphs[first].inlines);
             let tail = cells(&model.paragraphs[last].inlines);
@@ -1132,6 +1202,68 @@ impl EditorSession {
             image.height = scaled(image.height);
             image.secondary_width = scaled(image.secondary_width);
             image.secondary_height = scaled(image.secondary_height);
+            Ok(())
+        })
+    }
+
+    /// 그림 바꾸기(도면 보정): 판독 그림 `image_id` 자리에 새 그림 파일. 표시 폭은 그대로 · 높이는 새 그림 비율로
+    /// (세로 650pt 를 넘으면 둘 다 줄인다). 새 id 를 달아 옛 그림 본문은 버려진다 — 보정서에서 `figure A`.
+    pub fn replace_picture(&mut self, image_id: &str, bytes: &[u8]) -> Result<(), CoreError> {
+        let picture = image::load_from_memory(bytes).map_err(|_| editor_error("figure_image"))?;
+        let index = self
+            .document
+            .images
+            .iter()
+            .position(|image| image.id == image_id)
+            .ok_or_else(|| editor_error("image"))?;
+        let count = self.document.images.len();
+        let mut png = Vec::new();
+        picture
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .map_err(|_| editor_error("figure_image"))?;
+        let ratio = f64::from(picture.height()) / f64::from(picture.width().max(1));
+        self.edit_model_with(|model, payloads| {
+            if model.images.len() != count {
+                return Err(editor_error("image"));
+            }
+            let fresh = (model.images.len()..)
+                .map(|n| format!("image:new:{n}"))
+                .find(|id| model.images.iter().all(|image| &image.id != id))
+                .expect("unbounded");
+            let image = &mut model.images[index];
+            let old = std::mem::replace(&mut image.id, fresh.clone());
+            image.occurrence = 0;
+            image.name = format!("{fresh}.png");
+            let width_pt = f64::from(image.secondary_width.unwrap_or(1).max(1));
+            let fit = (650.0 / (width_pt * ratio)).min(1.0);
+            let (width_pt, height_pt) = (width_pt * fit, width_pt * ratio * fit);
+            let box_width = f64::from(image.width.unwrap_or(1)) * fit;
+            image.width = Some(box_width.round().max(1.0) as u32);
+            image.height = Some((box_width * ratio).round().max(1.0) as u32);
+            image.secondary_width = Some(width_pt.round().max(1.0) as u32);
+            image.secondary_height = Some(height_pt.round().max(1.0) as u32);
+            let rename = |ids: &mut Vec<String>, inlines: &mut Vec<HmlInline>| {
+                for id in ids.iter_mut().filter(|id| **id == old) {
+                    id.clone_from(&fresh);
+                }
+                for inline in inlines {
+                    if let HmlInline::Image { image_id } = inline
+                        && *image_id == old
+                    {
+                        image_id.clone_from(&fresh);
+                    }
+                }
+            };
+            for paragraph in &mut model.paragraphs {
+                rename(&mut paragraph.image_ids, &mut paragraph.inlines);
+            }
+            for cell in &mut model.cells {
+                rename(&mut cell.image_ids, &mut cell.inlines);
+            }
+            payloads.push(GeneratedImagePayload {
+                image_id: fresh,
+                bytes: png,
+            });
             Ok(())
         })
     }
@@ -2450,6 +2582,18 @@ fn is_bracket_heading(text: &str) -> bool {
 }
 
 /// 최종본에서 읽은 식별번호를 첫 판 모델에 입힌다. 문단 수가 같을 때만(어긋나면 엉뚱한 문단에 붙지 않게 버린다).
+/// 문단 번호 `+` = 새 문단(번호를 받은 문단을 나눠 생긴 것 · 통특기 식별번호 0xFFFFFFFF).
+pub(crate) const NEW_PARAGRAPH: &str = "+";
+
+/// 보정 명세서의 식별번호 → 문단 번호(`0001` · 새 문단 `+` · 0 은 번호 없음).
+pub(crate) fn number_from_wipo(id: Option<u32>) -> Option<String> {
+    match id? {
+        0 => None,
+        u32::MAX => Some(NEW_PARAGRAPH.to_string()),
+        id => Some(format!("{id:04}")),
+    }
+}
+
 fn apply_numbers(document: &mut HmlDocument, numbers: &[Option<String>]) {
     if numbers.is_empty() || numbers.len() != document.paragraphs.len() {
         return;

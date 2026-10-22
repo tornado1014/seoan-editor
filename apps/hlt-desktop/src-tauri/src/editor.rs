@@ -844,16 +844,30 @@ pub async fn editor_resize_image(
     })
 }
 
-/// 그림 파일 넣기: JPG · TIFF 를 골라 `after` 문단 뒤에 그림 문단으로 — `offset` 이 있으면 `after` 는 표 칸이고 칸 글의 그 자리에.
-/// 고르기를 취소하면 문서는 그대로.
+/// 그림 바꾸기(도면 보정): JPG · TIFF 를 골라 판독 그림 `image` 자리에 · 고르기를 취소하면 문서는 그대로.
 #[tauri::command]
-pub async fn editor_insert_picture(
+pub async fn editor_replace_picture(
     window: Window,
     app: AppHandle,
     state: State<'_, EditorState>,
-    after: String,
-    offset: Option<usize>,
+    image: String,
 ) -> Result<EditorViewDto, CoreError> {
+    let bytes = pick_picture(&app, &state, &window)?;
+    with_session(&state, &window, |session| {
+        if let Some(bytes) = &bytes {
+            session.replace_picture(&image, bytes)?;
+        }
+        let title = title(session);
+        Ok(view(session, title))
+    })
+}
+
+/// 그림 파일(JPG · TIFF) 고르기 — 문서 폴더에서 연다 · 취소면 `None`.
+fn pick_picture(
+    app: &AppHandle,
+    state: &State<'_, EditorState>,
+    window: &Window,
+) -> Result<Option<Vec<u8>>, CoreError> {
     let source = state
         .slot(window.label())
         .lock()
@@ -866,16 +880,26 @@ pub async fn editor_insert_picture(
     if let Some(folder) = source.as_deref().and_then(|path| path.parent()) {
         dialog = dialog.set_directory(folder);
     }
-    let bytes = match dialog
+    dialog
         .blocking_pick_file()
         .and_then(|path| path.into_path().ok())
-    {
-        Some(path) => Some(
-            std::fs::read(&path)
-                .map_err(|_| CoreError::new(ErrorCode::IoError, "picture", false))?,
-        ),
-        None => None,
-    };
+        .map(|path| {
+            std::fs::read(&path).map_err(|_| CoreError::new(ErrorCode::IoError, "picture", false))
+        })
+        .transpose()
+}
+
+/// 그림 파일 넣기: JPG · TIFF 를 골라 `after` 문단 뒤에 그림 문단으로 — `offset` 이 있으면 `after` 는 표 칸이고 칸 글의 그 자리에.
+/// 고르기를 취소하면 문서는 그대로.
+#[tauri::command]
+pub async fn editor_insert_picture(
+    window: Window,
+    app: AppHandle,
+    state: State<'_, EditorState>,
+    after: String,
+    offset: Option<usize>,
+) -> Result<EditorViewDto, CoreError> {
+    let bytes = pick_picture(&app, &state, &window)?;
     with_session(&state, &window, |session| {
         if let Some(bytes) = &bytes {
             match offset {
@@ -1359,13 +1383,19 @@ pub async fn editor_export_amendment(
         .map(|name| name.to_string_lossy().into_owned())
         .ok_or_else(|| CoreError::new(ErrorCode::PathNotAllowed, "export_amendment", false))?;
     let now = chrono::Local::now();
-    let after = with_session(&state, &window, |session| session.materialize())?;
+    // 식별번호는 편집 세션이 든다(서안이 구운 HLT 에는 실리지 않는다) — 같이 넘겨야 문단을 나누고 지운 보정이 번호대로 간다.
+    let (after, numbers) = with_session(&state, &window, |session| {
+        Ok((session.materialize()?, session.paragraph_numbers()))
+    })?;
     let export = hlt_core::export_amendment_from_fin(
         &fin,
         &after,
         &dta_name,
         &now.format("%Y-%m-%d").to_string(),
-        &hlt_core::KipoExportOptions::default(),
+        &hlt_core::KipoExportOptions {
+            paragraph_numbers: numbers,
+            ..Default::default()
+        },
         &hlt_core::AmendmentOptions {
             // 비우면 차수로 매긴다(첫 보정서 002 · 실물 320/320) — 기본값 003 은 CLI 비 fin 경로용.
             dta_version: String::new(),
@@ -1424,6 +1454,7 @@ fn amendment_items(xml: &str) -> Vec<AmendItemDto> {
                 "p" => format!("식별번호 [{:0>4}]", number),
                 "invention-title" => "발명의 명칭".to_string(),
                 "summary" => "요약".to_string(),
+                "figure" => format!("도 {number}"),
                 other => other.to_string(),
             };
             let method = match attribute(head, "status").as_str() {

@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, io::Read, path::Path};
 
 use crate::{
     CoreError, ErrorCode, GenerationDialect, KipoXmlDialect, WriteOptions, inspect_kipo_xml_path,
-    load_hml_image_payloads_from_directory, save_generated_hlt_as_new,
+    load_hml_image_payloads_from_directory,
 };
 
 /// `.fin` · `.hlz` 를 `work`(빈 폴더)에 풀고 `output`(없는 파일)에 HLT 로 굽는다.
@@ -45,10 +45,18 @@ pub fn hlt_from_package(
         KipoXmlDialect::PctPatentCafdoc => GenerationDialect::PctPatent,
         KipoXmlDialect::PatentCafdoc => GenerationDialect::PatentSpecificationKo,
     };
-    save_generated_hlt_as_new(
+    // 최종본(.fin · 국내)은 통특기 「최종본 불러오기」처럼 보정 명세서(종류 111)로 굽는다 — 식별번호가 HLT 에 실려
+    // 저장했다 다시 열어도 보정서 번호가 남는다. PCT 최종본의 종류는 아직 실측이 없어 일반 틀 그대로.
+    let profile = if extension == "fin" && dialect == GenerationDialect::PatentSpecificationKo {
+        crate::amendment_profile()
+    } else {
+        crate::generation_profile(dialect)
+    };
+    crate::save_generated_hlt_with_profile_as_new(
         &xml_path,
         &parsed.document,
         dialect,
+        &profile,
         &payloads,
         output,
         WriteOptions::default(),

@@ -190,7 +190,10 @@ pub fn hml_document_from_hlt(
                     .map(|value| value[lead.min(value.len())..].to_vec())
                     .unwrap_or_default()
             },
-            number: None,
+            // 보정 명세서(종류 111)의 식별번호 = 문단 번호(`<p num>`) — 다시 굽거나 보정서를 낼 때 그대로 쓴다.
+            number: (document.summary.document_type_raw & 0x7fff == crate::AMENDMENT_DOCUMENT_TYPE)
+                .then(|| crate::editor::number_from_wipo(record.wipo_id))
+                .flatten(),
         });
     }
 

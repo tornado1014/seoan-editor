@@ -38,6 +38,7 @@ import {
   editorInsertItem,
   editorInsertPicture,
   editorResizeImage,
+  editorReplacePicture,
   editorRemoveItems,
   editorClose,
   editorOpenPending,
@@ -361,7 +362,7 @@ export function mountEditor(root: HTMLElement): void {
     for (const line of lines) {
       if (line.start !== 0) continue;
       const number = paragraphOf(line.paragraph!)?.number;
-      if (!number) continue;
+      if (!number || number === '+') continue; // + = 새 문단(번호 없음)
       const mark = document.createElement('span');
       mark.className = 'nk-pnum';
       mark.textContent = `[${number}]`;
@@ -1537,6 +1538,11 @@ export function mountEditor(root: HTMLElement): void {
           action: () => void insertPicture(),
         },
         { text: '그림 크기…', enabled: picture !== null && editable, action: () => picture && void pictureSize(picture) },
+        {
+          text: '그림 바꾸기…',
+          enabled: picture !== null && editable,
+          action: () => picture && void run('그림 바꾸기', () => editorReplacePicture(picture.dataset.image!)),
+        },
         { text: '표', enabled: at !== null, items: at ? tableItems(at) : [] },
         { item: 'Separator' },
         { text: '찾기·바꾸기', accelerator: 'CmdOrCtrl+F', action: button('find') },

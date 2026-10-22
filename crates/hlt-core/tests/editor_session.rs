@@ -417,3 +417,648 @@ fn a_picture_goes_into_a_table_cell_at_the_caret() {
         after[0]
     );
 }
+
+/// 도면 보정: 최종본(.fin)을 열어 도 2 그림을 바꾸고 청구항 2 를 두 줄로 나누면 보정서에 실물(통특기 도면 보정)과 같은 꼴로 실린다 —
+/// 청구항 뒤 `<AmendBody elementName="figure" … attributeValue="2">\n<figure num="2"><img … file="pat00003.jpg" …/></figure>\n</AmendBody>`
+/// (그림 이름 = 최종본 그림 다음 번호 · 그림은 dta 안). 크기만 바꾼 도면도 `figure A`(이름 그대로) · 손대지 않으면 「변경 없음」.
+#[test]
+fn a_replaced_or_resized_drawing_rides_in_the_amendment() {
+    use std::io::Read;
+    let temp = tempfile::tempdir().unwrap();
+    let fin = synthetic_fin(temp.path());
+    let amend = |session: &mut EditorSession| {
+        let after = session.materialize().unwrap();
+        hlt_core::export_amendment_from_fin(
+            &fin,
+            &after,
+            "spec_1.dta",
+            "2026-10-22",
+            &Default::default(),
+            &Default::default(),
+        )
+        .map_err(|error| error.details["reason"].clone())
+    };
+
+    // 그림 바꾸기 + 청구항 줄 나누기.
+    let mut session = EditorSession::open(&fin).unwrap();
+    let figure_two = session.document.images[1].id.clone();
+    let mut ring = image::RgbImage::from_pixel(400, 200, image::Rgb([255, 255, 255]));
+    for x in 100..300 {
+        ring.put_pixel(x, 100, image::Rgb([0, 0, 0]));
+    }
+    let mut bytes = Vec::new();
+    ring.write_to(
+        &mut std::io::Cursor::new(&mut bytes),
+        image::ImageFormat::Png,
+    )
+    .unwrap();
+    let width = session.document.images[1].display_width;
+    session.replace_picture(&figure_two, &bytes).unwrap();
+    let shown = &session.document.images[1];
+    assert_eq!(shown.display_width, width, "폭은 그대로");
+    assert!(
+        (shown.box_height * 2).abs_diff(shown.box_width) <= 2,
+        "상자도 새 그림 비율: {} × {}",
+        shown.box_width,
+        shown.box_height
+    );
+    assert!(
+        (shown.display_height * 2).abs_diff(width) <= 2,
+        "높이는 새 그림 비율(2:1): {} × {}",
+        shown.display_width,
+        shown.display_height
+    );
+    let claim = session
+        .paragraphs()
+        .into_iter()
+        .find(|p| p.text.starts_with("제1항에 있어서"))
+        .unwrap()
+        .id;
+    session
+        .replace_text(&claim, "제1항에 있어서,\n덮개를 더 포함하는 장치.")
+        .unwrap();
+    let export = amend(&mut session).unwrap();
+    let tail = export.xml.split_once("<Amendment>\n").unwrap().1;
+    assert!(
+        tail.starts_with(
+            "<AmendBody elementName=\"claim\" status=\"A\" attributeName=\"num\" attributeValue=\"2\">\n\
+             <claim num=\"2\"><claim-text>제1항에 있어서,<br/>덮개를 더 포함하는 장치.</claim-text></claim></AmendBody>\n\
+             <AmendBody elementName=\"figure\" status=\"A\" attributeName=\"num\" attributeValue=\"2\">\n\
+             <figure num=\"2\"><img id=\"i0002\" he=\"40\" wi=\"80\" file=\"pat00003.jpg\" img-format=\"jpg\"/></figure>\n\
+             </AmendBody>\n</Amendment>"
+        ),
+        "{tail}"
+    );
+    let mut dta = zip::ZipArchive::new(std::io::Cursor::new(export.dta.clone())).unwrap();
+    let mut picture = Vec::new();
+    dta.by_name("pat00003.jpg")
+        .unwrap()
+        .read_to_end(&mut picture)
+        .unwrap();
+    let picture = image::load_from_memory(&picture).unwrap();
+    assert_eq!(
+        (picture.width(), picture.height()),
+        (400, 200),
+        "새 그림이 dta 에"
+    );
+
+    // 크기만 바꾸기 → 그 도면만 `figure A` · 이름 그대로.
+    let mut session = EditorSession::open(&fin).unwrap();
+    let figure_one = session.document.images[0].id.clone();
+    session.resize_image(&figure_one, 1.5).unwrap();
+    let export = amend(&mut session).unwrap();
+    let kinds: Vec<&str> = export
+        .xml
+        .split("<AmendBody elementName=\"")
+        .skip(1)
+        .collect();
+    assert_eq!(kinds.len(), 1, "{}", export.xml);
+    assert!(kinds[0].starts_with("figure\""), "{}", export.xml);
+    assert!(kinds[0].contains("file=\"pat00001.jpg\""), "{}", export.xml);
+
+    // 손대지 않으면 「변경된 내용이 없습니다」.
+    let mut session = EditorSession::open(&fin).unwrap();
+    let body = session.paragraphs()[4].id.clone();
+    session.set_alignment(&body, "left").unwrap();
+    session.set_alignment(&body, "justified").unwrap();
+    assert_eq!(amend(&mut session).unwrap_err(), "amendment_empty");
+}
+
+/// 표제(【도 3b】 · 【수학식 1】) 바로 앞 빈 줄 지우기: 빈 줄 끝에서 Delete(= 표제를 빈 줄에 붙이기)도,
+/// 앞 문단 끝부터 표제 앞까지 고른 지우기도 빈 줄만 없앤다 — 「표제 문단이 걸려 있어」 거절이 아니다.
+#[test]
+fn deletes_an_empty_line_before_a_heading() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("의견서.HLT");
+    hlt_core::save_new_opinion_as_new(&path, hlt_core::WriteOptions::default()).unwrap();
+    let mut png = Vec::new();
+    image::RgbImage::from_pixel(8, 4, image::Rgb([255, 255, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let prepared = |session: &mut EditorSession| -> Vec<String> {
+        let body = session.paragraphs()[1].id.clone();
+        session.replace_text(&body, "본문\n").unwrap();
+        let empty = session.paragraphs()[2].id.clone();
+        session
+            .insert_figure(&empty, hlt_core::FigureKind::Math, png.clone(), 40.0, 20.0)
+            .unwrap();
+        let texts: Vec<String> = session
+            .paragraphs()
+            .iter()
+            .map(|p| p.text.clone())
+            .collect();
+        assert_eq!(texts[1..4], ["본문", "", "【수학식 1】"], "{texts:?}");
+        session.paragraphs()[1..4]
+            .iter()
+            .map(|p| p.id.clone())
+            .collect()
+    };
+    let after = |session: &EditorSession| -> Vec<String> {
+        session.paragraphs()[1..3]
+            .iter()
+            .map(|p| p.text.clone())
+            .collect()
+    };
+
+    let mut session = EditorSession::open(&path).unwrap();
+    let ids = prepared(&mut session);
+    session.merge_with_previous(&ids[2]).unwrap();
+    assert_eq!(after(&session), ["본문", "【수학식 1】"], "Delete");
+
+    let mut session = EditorSession::open(&path).unwrap();
+    let ids = prepared(&mut session);
+    session.delete_range(&ids[0], 2, &ids[2], 0).unwrap();
+    assert_eq!(after(&session), ["본문", "【수학식 1】"], "고른 지우기");
+
+    let mut session = EditorSession::open(&path).unwrap();
+    let ids = prepared(&mut session);
+    session.delete_range(&ids[1], 0, &ids[2], 0).unwrap();
+    assert_eq!(
+        after(&session),
+        ["본문", "【수학식 1】"],
+        "빈 줄 맨 앞부터 고른 지우기"
+    );
+
+    // 표제 바로 뒤 빈 줄에서 Backspace: 빈 줄만 지운다.
+    let mut session = EditorSession::open(&path).unwrap();
+    prepared(&mut session);
+    let image = session.paragraphs()[4].id.clone();
+    session.replace_text(&image, "\n_").unwrap();
+    let texts: Vec<String> = session.paragraphs()[3..6]
+        .iter()
+        .map(|p| p.text.clone())
+        .collect();
+    assert_eq!(texts, ["【수학식 1】", "", "_"], "표제 뒤 빈 줄");
+    let empty = session.paragraphs()[4].id.clone();
+    session.merge_with_previous(&empty).unwrap();
+    let texts: Vec<String> = session.paragraphs()[3..5]
+        .iter()
+        .map(|p| p.text.clone())
+        .collect();
+    assert_eq!(texts, ["【수학식 1】", "_"], "Backspace");
+
+    // 글이 있는 문단에 표제를 붙이는 것은 여전히 거절한다.
+    let mut session = EditorSession::open(&path).unwrap();
+    let ids = prepared(&mut session);
+    session.merge_with_previous(&ids[1]).unwrap();
+    let heading = session.paragraphs()[2].id.clone();
+    let error = session.merge_with_previous(&heading).unwrap_err();
+    assert_eq!(error.details["reason"], "heading_paragraph");
+}
+
+/// 합성 최종본: 도면 2장 · 청구항 2 · 문단 2 짜리 명세서를 굽고 제출파일(.fin)로.
+fn synthetic_fin(dir: &std::path::Path) -> std::path::PathBuf {
+    synthetic_fin_with(dir, SYNTHETIC_SPEC)
+}
+
+const SYNTHETIC_SPEC: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<KIPO><PatentCAFDOC>
+<description><invention-title>시험 장치{TEST APPARATUS}</invention-title>
+<technical-field><p num="0001">본 발명은 시험 장치에 관한 것이다.</p></technical-field>
+</description>
+<claims>
+<claim num="1"><claim-text>몸체를 포함하는 장치.</claim-text></claim>
+<claim num="2"><claim-text>제1항에 있어서, 덮개를 더 포함하는 장치.</claim-text></claim>
+</claims>
+<abstract><summary><p num="0001a">시험 장치.</p></summary><abstract-figure><figref num="1"/></abstract-figure></abstract>
+<drawings>
+<figure num="1"><img id="i0001" he="60" wi="80" file="pat00001.jpg" img-format="jpg"/></figure>
+<figure num="2"><img id="i0002" he="60" wi="80" file="pat00002.jpg" img-format="jpg"/></figure>
+</drawings>
+</PatentCAFDOC></KIPO>"#;
+
+/// `xml` 명세서(그림 pat00001 · pat00002)를 굽고 제출파일(.fin)로.
+fn synthetic_fin_with(dir: &std::path::Path, spec: &str) -> std::path::PathBuf {
+    use std::io::Write;
+    // 통특기 최종본처럼 hlz 에 명세서 XML 을 글자 그대로 싣는다 — 서안으로 구워 낸 fin 이면 서안이 못 읽는 모양이
+    // 이미 깎여 있어 왕복 손실이 안 보인다.
+    let jpeg = |shift: u32| {
+        let mut image = image::RgbImage::from_pixel(400, 300, image::Rgb([255, 255, 255]));
+        for x in 50 + shift..200 + shift {
+            for y in 50..200 {
+                image.put_pixel(x, y, image::Rgb([0, 0, 0]));
+            }
+        }
+        let mut bytes = Vec::new();
+        image
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Jpeg,
+            )
+            .unwrap();
+        bytes
+    };
+    let mut hlz = Vec::new();
+    {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut hlz));
+        let options = zip::write::SimpleFileOptions::default();
+        for (name, bytes) in [
+            ("spec.xml", spec.as_bytes().to_vec()),
+            ("pat00001.jpg", jpeg(0)),
+            ("pat00002.jpg", jpeg(80)),
+        ] {
+            zip.start_file(name, options).unwrap();
+            zip.write_all(&bytes).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+    let fin = dir.join("spec.fin");
+    let bytes = hlt_core::build_fin(
+        &hlz,
+        &hlt_core::FinExportOptions {
+            hlz_name: "spec.hlz".into(),
+            app_date: "2026-10-22".into(),
+            app_time: "1761100000".into(),
+            image_time: String::new(),
+            amendments: Vec::new(),
+        },
+    )
+    .unwrap();
+    std::fs::write(&fin, bytes).unwrap();
+    fin
+}
+
+/// 차례 보정: 1차 보정서가 든 최종본(.fin)을 열면 1차가 적용된 글이고, 거기서 만든 보정서는 2차다 —
+/// 새로 고친 것만 싣고(1차 항목은 다시 싣지 않는다) `dtaVersion="003"` · `xresult` 에 `AMDCNT=2` · `AMD002`.
+/// 문단 번호는 편집 세션이 든 식별번호로 매긴다(서안이 구운 HLT 에는 식별번호가 없다) — 문단을 나눠도 거절하지 않는다.
+#[test]
+fn a_second_amendment_builds_on_the_first() {
+    use std::io::Read;
+    let temp = tempfile::tempdir().unwrap();
+    let fin = synthetic_fin(temp.path());
+    let amend = |fin: &std::path::Path, session: &mut EditorSession, dta: &str| {
+        let after = session.materialize().unwrap();
+        let kipo = hlt_core::KipoExportOptions {
+            paragraph_numbers: session.paragraph_numbers(),
+            ..Default::default()
+        };
+        hlt_core::export_amendment_from_fin(
+            fin,
+            &after,
+            dta,
+            "2026-10-22",
+            &kipo,
+            &hlt_core::AmendmentOptions {
+                dta_version: String::new(), // 차수로 매긴다(GUI · CLI 와 같다)
+                ..Default::default()
+            },
+        )
+        .map_err(|error| error.details["reason"].clone())
+    };
+    let find = |session: &EditorSession, head: &str| {
+        session
+            .paragraphs()
+            .into_iter()
+            .find(|p| p.text.starts_with(head))
+            .unwrap_or_else(|| panic!("{head}"))
+            .id
+    };
+    let xresult = |fin: &[u8]| {
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(fin.to_vec())).unwrap();
+        let mut raw = Vec::new();
+        archive
+            .by_name("xresult.inf")
+            .unwrap()
+            .read_to_end(&mut raw)
+            .unwrap();
+        encoding_rs::EUC_KR.decode(&raw).0.into_owned()
+    };
+
+    // 1차: 청구항 1.
+    let mut session = EditorSession::open(&fin).unwrap();
+    let claim = find(&session, "몸체를");
+    session
+        .replace_text(&claim, "몸체와 바닥을 포함하는 장치.")
+        .unwrap();
+    let first = amend(&fin, &mut session, "spec_1차.dta").unwrap();
+    assert!(first.xml.contains("dtaVersion=\"002\""), "{}", first.xml);
+    let first_fin = temp.path().join("spec_1차.fin");
+    std::fs::write(&first_fin, &first.fin).unwrap();
+
+    // 2차: 1차가 든 최종본을 연다 → 1차 글이 보인다 · 청구항 2 와 문단 0001 을 고치고, 문단 0001 은 둘로 나눈다.
+    let mut session = EditorSession::open(&first_fin).unwrap();
+    find(&session, "몸체와 바닥을");
+    let claim = find(&session, "제1항에 있어서");
+    session
+        .replace_text(&claim, "제1항에 있어서, 뚜껑을 더 포함하는 장치.")
+        .unwrap();
+    let body = find(&session, "본 발명은");
+    session
+        .replace_text(
+            &body,
+            "본 발명은 시험 장치에 관한 것이다.\n특히 덮개에 관한 것이다.",
+        )
+        .unwrap();
+    let second = amend(&first_fin, &mut session, "spec_2차.dta").unwrap();
+    assert!(second.xml.contains("dtaVersion=\"003\""), "{}", second.xml);
+    let items: Vec<&str> = second.xml.split("<AmendBody ").skip(1).collect();
+    assert_eq!(
+        items.len(),
+        2,
+        "1차 항목은 다시 싣지 않는다: {}",
+        second.xml
+    );
+    assert!(
+        items[0].starts_with("elementName=\"p\" status=\"A\" attributeName=\"num\" attributeValue=\"0001\">\n<p num=\"0001\">본 발명은 시험 장치에 관한 것이다.<br/>특히 덮개에 관한 것이다.</p>"),
+        "나눈 줄은 앞 번호 문단에 <br/>: {}",
+        items[0]
+    );
+    assert!(
+        items[1].contains("attributeValue=\"2\"") && items[1].contains("뚜껑을"),
+        "{}",
+        items[1]
+    );
+    let index = xresult(&second.fin);
+    assert!(index.contains("AMDCNT=2"), "{index}");
+    assert!(
+        index.contains("AMD001=spec_1차.dta,") && index.contains("AMD002=spec_2차.dta,"),
+        "{index}"
+    );
+
+    // 2차까지 든 최종본: 둘 다 적용된 글 · 손대지 않으면 「변경 없음」.
+    let second_fin = temp.path().join("spec_2차.fin");
+    std::fs::write(&second_fin, &second.fin).unwrap();
+    let mut session = EditorSession::open(&second_fin).unwrap();
+    find(&session, "몸체와 바닥을");
+    find(&session, "제1항에 있어서, 뚜껑을");
+    let body = find(&session, "본 발명은");
+    session.set_alignment(&body, "left").unwrap();
+    session.set_alignment(&body, "justified").unwrap();
+    assert_eq!(
+        amend(&second_fin, &mut session, "spec_3차.dta").unwrap_err(),
+        "amendment_empty"
+    );
+}
+
+/// 손대지 않은 최종본은 보정이 아니다 — 통특기 최종본 XML 의 모양(실물 232건에서 왕복이 깨지던 것)을 열고 다시 내도 같다:
+/// 빈 번호 문단 · 탭만 든 문단 · 끝에 빈 줄이 있는 청구항 · 명칭 끝 공백 · 요약 끝 빈 줄 · 쪼개진 밑줄 구간.
+#[test]
+fn an_untouched_final_version_is_not_an_amendment() {
+    let temp = tempfile::tempdir().unwrap();
+    let spec = SYNTHETIC_SPEC
+        .replace("시험 장치{TEST APPARATUS}", "시험 장치{TEST APPARATUS} ")
+        .replace(
+            "<p num=\"0001\">본 발명은 시험 장치에 관한 것이다.</p>",
+            "<p num=\"0001\">본 발명은 <u>시험 </u><u>장치에</u> 관한 것이다.</p>\n<p num=\"0002\">\t</p>\n<p num=\"0003\"></p>",
+        )
+        .replace("<p num=\"0001a\">시험 장치.</p>", "<p num=\"0001a\">시험 장치.<br/> </p>")
+        .replace(
+            "</technical-field>",
+            "</technical-field>\n<citation-list>\n<patent-literature>\n<p num=\"0004\"><patcit num=\"0001\"><text>KR 10-2099-0000001 A</text></patcit>\n<patcit num=\"0002\" dnum=\"KR10-0000002\" dnum-type=\"publication number\"><document-id><country>KR</country><doc-number>10-0000002</doc-number><kind>B</kind><name></name><date></date></document-id></patcit>\n</p>\n</patent-literature>\n<non-patent-literature>\n<p num=\"0005\"><nplcit num=\"0001\"><text> 홍길동, 시험 서적, 2001</text></nplcit>\n<nplcit num=\"0002\"><text> 김철수, 시험 학회지, 2002</text></nplcit>\n</p>\n</non-patent-literature></citation-list>",
+        )
+        .replace(
+            "몸체를 포함하는 장치.</claim-text>",
+            "몸체를 포함하는 장치.<br/></claim-text>",
+        )
+        .replace(
+            "덮개를 더 포함하는 장치.</claim-text>",
+            "덮개를 더 포함하는 장치. <br/><br/><br/></claim-text>",
+        );
+    let fin = synthetic_fin_with(temp.path(), &spec);
+    // 선행기술문헌 줄 = 통특기 「최종본 불러오기」 줄(실측): 서지 꼴은 괄호 뒤 공백 둘 · 글 앞 공백은 지운다.
+    let lines: Vec<String> = EditorSession::open(&fin)
+        .unwrap()
+        .paragraphs()
+        .into_iter()
+        .map(|p| p.text)
+        .skip_while(|text| text != "【선행기술문헌】")
+        .take(7)
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "【선행기술문헌】",
+            "【특허문헌】",
+            "(특허문헌 1) KR 10-2099-0000001 A",
+            "(특허문헌 2)  KR10-0000002 B",
+            "【비특허문헌】",
+            "(비특허문헌 1) 홍길동, 시험 서적, 2001",
+            "(비특허문헌 2) 김철수, 시험 학회지, 2002",
+        ]
+    );
+    let mut session = EditorSession::open(&fin).unwrap();
+    let body = session
+        .paragraphs()
+        .into_iter()
+        .find(|p| p.text.starts_with("본 발명은"))
+        .unwrap()
+        .id;
+    session.set_alignment(&body, "left").unwrap();
+    session.set_alignment(&body, "justified").unwrap();
+    let after = session.materialize().unwrap();
+    let kipo = hlt_core::KipoExportOptions {
+        paragraph_numbers: session.paragraph_numbers(),
+        ..Default::default()
+    };
+    let result = hlt_core::export_amendment_from_fin(
+        &fin,
+        &after,
+        "spec_1.dta",
+        "2026-10-22",
+        &kipo,
+        &Default::default(),
+    );
+    match result {
+        Err(error) => assert_eq!(error.details["reason"], "amendment_empty"),
+        Ok(export) => panic!("손대지 않았는데 보정 항목: {}", export.xml),
+    }
+}
+
+/// 앞선 보정서 dta 안에서 XML 이 첫 항목이 아니어도(옛 통특기 도면 보정 = 그림들 뒤에 XML) 최종본을 읽는다.
+#[test]
+fn reads_a_previous_amendment_whose_xml_is_not_first() {
+    use std::io::{Read, Write};
+    let temp = tempfile::tempdir().unwrap();
+    let fin = synthetic_fin(temp.path());
+    let mut session = EditorSession::open(&fin).unwrap();
+    let figure = session.document.images[1].id.clone();
+    let mut png = Vec::new();
+    image::RgbImage::from_pixel(400, 200, image::Rgb([0, 0, 0]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    session.replace_picture(&figure, &png).unwrap();
+    let after = session.materialize().unwrap();
+    let options = hlt_core::AmendmentOptions {
+        dta_version: String::new(),
+        ..Default::default()
+    };
+    let export = hlt_core::export_amendment_from_fin(
+        &fin,
+        &after,
+        "spec_1.dta",
+        "2026-10-22",
+        &Default::default(),
+        &options,
+    )
+    .unwrap();
+    // dta 를 그림 먼저 · XML 나중으로 다시 묶고 최종본에 넣는다.
+    let mut entries = Vec::new();
+    let mut dta = zip::ZipArchive::new(std::io::Cursor::new(export.dta.clone())).unwrap();
+    for index in 0..dta.len() {
+        let mut entry = dta.by_index(index).unwrap();
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).unwrap();
+        entries.push((entry.name().to_string(), bytes));
+    }
+    assert!(
+        entries[0].0.ends_with(".xml") && entries.len() == 2,
+        "{:?}",
+        entries.iter().map(|e| &e.0).collect::<Vec<_>>()
+    );
+    entries.rotate_left(1);
+    let mut reordered = Vec::new();
+    {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut reordered));
+        for (name, bytes) in &entries {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+    let mut hlz = Vec::new();
+    let mut original = zip::ZipArchive::new(std::fs::File::open(&fin).unwrap()).unwrap();
+    original
+        .by_name("spec.hlz")
+        .unwrap()
+        .read_to_end(&mut hlz)
+        .unwrap();
+    let amended = temp.path().join("spec_1차.fin");
+    let bytes = hlt_core::build_fin(
+        &hlz,
+        &hlt_core::FinExportOptions {
+            hlz_name: "spec.hlz".into(),
+            app_date: "2026-10-22".into(),
+            app_time: "1761100000".into(),
+            image_time: String::new(),
+            amendments: vec![hlt_core::FinAmendment {
+                file_name: "spec_1.dta".into(),
+                date: "2026-10-22".into(),
+                bytes: reordered,
+            }],
+        },
+    )
+    .unwrap();
+    std::fs::write(&amended, bytes).unwrap();
+
+    // 열면 바꾼 도 2 · 손대지 않고 보정서를 만들면 「변경 없음」(앞 보정서의 그림이 최종본 그림이다).
+    let mut session = EditorSession::open(&amended).unwrap();
+    let shown = &session.document.images[1];
+    assert!(
+        (shown.display_height * 2).abs_diff(shown.display_width) <= 2,
+        "바꾼 도 2(2:1): {} × {}",
+        shown.display_width,
+        shown.display_height
+    );
+    let after = session.materialize().unwrap();
+    let error = hlt_core::export_amendment_from_fin(
+        &amended,
+        &after,
+        "spec_2.dta",
+        "2026-10-22",
+        &Default::default(),
+        &options,
+    )
+    .unwrap_err();
+    assert_eq!(error.details["reason"], "amendment_empty");
+}
+
+/// 식별번호는 HLT 에 실린다: 최종본(.fin)을 열어 HLT 로 저장하면 보정 명세서(종류 111)이고 문단마다 식별번호가 있다 —
+/// 그 HLT 를 새로 열어(세션에 번호 기억 없음) 문단을 나눠도 보정서가 번호대로 나온다(나눈 줄은 앞 번호 문단에 `<br/>`).
+/// 예전에는 HLT 에 번호를 안 써서 다시 열면 번호가 사라지고 「식별번호가 없다」로 거절됐다.
+#[test]
+fn identification_numbers_survive_saving_the_opened_final_version() {
+    let temp = tempfile::tempdir().unwrap();
+    let fin = synthetic_fin(temp.path());
+    let saved = temp.path().join("보정용.HLT");
+    EditorSession::open(&fin).unwrap().save_as(&saved).unwrap();
+    let read = hlt_core::inspect_path(&saved, Default::default()).unwrap();
+    assert_eq!(read.summary.document_type_raw, 0x8000 + 111, "보정 명세서");
+    let numbered: Vec<(String, Option<u32>)> = read
+        .paragraphs
+        .iter()
+        .filter(|p| p.wipo_id.is_some())
+        .map(|p| (p.text.chars().take(6).collect(), p.wipo_id))
+        .collect();
+    assert_eq!(
+        numbered,
+        [("본 발명은 ".to_string(), Some(1))],
+        "식별번호 0001"
+    );
+
+    let mut session = EditorSession::open(&saved).unwrap();
+    assert!(session.editable(), "보정 명세서도 고친다");
+    let body = session
+        .paragraphs()
+        .into_iter()
+        .find(|p| p.text.starts_with("본 발명은"))
+        .unwrap();
+    assert_eq!(
+        body.number.as_deref(),
+        Some("0001"),
+        "다시 연 HLT 에서 번호를 읽는다"
+    );
+    session
+        .replace_text(
+            &body.id,
+            "본 발명은 시험 장치에 관한 것이다.\n특히 덮개에 관한 것이다.",
+        )
+        .unwrap();
+    let after = session.materialize().unwrap();
+    let export = hlt_core::export_amendment_from_fin(
+        &fin,
+        &after,
+        "spec_1.dta",
+        "2026-10-22",
+        &Default::default(), // 세션 번호를 넘기지 않는다 — HLT 의 식별번호만으로
+        &hlt_core::AmendmentOptions {
+            dta_version: String::new(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let items: Vec<&str> = export.xml.split("<AmendBody ").skip(1).collect();
+    assert_eq!(items.len(), 1, "{}", export.xml);
+    assert!(
+        items[0].contains(
+            "<p num=\"0001\">본 발명은 시험 장치에 관한 것이다.<br/>특히 덮개에 관한 것이다.</p>"
+        ),
+        "{}",
+        export.xml
+    );
+}
+
+/// 보정 명세서의 식 번호: 통특기처럼 【수학식 N】 표제가 식별번호를 들고 식 그림 줄은 0 이다(통특기 「최종본 불러오기」 실물과 줄마다 같은 규칙).
+#[test]
+fn a_formula_heading_carries_the_identification_number() {
+    let temp = tempfile::tempdir().unwrap();
+    let spec = SYNTHETIC_SPEC.replace(
+        "<p num=\"0001\">본 발명은 시험 장치에 관한 것이다.</p>",
+        "<p num=\"0001\">본 발명은 시험 장치에 관한 것이다.</p>\n<p num=\"0002\"><maths num=\"1\"><img id=\"i0003\" he=\"10\" wi=\"40\" file=\"pat00001.jpg\" img-format=\"jpg\"/></maths></p>\n<p num=\"0003\">여기서 식은 예시다.</p>",
+    );
+    let fin = synthetic_fin_with(temp.path(), &spec);
+    let saved = temp.path().join("보정용.HLT");
+    EditorSession::open(&fin).unwrap().save_as(&saved).unwrap();
+    let read = hlt_core::inspect_path(&saved, Default::default()).unwrap();
+    let ids: Vec<(String, Option<u32>)> = read
+        .paragraphs
+        .iter()
+        .skip_while(|p| !p.text.starts_with("본 발명은"))
+        .take(4)
+        .map(|p| {
+            (
+                p.text.chars().take(7).collect(),
+                p.wipo_id.filter(|id| *id != 0),
+            )
+        })
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            ("본 발명은 시".to_string(), Some(1)),
+            ("【수학식 1】".to_string(), Some(2)),
+            ("_".to_string(), None),
+            ("여기서 식은 ".to_string(), Some(3)),
+        ]
+    );
+}

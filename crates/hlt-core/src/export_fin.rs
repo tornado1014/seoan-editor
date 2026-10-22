@@ -301,13 +301,32 @@ fn export_after(
     path: &Path,
     kipo: &KipoExportOptions,
 ) -> Result<(KipoExport, BTreeMap<String, HltImagePayload>), CoreError> {
-    let document = inspect_path(
+    let mut document = inspect_path(
         path,
         InspectOptions {
             include_image_payloads: true,
             ..InspectOptions::default()
         },
     )?;
+    // 서안이 구운 HLT 는 식별번호가 없다 — 편집 세션이 든 번호(같은 문단 차례)를 얹는다.
+    // 다시 읽은 HLT 는 끝에 빈 문단 하나가 더 있다(모델에는 없다).
+    let numbers = &kipo.paragraph_numbers;
+    if !numbers.is_empty()
+        && (numbers.len()..=numbers.len() + 1).contains(&document.paragraphs.len())
+        && document
+            .paragraphs
+            .iter()
+            .all(|paragraph| paragraph.wipo_id.is_none())
+    {
+        // 새 문단(`+`) = 통특기 식별번호 0xFFFFFFFF — 보정서에서 앞 번호 문단에 `<br/>` 로 잇는다.
+        for (paragraph, number) in document.paragraphs.iter_mut().zip(numbers) {
+            paragraph.wipo_id = match number.as_deref() {
+                Some(crate::editor::NEW_PARAGRAPH) => Some(u32::MAX),
+                Some(number) => number.parse().ok(),
+                None => None,
+            };
+        }
+    }
     let (formats, cell_formats) = inspect_format_inventories(path)?;
     let kipo = KipoExportOptions {
         number_by_id: true,
@@ -346,6 +365,22 @@ fn image_files(markup: &str) -> Vec<&str> {
         .split(" file=\"")
         .skip(1)
         .filter_map(|part| part.split('"').next())
+        .collect()
+}
+
+/// 마크업이 부르는 그림 크기(he, wi · mm · 차례대로).
+fn image_sizes(markup: &str) -> Vec<(u32, u32)> {
+    markup
+        .split("<img ")
+        .skip(1)
+        .map(|tag| {
+            let value = |key: &str| {
+                tag.split_once(&format!(" {key}=\""))
+                    .and_then(|(_, rest)| rest.split('"').next()?.parse().ok())
+                    .unwrap_or(0)
+            };
+            (value("he"), value("wi"))
+        })
         .collect()
 }
 
@@ -413,9 +448,10 @@ fn amendment_images(
     Ok(images)
 }
 
-/// 보정서가 다루는 요소(문서 순서). 실물 보정서 327건(맥 로컬 · 저장소 밖)에서 이 넷이 321건 —
-/// 도면(`figure`) · 인용 문헌 · 청구범위 통째(`claims`) · 서열목록은 6건뿐이라 다루지 않는다(앞선 보정서에 있으면 거절).
-pub const AMENDABLE: [&str; 4] = ["invention-title", "p", "claim", "summary"];
+/// 보정서가 다루는 요소(문서 순서). 실물 보정서 327건(맥 로컬 · 저장소 밖)에서 이 넷이 321건, 도면(`figure`)이 2건 —
+/// 인용 문헌 · 청구범위 통째(`claims`) · 서열목록은 4건뿐이라 다루지 않는다(앞선 보정서에 있으면 거절).
+/// 도면 보정 = 청구항 뒤 `<figure num><img … file="pat000NN.jpg"/></figure>` · 그림은 dta 에(최종본 그림 다음 번호).
+pub const AMENDABLE: [&str; 5] = ["invention-title", "p", "claim", "summary", "figure"];
 
 /// 요소 자리 = (`AMENDABLE` 순서, 번호 길이, 번호) — 정렬하면 문서 순서다(청구항은 수 크기 · 문단은 0 채운 네 자리).
 pub type ElementKey = (usize, usize, String);
@@ -451,6 +487,11 @@ pub fn amendable_elements(xml: &str) -> BTreeMap<ElementKey, String> {
     take(1, description, "<p num=\"", "</p>", true);
     take(2, xml, "<claim num=\"", "</claim>", true);
     take(3, xml, "<summary>", "</summary>", false);
+    let drawings = xml
+        .split_once("<drawings>")
+        .and_then(|(_, rest)| rest.split_once("</drawings>"))
+        .map_or("", |(body, _)| body);
+    take(4, drawings, "<figure num=\"", "</figure>", true);
     out
 }
 
@@ -568,11 +609,22 @@ fn comparable(markup: &str) -> String {
             .unwrap_or_default();
         if name != "maths" {
             let close = if tag.starts_with('/') { "/" } else { "" };
-            out.push_str(&format!("<{close}{name}>"));
+            // 같은 서식이 붙어 이어지면(`<u>가 </u><u>나</u>`) 한 구간이다 — 구간을 나눈 자리만 다른 것은 같은 글.
+            let joint = format!("</{name}>");
+            let format = matches!(name, "b" | "i" | "u" | "sup" | "sub" | "B" | "I" | "U");
+            if format && close.is_empty() && out.ends_with(&joint) {
+                out.truncate(out.len() - joint.len());
+            } else {
+                out.push_str(&format!("<{close}{name}>"));
+            }
         }
         rest = &rest[at + end + 1..];
     }
     out.extend(rest.chars().filter(|ch| !matches!(ch, '\r' | '\n')));
+    // 문헌 글 앞 공백은 보지 않는다 — 통특기 줄은 `<text> 홍길동` 의 앞 공백을 지운다(열고 다시 내도 같은 문헌).
+    while out.contains("<text> ") {
+        out = out.replace("<text> ", "<text>");
+    }
     out
 }
 
@@ -583,6 +635,24 @@ pub fn diff_elements(
     after: &BTreeMap<ElementKey, String>,
 ) -> Vec<AmendmentEntry> {
     diff_elements_by(before, after, |old, new| comparable(old) == comparable(new))
+}
+
+/// 그림 이름이 정체인 상태끼리(최종본 + 보정서 재생 — 그대로인 그림은 이름도 그대로) 대조한다: 글자·태그에 더해
+/// `<img …/>` 가 통째로(이름 · 크기) 같아야 같은 요소다 — 그림만 바꾼 도면 · 크기만 바꾼 도면도 `figure A`(실물 2건).
+pub fn diff_elements_named(
+    before: &BTreeMap<ElementKey, Option<String>>,
+    after: &BTreeMap<ElementKey, String>,
+) -> Vec<AmendmentEntry> {
+    let images = |markup: &str| -> Vec<String> {
+        markup
+            .split("<img ")
+            .skip(1)
+            .map(|rest| rest.split("/>").next().unwrap_or_default().to_string())
+            .collect()
+    };
+    diff_elements_by(before, after, |old, new| {
+        comparable(old) == comparable(new) && images(old) == images(new)
+    })
 }
 
 /// `diff_elements` 에 「같은 요소인가」 판정을 넘긴다(그림 정체까지 보는 최종본 경로).
@@ -604,10 +674,10 @@ fn diff_elements_by(
         };
         let kind = AMENDABLE[key.0];
         let numbered = !key.2.is_empty();
-        // 통특기: 문단만 본문 뒤에 줄을 바꾼다(`</p>\n</AmendBody>` · 청구항·명칭·요약은 `…></AmendBody>`).
+        // 통특기: 문단 · 도면만 본문 뒤에 줄을 바꾼다(`</p>\n</AmendBody>` · 청구항·명칭·요약은 `…></AmendBody>`).
         let body = new.map_or(String::new(), |markup| {
             let markup = amendment_tables(markup);
-            if kind == "p" {
+            if kind == "p" || kind == "figure" {
                 format!("{markup}\n")
             } else {
                 markup
@@ -1053,23 +1123,22 @@ fn read_final_fin<R: std::io::Read + std::io::Seek>(
         let dta = previous
             .get(file)
             .ok_or_else(|| fin_error("previous_dta"))?;
+        // 보정서 XML 이 첫 항목이라는 법은 없다(옛 통특기 도면 보정 = 그림 여섯 장 뒤에 XML).
         let mut inner = zip::ZipArchive::new(Cursor::new(dta)).map_err(|_| fin_error("dta_zip"))?;
         let mut xml = String::new();
-        inner
-            .by_index(0)
-            .map_err(|_| fin_error("dta_zip"))?
-            .read_to_string(&mut xml)
-            .map_err(|_| fin_error("dta_read"))?;
-        apply_amendment(&mut before, &xml)?;
-        for index in 1..inner.len() {
+        for index in 0..inner.len() {
             let mut entry = inner.by_index(index).map_err(|_| fin_error("dta_zip"))?;
-            let name = entry.name().to_string();
             let mut bytes = Vec::new();
             entry
                 .read_to_end(&mut bytes)
                 .map_err(|_| fin_error("dta_read"))?;
-            stored.insert(name, bytes);
+            if entry.name().to_ascii_lowercase().ends_with(".xml") {
+                xml = String::from_utf8(bytes).map_err(|_| fin_error("dta_read"))?;
+            } else {
+                stored.insert(entry.name().to_string(), bytes);
+            }
         }
+        apply_amendment(&mut before, &xml)?;
     }
     Ok(FinalFin {
         names,
@@ -1221,9 +1290,16 @@ pub fn export_amendment_from_fin(
         return Err(error);
     }
     // 그림만 바뀐 요소도 바뀐 것이다(수식 그림 교체 → `p A 0150` · 글자·태그 차례로는 같다).
+    // 크기(he · wi mm)만 바꾼 그림도 — 통특기는 도면 크기만 바꾼 것을 `figure A` 로 냈다. 손대지 않은 그림도
+    // 우리 값이 통특기 값과 반올림으로 1 어긋난다(실물 78건 중 29건 · 1 넘게는 0건) → 1 넘게 달라야 바뀐 것.
     let same_images = |old: &str, new: &str| {
+        let (old_sizes, new_sizes) = (image_sizes(old), image_sizes(new));
         let (old, new) = (image_files(old), image_files(new));
         old.len() == new.len()
+            && old_sizes
+                .iter()
+                .zip(&new_sizes)
+                .all(|(old, new)| old.0.abs_diff(new.0) <= 1 && old.1.abs_diff(new.1) <= 1)
             && old.iter().zip(&new).all(|(old, new)| {
                 matches!(
                     (stored.get(*old), payloads.get(*new)),

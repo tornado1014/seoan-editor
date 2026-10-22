@@ -261,6 +261,9 @@ where
     {
         return run_set_paragraph_shapes(&args, stdout);
     }
+    if args.first().is_some_and(|value| value == "edit-as-new") {
+        return run_edit_as_new(&args, stdout);
+    }
     if args
         .first()
         .is_some_and(|value| value == "number-paragraphs")
@@ -1473,6 +1476,134 @@ fn run_set_paragraph_shapes(args: &[String], stdout: &mut impl Write) -> u8 {
         })
     })();
     let failed = !matches!(&result, Ok(r) if r.readback_equal);
+    let envelope = match result {
+        Ok(result) => success_envelope(COMMAND, result),
+        Err(error) => error_envelope(COMMAND, error),
+    };
+    if write_envelope(stdout, &envelope).is_err() || failed {
+        return EXIT_VERIFY_FAILED;
+    }
+    EXIT_OK
+}
+
+#[derive(serde::Deserialize)]
+struct EditRequest {
+    operations: Vec<EditOperation>,
+}
+
+/// 편집기 고침 한 가지: 문단 글(`\n` = 줄 나누기 · 청구항 줄 수가 바뀌는 보정) · 앞 문단에 붙이기(줄 줄이기) · 그림 바꾸기(도면 보정).
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum EditOperation {
+    Text { paragraph_id: String, text: String },
+    Merge { merge: String },
+    Picture { image_id: String, image: String },
+}
+
+#[derive(Serialize)]
+struct EditResult {
+    input_source: String,
+    output_source: String,
+    operation_count: usize,
+    /// `--amendment` 를 줬으면 보정서 항목 수.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    amendment_items: Option<usize>,
+}
+
+/// 편집기 고침을 걸고 새 이름으로 저장한다(보정서생성 앞 단계: `edit-as-new` → `export-amendment <fin> <after.HLT> <out.fin>`).
+/// id 는 입력 파일의 `inspect` 문단 · 그림 id 다. 고칠 때마다 문단 id 가 차례대로 다시 매겨지므로 그림 바꾸기를 먼저,
+/// 문단 고침은 뒤 문단부터 건다(앞 문단 번호가 밀리지 않는다).
+fn run_edit_as_new(args: &[String], stdout: &mut impl Write) -> u8 {
+    const COMMAND: &str = "edit-as-new";
+    // 보정서까지(선택): `--amendment <새.fin> --dta-name <이름.dta> --date <YYYY-MM-DD>` — 같은 세션에서 낸다.
+    // 서안이 구운 HLT 에는 식별번호가 없어서 `export-amendment` 를 따로 부르면 문단을 나눈 보정이 거절된다.
+    let (input, output, flag, operations, amendment) = match args {
+        [_, input, output, flag, operations] => (input, output, flag, operations, None),
+        [_, input, output, flag, operations, a, fin, d, dta, t, date]
+            if a == "--amendment" && d == "--dta-name" && t == "--date" =>
+        {
+            (input, output, flag, operations, Some((fin, dta, date)))
+        }
+        _ => {
+            let error = CoreError::new(ErrorCode::VerificationFailed, "usage", false);
+            let envelope: CommandEnvelope<EditResult> = error_envelope(COMMAND, error);
+            let _ = write_envelope(stdout, &envelope);
+            return EXIT_USAGE;
+        }
+    };
+    let result = (|| {
+        if flag != "--operations" {
+            return Err(CoreError::new(
+                ErrorCode::VerificationFailed,
+                "usage",
+                false,
+            ));
+        }
+        let request: EditRequest = std::fs::read(operations)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .ok_or_else(|| CoreError::new(ErrorCode::VerificationFailed, "operations", false))?;
+        if Path::new(output).exists() || amendment.is_some_and(|(fin, ..)| Path::new(fin).exists())
+        {
+            return Err(CoreError::new(ErrorCode::OutputExists, COMMAND, false));
+        }
+        let mut session = hlt_core::EditorSession::open(Path::new(input))?;
+        let mut order: Vec<&EditOperation> = request.operations.iter().collect();
+        order.sort_by_key(|operation| match operation {
+            EditOperation::Picture { .. } => (0, 0),
+            EditOperation::Text {
+                paragraph_id: id, ..
+            }
+            | EditOperation::Merge { merge: id } => {
+                let index = id
+                    .strip_prefix("paragraph:")
+                    .and_then(|n| n.parse::<i64>().ok())
+                    .unwrap_or(0);
+                (1, -index)
+            }
+        });
+        for operation in order {
+            match operation {
+                EditOperation::Text { paragraph_id, text } => {
+                    session.replace_text(paragraph_id, text)?;
+                }
+                EditOperation::Merge { merge } => session.merge_with_previous(merge)?,
+                EditOperation::Picture { image_id, image } => {
+                    let bytes = std::fs::read(image)
+                        .map_err(|_| CoreError::new(ErrorCode::IoError, COMMAND, false))?;
+                    session.replace_picture(image_id, &bytes)?;
+                }
+            }
+        }
+        session.save_as(Path::new(output))?;
+        let mut amendment_items = None;
+        if let Some((fin, dta, date)) = amendment {
+            let export = hlt_core::export_amendment_from_fin(
+                Path::new(input),
+                Path::new(output),
+                dta,
+                date,
+                &hlt_core::KipoExportOptions {
+                    paragraph_numbers: session.paragraph_numbers(),
+                    ..Default::default()
+                },
+                &hlt_core::AmendmentOptions {
+                    dta_version: String::new(),
+                    ..Default::default()
+                },
+            )?;
+            std::fs::write(fin, &export.fin)
+                .map_err(|_| CoreError::new(ErrorCode::IoError, COMMAND, false))?;
+            amendment_items = Some(export.amended + export.deleted);
+        }
+        Ok(EditResult {
+            input_source: file_name(input),
+            output_source: file_name(output),
+            operation_count: request.operations.len(),
+            amendment_items,
+        })
+    })();
+    let failed = result.is_err();
     let envelope = match result {
         Ok(result) => success_envelope(COMMAND, result),
         Err(error) => error_envelope(COMMAND, error),
