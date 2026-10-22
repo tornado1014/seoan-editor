@@ -175,10 +175,12 @@ export function mountEditor(root: HTMLElement): void {
           <button type="button" data-action="amend" disabled title="보정서 만들기(청구항 인용을 먼저 점검)">${icon('amend')}<span>보정서</span></button>
         </div>
         <span class="editor-status" aria-live="polite"></span>
+        <button type="button" class="review-left" hidden title="걸지 않은 오기 정정 — 누를 때마다 다음 정정을 찾기 막대로"></button>
         <span class="editor-error" role="alert" hidden title="눌러서 닫기"></span>
       </div>
       <div class="find-bar" hidden>
         <label>찾을 글 <input class="find-text" type="text" placeholder="(비우면 서식만으로)"></label>
+        <span class="find-scope" hidden><span></span> <button type="button" data-action="find-unscope" title="범위 풀기">✕</button></span>
         <select class="find-format" aria-label="찾을 서식">
           <option value="">서식 상관없음</option>
           <option value="superscript">위첨자</option>
@@ -524,6 +526,8 @@ export function mountEditor(root: HTMLElement): void {
     foundKey = '';
     foundView = null;
     q<HTMLElement>('.find-bar').hidden = true;
+    setScope(null);
+    leftButton.hidden = true;
     paint();
     enable();
     say('문서를 닫았습니다.');
@@ -1471,7 +1475,11 @@ export function mountEditor(root: HTMLElement): void {
             note.right && !note.positional && report.matches[index] > 0 ? ' checked' : ''
           }> [${note.paragraphs.join('], [')}] “${escape(note.wrong)}” → <input class="review-right" data-note="${index}" size="16" value="${escape(
             note.right ?? '',
-          )}" placeholder="바른 말"> <small>(${report.matches[index]}곳${
+          )}" placeholder="바른 말"> <small>(${
+            report.matches[index] > 0
+              ? `<button type="button" class="review-goto" data-note="${index}" title="그 자리로 — 창을 접고 찾기 막대로">${report.matches[index]}곳</button>`
+              : '0곳'
+          }${
             note.positional ? ' · 한 자리만 고치라는 정정 — 화면에서 직접' : ''
           })</small></label>`,
         )
@@ -1485,7 +1493,25 @@ export function mountEditor(root: HTMLElement): void {
         ${figures ? `<fieldset><legend>도면(새 그림이 있어야 한다)</legend><ul>${figures}</ul></fieldset>` : ''}
         <button type="submit">걸기</button><button type="button" class="item-cancel">취소</button>
         <span class="item-hint">걸고 나서 화면에서 확인 · 손본 뒤 「보정서」를 누르세요 · 되돌리기 한 번에 전부 돌아갑니다</span>`;
+      // 「N곳」: 창을 접고(고른 것은 그대로) 찾기 막대로 그 번호 문단 안에서 차례로 · 띠를 누르면 창이 다시 보인다.
+      const reopen = document.createElement('button');
+      reopen.type = 'button';
+      reopen.className = 'review-reopen';
+      reopen.textContent = '보정안 창 다시 열기';
+      reopen.addEventListener('click', () => {
+        reopen.remove();
+        box.hidden = false;
+      });
+      box.querySelectorAll<HTMLButtonElement>('.review-goto').forEach((button) =>
+        button.addEventListener('click', () => {
+          const note = report.notes[Number(button.dataset.note)];
+          box.hidden = true;
+          root.append(reopen);
+          void findIn(note.wrong, note.paragraphs);
+        }),
+      );
       const done = (value: { claims: ProposedClaimDto[]; tracked: boolean; notes: DescriptionNoteDto[] } | null) => {
+        reopen.remove();
         box.remove();
         input.focus({ preventScroll: true });
         resolve(value);
@@ -1894,7 +1920,39 @@ export function mountEditor(root: HTMLElement): void {
     q<HTMLInputElement>('.find-text').value,
     (q<HTMLSelectElement>('.find-format').value || null) as FindFormatDto | null,
   ];
-  const findKey = () => JSON.stringify(findArgs());
+  /** 찾기 범위(식별번호 · 보정안 오기 정정에서) — 없으면 문서 전체. */
+  let findScope: string[] | null = null;
+  const findKey = () => JSON.stringify([...findArgs(), findScope]);
+  const setScope = (numbers: string[] | null) => {
+    findScope = numbers;
+    const label = q<HTMLElement>('.find-scope');
+    label.hidden = !numbers;
+    label.querySelector('span')!.textContent = numbers ? `범위 【${numbers.join('】, 【')}】` : '';
+  };
+  /** 범위 안 결과만(번호 문단). */
+  const scoped = (matches: FindMatchDto[]) => {
+    if (!findScope) return matches;
+    const inside = new Set(view?.paragraphs.filter((p) => p.number && findScope!.includes(p.number)).map((p) => p.id));
+    return matches.filter((match) => inside.has(match.paragraph_id));
+  };
+  /** 그 번호 문단 안에서 그 말을 찾기 막대로(「다음 찾기」로 차례로). */
+  async function findIn(text: string, numbers: string[]) {
+    q<HTMLInputElement>('.find-text').value = text;
+    q<HTMLSelectElement>('.find-format').value = '';
+    setScope(numbers);
+    q<HTMLElement>('.find-bar').hidden = false;
+    await findNext();
+  }
+  q<HTMLInputElement>('.find-text').addEventListener('input', () => setScope(null));
+  /** 걸기 뒤 남은 오기 정정(누를 때마다 다음 것). */
+  let leftNotes: DescriptionNoteDto[] = [];
+  let leftAt = 0;
+  const leftButton = q<HTMLButtonElement>('.review-left');
+  leftButton.addEventListener('click', () => {
+    const note = leftNotes[leftAt % leftNotes.length];
+    leftAt += 1;
+    if (note) void findIn(note.wrong, note.paragraphs);
+  });
   const replaceText = () => q<HTMLInputElement>('.replace-text').value;
   const replaceFormat = () => q<HTMLSelectElement>('.replace-format').value as ReplaceFormatDto;
 
@@ -1905,7 +1963,7 @@ export function mountEditor(root: HTMLElement): void {
   /** 지금 조건으로 다시 찾는다(판이 바뀌었거나 조건이 바뀌었을 때). */
   async function research() {
     const [text, format] = findArgs();
-    found = await editorFind(text, format);
+    found = scoped(await editorFind(text, format));
     foundKey = findKey();
     foundView = view;
     foundAt = -1;
@@ -2226,6 +2284,7 @@ export function mountEditor(root: HTMLElement): void {
             say('보고서에서 보정안(「보정안」 표의 【청구항】)과 오기 정정 문장을 찾지 못했습니다.');
             break;
           }
+          leftButton.hidden = true;
           const picked = await askReview(report);
           if (!picked) break;
           let outcome: ReviewOutcomeDto | null = null;
@@ -2235,6 +2294,20 @@ export function mountEditor(root: HTMLElement): void {
             return { next: done.view, caret: null };
           });
           if (outcome) say(reviewSummary(outcome, report.figures.length));
+          // 걸지 않은 정정 가운데 아직 그 자리에 남은 것 → 「남은 오기 N곳」.
+          const skipped = report.notes.filter((note) => !picked.notes.some((p) => p.wrong === note.wrong && p.paragraphs.join() === note.paragraphs.join()));
+          leftNotes = [];
+          let places = 0;
+          for (const note of skipped) {
+            setScope(note.paragraphs);
+            const count = scoped(await editorFind(note.wrong, null)).length;
+            if (count > 0) leftNotes.push(note);
+            places += count;
+          }
+          setScope(null);
+          leftAt = 0;
+          leftButton.textContent = `남은 오기 ${places}곳`;
+          leftButton.hidden = leftNotes.length === 0;
         } catch (error) {
           fail('보정안', error);
         }
@@ -2319,6 +2392,10 @@ export function mountEditor(root: HTMLElement): void {
       }
       case 'find-close':
         q<HTMLElement>('.find-bar').hidden = true;
+        setScope(null);
+        break;
+      case 'find-unscope':
+        setScope(null);
         break;
       case 'find-next':
         await findNext();
@@ -2340,7 +2417,7 @@ export function mountEditor(root: HTMLElement): void {
         break;
       }
       case 'replace-all': {
-        const all = await editorFind(...findArgs());
+        const all = scoped(await editorFind(...findArgs()));
         if (all.length === 0) {
           countLabel.textContent = '찾는 것이 없습니다';
           break;

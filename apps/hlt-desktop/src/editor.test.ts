@@ -723,6 +723,63 @@ describe('page editing', () => {
     await settle(500);
   });
 
+  test('review report: 「N곳」 folds the window and walks the places inside those numbered paragraphs (find bar) · leftovers after applying', async () => {
+    texts = ['제1 가', '제1 나 제1', '제1 다', '끝'];
+    numbers = [null, '0004', '0003', null];
+    const root = await open();
+    root.querySelector<HTMLButtonElement>('[data-action="review"]')!.click();
+    await settle(10);
+    const box = root.querySelector<HTMLFormElement>('.review-ask')!;
+    // 한 자리만 고치라는 정정(꺼짐) 「2곳」 → 창을 접고 찾기 막대로 · 범위 밖 같은 말은 세지 않는다.
+    box.querySelector<HTMLButtonElement>('.review-goto[data-note="3"]')!.click();
+    await settle(10);
+    expect(box.hidden).toBe(true);
+    const bar = root.querySelector<HTMLElement>('.find-bar')!;
+    expect(bar.hidden).toBe(false);
+    expect(root.querySelector<HTMLInputElement>('.find-text')!.value).toBe('제1');
+    expect(root.querySelector<HTMLElement>('.find-scope')!.textContent).toContain('범위 【0004】');
+    const label = root.querySelector('.find-count')!;
+    expect(label.textContent).toMatch(/^1 \/ 2/);
+    root.querySelector<HTMLButtonElement>('[data-action="find-next"]')!.click();
+    await settle(10);
+    expect(label.textContent).toMatch(/^2 \/ 2/);
+    // 모두 바꾸기도 범위 안만.
+    root.querySelector<HTMLInputElement>('.replace-text')!.value = '제1';
+    root.querySelector<HTMLButtonElement>('[data-action="replace-all"]')!.click();
+    await settle(10);
+    const replaced = last('editor_replace')![1] as { matches: { paragraph_id: string }[] };
+    expect(replaced.matches.map((m) => m.paragraph_id)).toEqual(['paragraph:1', 'paragraph:1']);
+    // 띠 → 창이 다시 보인다(고른 것 그대로) · 걸면 띠도 사라진다.
+    root.querySelector<HTMLButtonElement>('.review-reopen')!.click();
+    expect(box.hidden).toBe(false);
+    expect(root.querySelector('.review-reopen')).toBeNull();
+    box.querySelector<HTMLButtonElement>('.review-goto[data-note="3"]')!.click();
+    await settle(10);
+    box.requestSubmit();
+    await settle(30);
+    expect(root.querySelector('.review-reopen')).toBeNull();
+    // 걸지 않은 정정 가운데 그 자리에 남은 것(【0004】의 「제1」 2곳 · 【0002】는 문서에 없다).
+    expect(root.querySelector<HTMLElement>('.find-scope')!.hidden).toBe(true);
+    const left = root.querySelector<HTMLButtonElement>('.review-left')!;
+    expect(left.hidden).toBe(false);
+    expect(left.textContent).toBe('남은 오기 2곳');
+    bar.hidden = true;
+    left.click();
+    await settle(10);
+    expect(bar.hidden).toBe(false);
+    expect(root.querySelector<HTMLElement>('.find-scope')!.textContent).toContain('【0004】');
+    expect(label.textContent).toMatch(/ \/ 2/);
+    // 찾을 글을 새로 치면 범위가 풀려 문서 전체에서.
+    const field = root.querySelector<HTMLInputElement>('.find-text')!;
+    field.value = '제1';
+    field.dispatchEvent(new Event('input'));
+    root.querySelector<HTMLButtonElement>('[data-action="find-next"]')!.click();
+    await settle(10);
+    expect(root.querySelector<HTMLElement>('.find-scope')!.hidden).toBe(true);
+    expect(label.textContent).toMatch(/ \/ 4/);
+    await settle(500);
+  });
+
   test('amendment marks: 보정 표시 draws inserted text, deletion wedges and change bars (only for a final .fin)', async () => {
     const root = await open();
     const toggle = root.querySelector<HTMLButtonElement>('[data-action="amend-marks"]')!;

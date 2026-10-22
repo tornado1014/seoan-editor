@@ -343,3 +343,7 @@ progress {
 .cp949-review .cp949-buttons { display: flex; gap: 6px; justify-content: flex-end; }
 .nk-image-frame { position: absolute; box-sizing: border-box; border: 1px solid #2f6fd1; pointer-events: none; z-index: 3; }
 .nk-image-handle { position: absolute; right: -5px; bottom: -5px; width: 9px; height: 9px; background: #2f6fd1; border: 1px solid #fff; cursor: nwse-resize; pointer-events: auto; }
+/* 오기 「N곳」 → 찾기 막대 · 접힌 보정안 창 띠 · 남은 오기 */
+.review-goto, .review-left { padding: 0 4px; font-size: inherit; color: #24407a; background: none; border: 1px solid #b9c9e3; border-radius: 3px; cursor: pointer; }
+.review-reopen { position: fixed; left: 50%; top: 140px; transform: translateX(-50%); z-index: 20; padding: 4px 12px; background: #fffdf8; border: 1px solid #c9bfae; border-radius: 6px; box-shadow: 0 3px 12px rgba(0,0,0,.15); cursor: pointer; }
+.find-scope { color: #24407a; font-size: 12px; }
