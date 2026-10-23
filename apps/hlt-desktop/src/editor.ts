@@ -21,6 +21,7 @@ import {
   editorAmendmentMarks,
   editorApplyReview,
   editorClaimIssues,
+  editorSubmissionChecks,
   editorExportFin,
   editorFind,
   editorReplace,
@@ -68,6 +69,7 @@ import {
   type AmendmentDoneDto,
   type AmendmentMarksDto,
   type CitationIssueDto,
+  type SubmitIssueDto,
   type ClaimBasisDto,
   type ParagraphMarkDto,
   type DescriptionNoteDto,
@@ -171,6 +173,10 @@ export function mountEditor(root: HTMLElement): void {
           <button type="button" data-action="fin" disabled title="제출파일(.hlz · .fin) 만들기">${icon('send')}<span>제출파일</span></button>
           <button type="button" data-action="review" disabled title="OA 검토보고서의 보정안을 불러와 편집기에 건다">${icon('amend')}<span>보정안</span></button>
           <button type="button" data-action="amend-marks" aria-pressed="false" disabled title="보정 표시 — 최종본(.fin)에 견준 바뀐 글(넣은 글 · 지운 자리 · 바뀐 문단)">${icon('marks')}<span>보정 표시</span></button>
+          <select class="amend-base" aria-label="보정 표시 · 보정 근거의 기준" title="견줄 기준 — 연 뒤 고친 것 · 원출원(최종본 안 보정서까지)">
+            <option value="">연 뒤 고친 것</option>
+            <option value="original">원출원</option>
+          </select>
           <button type="button" data-action="basis" disabled title="보정 근거 — 바뀐 청구항의 새 말이 있는 원출원 명세서 단락 · 인용 문장 초안">${icon('find')}<span>보정 근거</span></button>
           <button type="button" data-action="amend" disabled title="보정서 만들기(청구항 인용을 먼저 점검)">${icon('amend')}<span>보정서</span></button>
         </div>
@@ -444,10 +450,14 @@ export function mountEditor(root: HTMLElement): void {
       }
     }
   }
+  const amendBase = q<HTMLSelectElement>('.amend-base');
+  /** 보정 표시 · 보정 근거의 기준이 원출원인가(기본 = 연 뒤 고친 것). */
+  const fromOriginal = () => amendBase.value === 'original';
+  amendBase.addEventListener('change', () => void refreshAmend(true));
   /** 보정 표시를 새로 받아 그린다(켜 둔 동안 고칠 때마다). `announce` = 상태줄에 요약. */
   async function refreshAmend(announce: boolean) {
     if (!showAmend) return;
-    const marks = await editorAmendmentMarks().catch(() => null);
+    const marks = await editorAmendmentMarks(fromOriginal()).catch(() => null);
     if (!marks) {
       showAmend = false;
       amendMarks = new Map();
@@ -471,7 +481,11 @@ export function mountEditor(root: HTMLElement): void {
       marks.removed.length ? `지운 것: ${marks.removed.join(', ')}` : '',
       issues.length ? `청구항 인용 문제 ${issues.length}건(「보정서」를 누르면 목록)` : '',
     ].filter(Boolean);
-    return parts.length ? `보정 표시 — ${parts.join(' · ')}` : '보정 표시 — 최종본과 같습니다';
+    return parts.length
+      ? `보정 표시(${fromOriginal() ? '원출원' : '연 뒤 고친 것'}) — ${parts.join(' · ')}`
+      : fromOriginal()
+        ? '보정 표시 — 원출원과 같습니다'
+        : '보정 표시 — 연 뒤 고친 것이 없습니다(원출원에 견주려면 옆에서 「원출원」)';
   }
 
   /** 표 칸 글(쪽 위 칸 편집) — 화면 판마다 바탕이 실어 준다. 모델 준비 전이면 칸을 누를 때 묻는다(`loadCell`). */
@@ -1668,6 +1682,71 @@ export function mountEditor(root: HTMLElement): void {
   }
 
   /** 보정서 앞 청구항 인용 점검: 문제 목록(누르면 그 항으로) · 「그래도 만들기」면 true. */
+  /** 제출 전 점검 창: 종류별 목록 · 「가기」는 창을 접고 그 문단으로(띠로 다시 열기) · 그래도 만들기 / 멈추기. */
+  function askSubmit(issues: SubmitIssueDto[]): Promise<boolean> {
+    const escape = (text: string) =>
+      text.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]!);
+    const groups: [SubmitIssueDto['kind'], string][] = [
+      ['unnumbered', '빈 식별번호'],
+      ['figure_missing', '도면이 없는 「도 N」'],
+      ['figure_unmentioned', '본문이 말하지 않는 도면'],
+      ['sign_unused', '본문에 안 나오는 부호'],
+      ['citation', '청구항 인용'],
+    ];
+    return new Promise((resolve) => {
+      const box = document.createElement('form');
+      box.className = 'item-ask review-ask submit-ask';
+      box.innerHTML = `<strong>제출 전 점검 — ${issues.length}건</strong>${groups
+        .map(([kind, title]) => {
+          const rows = issues
+            .map((issue, index) => ({ issue, index }))
+            .filter(({ issue }) => issue.kind === kind)
+            .map(
+              ({ issue, index }) =>
+                `<li>${issue.paragraph_id ? `<button type="button" class="submit-go" data-index="${index}">가기</button> ` : ''}${escape(issue.detail)}</li>`,
+            )
+            .join('');
+          return rows ? `<fieldset><legend>${title}</legend><ul>${rows}</ul></fieldset>` : '';
+        })
+        .join('')}
+        <button type="submit">그래도 만들기</button><button type="button" class="item-cancel">멈추기</button>`;
+      const reopen = document.createElement('button');
+      reopen.type = 'button';
+      reopen.className = 'review-reopen';
+      reopen.textContent = '점검 창 다시 열기';
+      reopen.addEventListener('click', () => {
+        reopen.remove();
+        box.hidden = false;
+      });
+      const done = (value: boolean) => {
+        reopen.remove();
+        box.remove();
+        input.focus({ preventScroll: true });
+        resolve(value);
+      };
+      box.addEventListener('submit', (event) => {
+        event.preventDefault();
+        done(true);
+      });
+      box.querySelector('.item-cancel')!.addEventListener('click', () => done(false));
+      box.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') done(false);
+      });
+      for (const button of box.querySelectorAll<HTMLButtonElement>('.submit-go')) {
+        button.addEventListener('click', () => {
+          const id = issues[Number(button.dataset.index)].paragraph_id!;
+          box.hidden = true;
+          root.append(reopen);
+          const page = view?.paragraph_pages[id];
+          if (page !== undefined) pageHost(page)?.scrollIntoView({ block: 'start' });
+          place({ paragraph: id, offset: 0 }, false);
+        });
+      }
+      root.append(box);
+      box.querySelector<HTMLButtonElement>('button[type="submit"]')!.focus();
+    });
+  }
+
   function askCitations(issues: CitationIssueDto[]): Promise<boolean> {
     const what: Record<CitationIssueDto['kind'], (cited: string) => string> = {
       mis_reference: (cited) => `자기 항 · 뒤 항 · 없는 항(${cited})을 인용`,
@@ -2236,7 +2315,7 @@ export function mountEditor(root: HTMLElement): void {
       }
       case 'basis': {
         try {
-          const basis = await editorAmendmentBasis();
+          const basis = await editorAmendmentBasis(fromOriginal());
           if (!basis) {
             say('보정 근거는 최종본(.fin)으로 연 문서에서만 찾을 수 있습니다.');
             break;
@@ -2352,6 +2431,16 @@ export function mountEditor(root: HTMLElement): void {
         break;
       }
       case 'fin': {
+        try {
+          const issues = await editorSubmissionChecks();
+          if (issues.length > 0 && !(await askSubmit(issues))) {
+            say('제출파일 만들기를 멈췄습니다 — 고친 뒤 다시 누르세요.');
+            break;
+          }
+        } catch (error) {
+          fail('제출 전 점검', error);
+          break;
+        }
         say('제출파일 만드는 중…');
         try {
           const path = await editorExportFin();

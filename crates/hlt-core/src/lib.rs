@@ -42,6 +42,7 @@ mod review_report;
 mod save;
 mod schema;
 mod serde_u64;
+mod submit_check;
 mod table_edit;
 mod template;
 mod text_policy;
@@ -93,7 +94,7 @@ pub use export_fin::{
     build_amendment_dta, build_amendment_dta_with_images, build_amendment_xml, build_fin,
     build_hlz, build_xresult, diff_elements, diff_elements_named, dta_version,
     export_amendment_from_fin, export_amendment_path, export_fin_path, final_version_from_fin,
-    invention_titles, sha256_hex,
+    invention_titles, original_version_from_fin, sha256_hex,
 };
 pub use export_kipo::{
     KipoExport, KipoExportImage, KipoExportOptions, display_units_to_mm,
@@ -147,7 +148,7 @@ pub use import_opinion::opinion_hlt_from_text;
 pub use inspect::{HltImagePayload, InspectDocument, InspectOptions, inspect_path};
 pub use kipo_xml::{KipoXmlDialect, KipoXmlDocument, inspect_kipo_xml_path};
 pub use numbering::{number_paragraphs_as_new, plan_paragraph_numbers};
-pub use package::hlt_from_package;
+pub use package::{hlt_from_original_fin, hlt_from_package};
 pub use paginate::{page_count, page_layout};
 #[cfg(feature = "pdf")]
 pub use pdf::write_pdf;
@@ -170,6 +171,7 @@ pub use save::{
     save_new_opinion_as_new,
 };
 pub use schema::{PackageReport, SchemaReport, validate_kipo_package, validate_kipo_xml};
+pub use submit_check::{SubmitIssue, SubmitKind, submission_checks};
 pub use table_edit::{
     CellPosition, NEW_TABLE_TOTAL_WIDTH, TableEditDecision, TableEditDecisionStatus, TableEditPlan,
     TableEditRequest, TableEditSaveResult, TableEditSkipReason, TableOperation, apply_table_edits,

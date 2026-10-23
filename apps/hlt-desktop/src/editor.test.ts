@@ -73,6 +73,7 @@ let closeAnswer = true;
 let marksAnswer: unknown = null;
 let issuesAnswer: unknown[] = [];
 let basisAnswer: unknown = null;
+let submitAnswer: unknown[] = [];
 const calls: [string, unknown][] = [];
 
 beforeEach(() => {
@@ -84,6 +85,7 @@ beforeEach(() => {
   marksAnswer = null;
   issuesAnswer = [];
   basisAnswer = null;
+  submitAnswer = [];
   calls.length = 0;
   // 쪽이 보이면 바로 그린다.
   globalThis.IntersectionObserver = class {
@@ -114,6 +116,10 @@ beforeEach(() => {
         return issuesAnswer;
       case 'editor_amendment_basis':
         return basisAnswer;
+      case 'editor_submission_checks':
+        return submitAnswer;
+      case 'editor_export_fin':
+        return '/tmp/x.fin';
       case 'editor_export_amendment':
         return null;
       case 'editor_read_review':
@@ -885,6 +891,63 @@ describe('page editing', () => {
     q(root, '[data-action="find-next"]').click();
     await settle(10);
     expect(label.textContent).toBe('이 문서에는 청구항 절이 없습니다');
+  });
+
+  test('제출 전 점검: issues → window (가기 folds it and goes · 멈추기 stops) · 그래도 만들기 makes · none → straight to the file', async () => {
+    const root = await open();
+    const make = async () => {
+      q(root, '[data-action="fin"]').click();
+      await settle(10);
+    };
+    await make(); // 걸린 것이 없다 → 창 없이 바로
+    expect(root.querySelector('.submit-ask')).toBeNull();
+    expect(calls.filter(([c]) => c === 'editor_export_fin').length).toBe(1);
+    submitAnswer = [
+      { kind: 'figure_missing', paragraph_id: 'paragraph:1', detail: '「도 5」을 말하는데 【도 5】 도면이 없습니다' },
+      { kind: 'unnumbered', paragraph_id: null, detail: '식별번호가 하나도 없습니다 — 「문단번호 넣기」를 누르세요' },
+    ];
+    await make();
+    let box = root.querySelector<HTMLFormElement>('.submit-ask')!;
+    expect(box.textContent).toContain('제출 전 점검 — 2건');
+    expect([...box.querySelectorAll('legend')].map((l) => l.textContent)).toEqual(['빈 식별번호', '도면이 없는 「도 N」']);
+    expect(box.querySelectorAll('.submit-go').length).toBe(1); // 문서 전체의 일은 「가기」가 없다
+    box.querySelector<HTMLButtonElement>('.submit-go')!.click();
+    expect(box.hidden).toBe(true);
+    type(root, 'X');
+    await settle(500);
+    expect(last('editor_replace_text')).toEqual(['editor_replace_text', expect.objectContaining({ paragraphId: 'paragraph:1', text: 'X라마' })]);
+    q(root, '.review-reopen').click();
+    expect(box.hidden).toBe(false);
+    q(box, '.item-cancel').click();
+    await settle(10);
+    expect(root.querySelector('.submit-ask')).toBeNull();
+    expect(root.querySelector('.review-reopen')).toBeNull();
+    expect(calls.filter(([c]) => c === 'editor_export_fin').length).toBe(1);
+    expect(root.querySelector('.editor-status')!.textContent).toContain('멈췄습니다');
+    await make();
+    box = root.querySelector<HTMLFormElement>('.submit-ask')!;
+    box.requestSubmit();
+    await settle(10);
+    expect(calls.filter(([c]) => c === 'editor_export_fin').length).toBe(2);
+  });
+
+  test('amendment base: 연 뒤 고친 것 by default · 원출원 re-asks with original (marks and basis) · messages name the base', async () => {
+    const root = await open();
+    marksAnswer = { paragraphs: [], changed: [], added: [], removed: [] };
+    q(root, '[data-action="amend-marks"]').click();
+    await settle(10);
+    expect(last('editor_amendment_marks')).toEqual(['editor_amendment_marks', { original: false }]);
+    expect(root.querySelector('.editor-status')!.textContent).toContain('연 뒤 고친 것이 없습니다');
+    marksAnswer = { paragraphs: [{ id: 'paragraph:0', inserted: [[0, 1]], deleted: [] }], changed: ['【0001】'], added: [], removed: [] };
+    const base = root.querySelector<HTMLSelectElement>('.amend-base')!;
+    base.value = 'original';
+    base.dispatchEvent(new Event('change'));
+    await settle(10);
+    expect(last('editor_amendment_marks')).toEqual(['editor_amendment_marks', { original: true }]);
+    expect(root.querySelector('.editor-status')!.textContent).toBe('보정 표시(원출원) — 바뀐 것: 【0001】');
+    q(root, '[data-action="basis"]').click();
+    await settle(10);
+    expect(last('editor_amendment_basis')).toEqual(['editor_amendment_basis', { original: true }]);
   });
 
   test('amendment marks: 보정 표시 draws inserted text, deletion wedges and change bars (only for a final .fin)', async () => {

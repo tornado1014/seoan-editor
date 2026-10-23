@@ -37,6 +37,10 @@ pub struct EditorSession {
     /// 최종본(.fin)을 열었나 · 그 첫 판 문단(서식 구간까지 — 모델이 다 되면 찍는다). 보정 표시의 「보정 전」.
     from_final: bool,
     baseline: Option<Vec<EditorParagraph>>,
+    /// 연 제출파일(.fin · .hlz) — 「원출원」 기준을 만들 때 다시 읽는다.
+    source: Option<PathBuf>,
+    /// 최종본의 원출원(보정서 적용 전) 문단 — 처음 고를 때 굽고 담아 둔다.
+    original: Option<Vec<EditorParagraph>>,
 }
 
 /// 판 하나: 파일 · 그 판의 의미 모델(있으면 다시 해석하지 않는다) · 다시 구운 판인가(저장 때 전체 검증).
@@ -228,6 +232,8 @@ impl EditorSession {
             cp949_substitutions: Vec::new(),
             from_final: package,
             baseline: None,
+            source: package.then(|| source.to_path_buf()),
+            original: None,
         }
         .with_spans()
         .centered_items()
@@ -1355,16 +1361,51 @@ impl EditorSession {
 
     /// 보정 표시: 최종본(.fin)으로 연 문서만 · 첫 판에 견준 지금 판의 바뀐 글. 모델이 아직이면 기다린다.
     pub fn amendment_marks(&mut self) -> Option<crate::AmendmentMarks> {
-        self.settle();
-        let baseline = self.baseline.as_ref()?;
-        Some(crate::amendment_marks(baseline, &self.paragraphs()))
+        self.amendment_marks_from(false)
     }
 
     /// 보정 근거 초안(최종본으로 연 문서만): 바뀐 청구항의 새 말 → 보정 전 명세서 식별번호 문단 후보.
     pub fn amendment_basis(&mut self) -> Option<Vec<crate::ClaimBasis>> {
+        self.amendment_basis_from(false)
+    }
+
+    /// 보정 표시 — `original` 이면 연 상태가 아니라 원출원(fin 안 보정서 적용 전)에 견준다.
+    pub fn amendment_marks_from(&mut self, original: bool) -> Option<crate::AmendmentMarks> {
+        let baseline = self.baseline_for(original)?;
+        Some(crate::amendment_marks(&baseline, &self.paragraphs()))
+    }
+
+    /// 보정 근거 — `original` 이면 원출원 명세서에서 근거를 찾는다.
+    pub fn amendment_basis_from(&mut self, original: bool) -> Option<Vec<crate::ClaimBasis>> {
+        let baseline = self.baseline_for(original)?;
+        Some(crate::amendment_basis(&baseline, &self.paragraphs()))
+    }
+
+    /// 견줄 기준: 연 상태(첫 판) · 원출원(.fin 만 — 처음 고를 때 원출원 HLT 를 굽고 열어 모델까지 기다려 담는다).
+    fn baseline_for(&mut self, original: bool) -> Option<Vec<EditorParagraph>> {
         self.settle();
-        let baseline = self.baseline.as_ref()?;
-        Some(crate::amendment_basis(baseline, &self.paragraphs()))
+        let is_fin = self
+            .source
+            .as_ref()
+            .and_then(|path| path.extension())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("fin"));
+        if !original || !is_fin {
+            return self.baseline.clone();
+        }
+        if self.original.is_none() {
+            let work = self.dir.path().join("original");
+            let output = self.dir.path().join("original.HLT");
+            std::fs::create_dir_all(&work).ok()?;
+            let numbers =
+                crate::hlt_from_original_fin(self.source.as_ref()?, &work, &output).ok()?;
+            let mut session = EditorSession::open(&output).ok()?;
+            // 식별번호는 XML 에서 읽은 것으로(「0001a」처럼 글자가 붙은 번호는 HLT 의 wipo_id 에 안 실린다 — 실물).
+            session.opened_numbers = numbers.clone();
+            session.numbers = numbers;
+            session.settle();
+            self.original = Some(session.paragraphs());
+        }
+        self.original.clone()
     }
 
     /// 청구항 인용 검사(지금 판 · 줄은 구분자 없이 이어 특허로 점검 목록과 같은 꼴로).
@@ -1376,6 +1417,11 @@ impl EditorSession {
             .map(|(number, heading, end)| (number, texts[heading + 1..end].concat()))
             .collect();
         crate::claim_citation_issues(&claims)
+    }
+
+    /// 제출 전 점검(빈 식별번호 · 도면 대응 · 안 쓰인 부호 · 청구항 인용).
+    pub fn submission_checks(&self) -> Vec<crate::SubmitIssue> {
+        crate::submission_checks(&self.paragraphs(), &self.claim_citation_issues())
     }
 
     /// 오기 후보가 걸릴 곳 수(그 번호 문단들에서 틀린 말이 나오는 수) — 걸기 전에 보여 준다.

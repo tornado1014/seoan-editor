@@ -302,7 +302,9 @@ export type AmendmentMarksDto = {
   added: string[];
   removed: string[];
 };
-export const editorAmendmentMarks = () => invoke<AmendmentMarksDto | null>('editor_amendment_marks');
+/** `original` = 원출원(fin 안 보정서 적용 전)에 견준다 · 아니면 연 상태(연 뒤 고친 것). */
+export const editorAmendmentMarks = (original = false) =>
+  invoke<AmendmentMarksDto | null>('editor_amendment_marks', { original });
 /** 청구항 인용 문제. 앞 넷은 특허로 점검 페이지와 같은 판정 · 뒤 셋은 앱만 보는 규칙. */
 export type CitationKindDto =
   | 'mis_reference'
@@ -314,10 +316,15 @@ export type CitationKindDto =
   | 'range_no_alternative';
 export type CitationIssueDto = { claim: number; kind: CitationKindDto; cited: number[] };
 export const editorClaimIssues = () => invoke<CitationIssueDto[]>('editor_claim_issues');
+export type SubmitKindDto = 'unnumbered' | 'figure_missing' | 'figure_unmentioned' | 'sign_unused' | 'citation';
+/** 제출 전 점검 한 줄(가 볼 문단 · 없으면 문서 전체의 일). */
+export type SubmitIssueDto = { kind: SubmitKindDto; paragraph_id: string | null; detail: string };
+export const editorSubmissionChecks = () => invoke<SubmitIssueDto[]>('editor_submission_checks');
 /** 보정 근거 후보: 보정 전 명세서 식별번호 문단 · 점수(통째로면 1) · 인용 문장 · 그 문단의 도면. */
 export type BasisHitDto = { number: string; score: number; exact: boolean; quote: string; figures: string[] };
 export type ClaimBasisDto = { claim: number; added: boolean; phrases: { text: string; hits: BasisHitDto[] }[] };
-export const editorAmendmentBasis = () => invoke<ClaimBasisDto[] | null>('editor_amendment_basis');
+export const editorAmendmentBasis = (original = false) =>
+  invoke<ClaimBasisDto[] | null>('editor_amendment_basis', { original });
 export const editorSetSize = (paragraphId: string, start: number, end: number, size: number) =>
   invoke<EditorViewDto>('editor_set_size', { paragraphId, start, end, size });
 

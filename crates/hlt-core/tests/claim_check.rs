@@ -206,3 +206,51 @@ fn citation_rules_match_the_page_on_the_corpus() {
     }
     assert!(mismatches.is_empty(), "불일치 {}", mismatches.len());
 }
+
+/// 제출 전 점검이 이미 제출된 최종본에서 얼마나 거는가(오탐 측정 · 0 에 가까워야 한다). 실물 글은 찍지 않는다(종류 · 건수 · 파일 이름만).
+/// 실행: `NK_AMEND_CORPUS=<최종본 .fin 폴더> cargo test -p hlt-core --test claim_check -- --ignored submission`
+#[test]
+#[ignore = "실물 최종본 폴더(NK_AMEND_CORPUS)가 필요하다"]
+fn submission_checks_on_submitted_finals() {
+    let corpus = dir("NK_AMEND_CORPUS");
+    let mut entries: Vec<_> = std::fs::read_dir(&corpus)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "fin"))
+        .collect();
+    entries.sort();
+    let (mut files, mut failed) = (0, 0);
+    let mut by_kind = std::collections::BTreeMap::new();
+    let mut files_hit = std::collections::BTreeMap::new();
+    for path in &entries {
+        let Ok(session) = hlt_core::EditorSession::open(path) else {
+            failed += 1;
+            continue;
+        };
+        files += 1;
+        let issues = session.submission_checks();
+        let mut kinds = std::collections::BTreeSet::new();
+        for issue in &issues {
+            *by_kind.entry(format!("{:?}", issue.kind)).or_insert(0usize) += 1;
+            kinds.insert(format!("{:?}", issue.kind));
+        }
+        for kind in kinds {
+            *files_hit.entry(kind).or_insert(0usize) += 1;
+        }
+        if std::env::var("NK_SHOW_SUBMIT").is_ok() {
+            for issue in &issues {
+                println!(
+                    "{} {:?} {}",
+                    path.file_name().unwrap().to_string_lossy(),
+                    issue.kind,
+                    issue.detail
+                );
+            }
+        }
+    }
+    println!(
+        "최종본 {files} 건(못 연 것 {failed}) · 건수 {by_kind:?} · 걸린 파일 수 {files_hit:?}"
+    );
+    assert!(files > 0);
+}

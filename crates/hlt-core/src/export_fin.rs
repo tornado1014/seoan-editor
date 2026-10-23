@@ -1052,10 +1052,39 @@ struct FinalFin {
     before_xml: String,
     before: BTreeMap<ElementKey, Option<String>>,
     stored: BTreeMap<String, Vec<u8>>,
+    /// zip 밖(fin 옆)에서 읽은 보정서 — 다음 최종본에 싣는다(옆 파일 없이도 열리게).
+    outside: Vec<(String, Vec<u8>)>,
+}
+
+/// fin 옆에서 보정서를 찾는다: ① xresult 가 부르는데 zip 에 없는 dta(같은 이름) · ② 「…첨부.fin」 옆
+/// 「…(첨부를 뺀 이름).dta」(통특기처럼 마지막 보정으로 겹친다 — 사용자 2026-10-23).
+fn beside(fin: Option<&Path>, name: &str) -> Option<Vec<u8>> {
+    std::fs::read(fin?.parent()?.join(name)).ok()
+}
+
+/// 파일 수정일(YYYY-MM-DD · UTC) — 옆 dta 를 xresult 에 올릴 때.
+fn modified_date(path: &Path) -> String {
+    let days = std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |since| since.as_secs() / 86_400) as i64;
+    // 날짜 ← 1970-01-01 부터 날 수(Hinnant civil_from_days).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 fn read_final_fin<R: std::io::Read + std::io::Seek>(
     archive: &mut zip::ZipArchive<R>,
+    fin: Option<&Path>,
 ) -> Result<FinalFin, CoreError> {
     use std::io::Read;
     let mut names = Vec::new();
@@ -1086,11 +1115,43 @@ fn read_final_fin<R: std::io::Read + std::io::Seek>(
         }
         names.push(name);
     }
-    let amendments: Vec<String> = xresult
+    let mut amendments: Vec<String> = xresult
         .lines()
         .filter(|line| line.starts_with("AMD") && !line.starts_with("AMDCNT="))
         .filter_map(|line| line.split_once('=').map(|(_, value)| value.to_string()))
         .collect();
+    let mut outside = Vec::new();
+    // ① xresult 가 부르는데 zip 에 없는 보정서 → fin 옆 같은 이름.
+    for value in &amendments {
+        let file = value.split(',').next().unwrap_or_default();
+        if !previous.contains_key(file)
+            && let Some(bytes) = beside(fin, file)
+        {
+            previous.insert(file.to_string(), bytes.clone());
+            outside.push((file.to_string(), bytes));
+        }
+    }
+    // ② 「…첨부.fin」 옆 「…(첨부를 뺀 이름).dta」 → 마지막 보정.
+    let attached = fin
+        .and_then(|path| path.file_stem())
+        .and_then(|stem| stem.to_str())
+        .and_then(|stem| stem.strip_suffix("첨부"))
+        .map(|stem| format!("{stem}.dta"));
+    if let Some(name) = attached
+        && !amendments
+            .iter()
+            .any(|value| value.split(',').next() == Some(name.as_str()))
+        && let Some(bytes) = beside(fin, &name)
+    {
+        let date = modified_date(
+            &fin.and_then(Path::parent)
+                .unwrap_or(Path::new("."))
+                .join(&name),
+        );
+        amendments.push(format!("{name},{date},1"));
+        previous.insert(name.clone(), bytes.clone());
+        outside.push((name, bytes));
+    }
     let mut hlz_archive =
         zip::ZipArchive::new(Cursor::new(hlz)).map_err(|_| fin_error("hlz_zip"))?;
     let mut before_xml = String::new();
@@ -1147,6 +1208,7 @@ fn read_final_fin<R: std::io::Read + std::io::Seek>(
         before_xml,
         before,
         stored,
+        outside,
     })
 }
 
@@ -1162,11 +1224,26 @@ pub fn final_version_from_fin(
         before: state,
         stored,
         ..
-    } = read_final_fin(&mut archive)?;
+    } = read_final_fin(&mut archive, Some(path))?;
     if before_xml.is_empty() {
         return Err(fin_error("fin_no_specification"));
     }
     Ok((rebuild_xml(&before_xml, &state)?, stored))
+}
+
+/// 최종본 `.fin` 의 원출원(보정서를 적용하기 전 명세서 hlz XML) · 그림 — 「원출원에 견준 보정 표시」.
+pub fn original_version_from_fin(
+    path: &Path,
+) -> Result<(String, BTreeMap<String, Vec<u8>>), CoreError> {
+    let file = std::fs::File::open(path).map_err(|_| fin_error("fin_open"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|_| fin_error("fin_zip"))?;
+    let FinalFin {
+        before_xml, stored, ..
+    } = read_final_fin(&mut archive, Some(path))?;
+    if before_xml.is_empty() {
+        return Err(fin_error("fin_no_specification"));
+    }
+    Ok((before_xml, stored))
 }
 
 fn rebuild_xml(
@@ -1253,7 +1330,8 @@ pub fn export_amendment_from_fin(
         before_xml,
         before,
         stored,
-    } = read_final_fin(&mut archive)?;
+        outside,
+    } = read_final_fin(&mut archive, Some(final_fin))?;
     if names.iter().any(|name| name == dta_name) {
         return Err(fin_error("dta_exists"));
     }
@@ -1437,6 +1515,15 @@ pub fn export_amendment_from_fin(
             let name = entry_names.raw(&entry.name_raw().to_vec())?;
             zip.raw_copy_file_rename(entry, name)
                 .map_err(|_| fin_error("zip_copy"))?;
+        }
+        // 옆에서 읽은 보정서도 싣는다(새 최종본은 옆 파일 없이 열린다).
+        for (name, bytes) in &outside {
+            zip.start_file(
+                entry_names.name(name)?,
+                SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+            )
+            .map_err(|_| fin_error("zip_start"))?;
+            zip.write_all(bytes).map_err(|_| fin_error("zip_write"))?;
         }
         zip.start_file(
             entry_names.name(dta_name)?,

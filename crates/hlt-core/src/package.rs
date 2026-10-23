@@ -25,7 +25,27 @@ pub fn hlt_from_package(
         "hlz" => read_hlz(&std::fs::read(package).map_err(|_| package_error("open"))?)?,
         _ => return Err(package_error("extension")),
     };
-    for (name, bytes) in &files {
+    hlt_from_parts(&xml, &files, extension == "fin", work, output)
+}
+
+/// 최종본 `.fin` 의 원출원(보정서 적용 전)을 HLT 로 굽는다 — 열 때와 같은 틀(보정 명세서) · 식별번호.
+pub fn hlt_from_original_fin(
+    fin: &Path,
+    work: &Path,
+    output: &Path,
+) -> Result<Vec<Option<String>>, CoreError> {
+    let (xml, files) = crate::export_fin::original_version_from_fin(fin)?;
+    hlt_from_parts(&xml, &files, true, work, output)
+}
+
+fn hlt_from_parts(
+    xml: &str,
+    files: &BTreeMap<String, Vec<u8>>,
+    final_version: bool,
+    work: &Path,
+    output: &Path,
+) -> Result<Vec<Option<String>>, CoreError> {
+    for (name, bytes) in files {
         // 항목 이름은 파일 이름만 쓴다(zip 안 경로로 폴더 밖에 쓰지 않게).
         let Some(name) = Path::new(name).file_name() else {
             continue;
@@ -33,8 +53,8 @@ pub fn hlt_from_package(
         std::fs::write(work.join(name), bytes).map_err(|_| package_error("write"))?;
     }
     // 의견서(OpinionDOC)는 명세서 판독기가 모른다(`kipo_xml_dialect`) — 의견서 틀로 따로 굽는다(식별번호 없음).
-    if crate::import_opinion::is_opinion_xml(&xml) {
-        crate::import_opinion::hlt_from_opinion_xml(&xml, work, output)?;
+    if crate::import_opinion::is_opinion_xml(xml) {
+        crate::import_opinion::hlt_from_opinion_xml(xml, work, output)?;
         return Ok(Vec::new());
     }
     let xml_path = work.join("document.xml");
@@ -47,7 +67,7 @@ pub fn hlt_from_package(
     };
     // 최종본(.fin · 국내)은 통특기 「최종본 불러오기」처럼 보정 명세서(종류 111)로 굽는다 — 식별번호가 HLT 에 실려
     // 저장했다 다시 열어도 보정서 번호가 남는다. PCT 최종본의 종류는 아직 실측이 없어 일반 틀 그대로.
-    let profile = if extension == "fin" && dialect == GenerationDialect::PatentSpecificationKo {
+    let profile = if final_version && dialect == GenerationDialect::PatentSpecificationKo {
         crate::amendment_profile()
     } else {
         crate::generation_profile(dialect)

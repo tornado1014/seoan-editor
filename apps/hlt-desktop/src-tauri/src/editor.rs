@@ -935,8 +935,11 @@ pub async fn editor_apply_review(
 pub async fn editor_amendment_marks(
     window: Window,
     state: State<'_, EditorState>,
+    original: Option<bool>,
 ) -> Result<Option<hlt_core::AmendmentMarks>, CoreError> {
-    with_session(&state, &window, |session| Ok(session.amendment_marks()))
+    with_session(&state, &window, |session| {
+        Ok(session.amendment_marks_from(original.unwrap_or(false)))
+    })
 }
 
 /// 보정 근거 초안: 최종본(.fin)으로 연 문서만(아니면 `null`).
@@ -944,8 +947,11 @@ pub async fn editor_amendment_marks(
 pub async fn editor_amendment_basis(
     window: Window,
     state: State<'_, EditorState>,
+    original: Option<bool>,
 ) -> Result<Option<Vec<hlt_core::ClaimBasis>>, CoreError> {
-    with_session(&state, &window, |session| Ok(session.amendment_basis()))
+    with_session(&state, &window, |session| {
+        Ok(session.amendment_basis_from(original.unwrap_or(false)))
+    })
 }
 
 /// 청구항 인용 검사(보정서를 만들기 전에 화면이 묻는다).
@@ -956,6 +962,23 @@ pub async fn editor_claim_issues(
 ) -> Result<Vec<hlt_core::CitationIssue>, CoreError> {
     with_session(&state, &window, |session| {
         Ok(session.claim_citation_issues())
+    })
+}
+
+/// 제출 전 점검(제출파일 직전) — 의견서(종류 7)는 볼 것이 없다.
+#[tauri::command]
+pub async fn editor_submission_checks(
+    window: Window,
+    state: State<'_, EditorState>,
+) -> Result<Vec<hlt_core::SubmitIssue>, CoreError> {
+    with_session(&state, &window, |session| {
+        Ok(
+            if session.document.summary.document_type_raw & 0x7fff == 7 {
+                Vec::new()
+            } else {
+                session.submission_checks()
+            },
+        )
     })
 }
 
