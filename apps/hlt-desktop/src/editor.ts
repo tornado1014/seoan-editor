@@ -143,7 +143,7 @@ export function mountEditor(root: HTMLElement): void {
         <div class="tb-group" role="group" aria-label="편집">
           <button type="button" data-action="undo" disabled title="되돌리기 (⌘Z)">${icon('undo')}</button>
           <button type="button" data-action="redo" disabled title="다시 하기 (⇧⌘Z)">${icon('redo')}</button>
-          <button type="button" data-action="find" disabled title="찾기·바꾸기 (⌘F)">${icon('find')}<span>찾기</span></button>
+          <button type="button" data-action="find" disabled title="찾기·바꾸기 (⌘F) · 식별번호·청구항으로 가기 (⌘G)">${icon('find')}<span>찾기</span></button>
         </div>
         <div class="tb-group panel-formats" role="group" aria-label="글자모양">
           <button type="button" data-format="bold" title="굵게 (⌘B)"><b>가</b></button>
@@ -163,7 +163,7 @@ export function mountEditor(root: HTMLElement): void {
           <button type="button" data-action="math" disabled title="수식 넣기(LaTeX)">${icon('math')}<span>수식</span></button>
           <button type="button" data-action="chem" disabled title="화학식 넣기(구조식)">${icon('chem')}<span>화학식</span></button>
           <button type="button" data-action="table" disabled title="표 넣기(커서 문단 아래 · 고치기는 표 칸 위 우클릭)">${icon('table')}<span>표</span></button>
-          <button type="button" data-action="marks" aria-pressed="false" title="문단부호 보기">${icon('marks')}</button>
+          <button type="button" data-action="marks" aria-pressed="true" title="문단부호 보기">${icon('marks')}</button>
         </div>
         <div class="tb-group" role="group" aria-label="내보내기">
           <button type="button" data-action="pdf" disabled title="인쇄 PDF">${icon('print')}<span>PDF</span></button>
@@ -394,7 +394,7 @@ export function mountEditor(root: HTMLElement): void {
   const pageWidth = () => view?.page_width ?? 595;
 
   /** 문단부호 보기: 문단이 끝나는 줄 끝에 ↵(빈 문단 포함 · 화면에만 — 인쇄 · 저장엔 없다). */
-  let showMarks = false;
+  let showMarks = true; // 기본으로 켠다(사용자 요청)
   function drawMarks(host: HTMLElement, page: PlannedPageDto) {
     if (!showMarks) return;
     for (const line of page.lines) {
@@ -1411,6 +1411,41 @@ export function mountEditor(root: HTMLElement): void {
     });
   }
 
+  /** ⌘G 가기: 식별번호 · 청구항 · 도 · 표제 → 그 문단 첫머리로(못 찾으면 창을 두고 다시 치게). */
+  function askGo(): Promise<void> {
+    return new Promise((resolve) => {
+      const box = document.createElement('form');
+      box.className = 'item-ask go-ask';
+      box.innerHTML = `<label>가기 <input class="go-text" size="14" autocomplete="off" spellcheck="false"></label>
+        <button type="submit">가기</button><span class="item-hint">0049 · 청구항 7 · 도 3 · 기술분야</span>`;
+      const field = box.querySelector<HTMLInputElement>('.go-text')!;
+      const done = () => {
+        box.remove();
+        input.focus({ preventScroll: true });
+        resolve();
+      };
+      box.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const id = view ? goTarget(field.value, view.paragraphs) : null;
+        if (!id) {
+          box.querySelector('.item-hint')!.textContent = `「${field.value.trim()}」이(가) 없습니다`;
+          field.select();
+          return;
+        }
+        done();
+        const page = view?.paragraph_pages[id];
+        if (page !== undefined) pageHost(page)?.scrollIntoView({ block: 'start' });
+        place({ paragraph: id, offset: 0 }, false);
+        say(`가기: ${field.value.trim()}`);
+      });
+      field.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') done();
+      });
+      root.append(box);
+      field.focus();
+    });
+  }
+
   function askNumber(kind: string, suggested: string): Promise<string | null> {
     return new Promise((resolve) => {
       const box = document.createElement('form');
@@ -2051,6 +2086,11 @@ export function mountEditor(root: HTMLElement): void {
       q<HTMLButtonElement>(`[data-action="${event.shiftKey ? 'save-as' : 'save'}"]`).click();
       return;
     }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'g' && view && !root.querySelector('.go-ask')) {
+      event.preventDefault();
+      void askGo();
+      return;
+    }
     if ((event.metaKey || event.ctrlKey) && event.key === 'f' && view) {
       event.preventDefault();
       q<HTMLElement>('.find-bar').hidden = false;
@@ -2503,6 +2543,30 @@ function ranges(items: string[], wrap: (item: string) => string): string {
 const topic = (number: number) => ('2459'.includes(String(number).slice(-1)) ? '는' : '은');
 
 /** 보정 근거 초안(실제 의견서 「보정 근거」 꼴): 청구항마다 근거 단락 · 도면 한 문장 + 단락 인용 줄 · 끝 문장. */
+/** ⌘G 가기 대상 문단 id: 청구항(「청구항 7」 · 「제7항」 · 「7항」) · 도(「도 3a」) · 식별번호(「49」 · 「【0049】」) · 표제 이름. */
+export function goTarget(
+  text: string,
+  paragraphs: { id: string; text: string; wipo_id: number | null; number?: string | null }[],
+): string | null {
+  const query = text.trim().replace(/\s+/g, ' ');
+  const heading = (label: string) => paragraphs.find((p) => p.text.trim().replace(/\s+/g, ' ') === `【${label}】`)?.id ?? null;
+  const claim = /^(?:청구항 ?|제 ?)?(\d+)(?: ?항)?$/.exec(query);
+  if (claim && (/청구항|항/.test(query))) return heading(`청구항 ${claim[1]}`);
+  const figure = /^도 ?(\d+[a-zA-Z]?)$/.exec(query);
+  if (figure) return heading(`도 ${figure[1]}`);
+  const number = /^[【[]?(\d{1,4})[】\]]?$/.exec(query);
+  if (number) {
+    const four = number[1].padStart(4, '0');
+    const isHeading = (p: { text: string }) => /^\s*【[^】]+】\s*$/.test(p.text);
+    return (
+      paragraphs.find((p) => p.number === four)?.id ??
+      paragraphs.find((p) => p.wipo_id === Number(four) && !isHeading(p))?.id ??
+      null
+    );
+  }
+  return query ? heading(query.replace(/^【|】$/g, '')) : null;
+}
+
 export function basisDraft(basis: ClaimBasisDto[]): string {
   const lines: string[] = [];
   for (const claim of basis) {

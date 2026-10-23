@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 import type { EditorViewDto, PlannedImageDto, PlannedPageDto } from './contracts';
-import { basisDraft, mountEditor } from './editor';
+import { basisDraft, goTarget, mountEditor } from './editor';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('./figure-editor', () => ({}));
@@ -780,6 +780,31 @@ describe('page editing', () => {
     await settle(500);
   });
 
+  test('⌘G 가기: 식별번호 → caret at that paragraph start (typing goes there) · unknown keeps the box with a hint', async () => {
+    texts = ['【기술분야】', '가나다', '라마'];
+    numbers = [null, '0001', '0002'];
+    const root = await open();
+    const go = () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'g', metaKey: true, bubbles: true }));
+    go();
+    let box = root.querySelector<HTMLFormElement>('.go-ask')!;
+    const field = box.querySelector<HTMLInputElement>('.go-text')!;
+    field.value = '9';
+    box.requestSubmit();
+    expect(root.querySelector('.go-ask')).not.toBeNull();
+    expect(box.querySelector('.item-hint')!.textContent).toContain('「9」이(가) 없습니다');
+    field.value = '【0002】';
+    box.requestSubmit();
+    expect(root.querySelector('.go-ask')).toBeNull();
+    expect(root.querySelector('.editor-status')!.textContent).toBe('가기: 【0002】');
+    type(root, 'X');
+    await settle(500);
+    expect(last('editor_replace_text')).toEqual(['editor_replace_text', expect.objectContaining({ paragraphId: 'paragraph:2', text: 'X라마' })]);
+    go();
+    box = root.querySelector<HTMLFormElement>('.go-ask')!;
+    box.querySelector('.go-text')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(root.querySelector('.go-ask')).toBeNull();
+  });
+
   test('amendment marks: 보정 표시 draws inserted text, deletion wedges and change bars (only for a final .fin)', async () => {
     const root = await open();
     const toggle = root.querySelector<HTMLButtonElement>('[data-action="amend-marks"]')!;
@@ -909,18 +934,20 @@ describe('page editing', () => {
     expect(texts[2]).toBe('본문');
   });
 
-  test('paragraph marks: ↵ at every paragraph end while on, gone when off', async () => {
+  test('paragraph marks: on by default — ↵ at every paragraph end, gone when off, back when on', async () => {
     texts = ['가나다', '', '라마'];
     const root = await open();
     const marks = () => root.querySelectorAll('.nk-pmark').length;
-    expect(marks()).toBe(0);
-    root.querySelector<HTMLButtonElement>('[data-action="marks"]')!.click();
-    await settle(10);
+    const pressed = () => root.querySelector('[data-action="marks"]')!.getAttribute('aria-pressed');
     expect(marks()).toBe(3); // 빈 문단도
-    expect(root.querySelector('[data-action="marks"]')!.getAttribute('aria-pressed')).toBe('true');
+    expect(pressed()).toBe('true');
     root.querySelector<HTMLButtonElement>('[data-action="marks"]')!.click();
     await settle(10);
     expect(marks()).toBe(0);
+    expect(pressed()).toBe('false');
+    root.querySelector<HTMLButtonElement>('[data-action="marks"]')!.click();
+    await settle(10);
+    expect(marks()).toBe(3);
   });
 
   test('식별항목 삭제 = 통특기 단락삭제 창: 종류 + 번호(쉼표 · 범위) · 표제 위면 채워 둔다 · 청구항은 내용까지', async () => {
@@ -999,5 +1026,28 @@ describe('basisDraft', () => {
       '새로 추가한 청구항 5는 (근거 단락을 고르지 않았습니다 — 직접 쓰세요.)', // 5 = 오 → 는
       '따라서 본 보정은 신규사항 추가에 해당하지 않습니다.',
     ]);
+  });
+});
+
+describe('goTarget', () => {
+  const p = (id: string, text: string, wipo_id: number | null = null, number: string | null = null) => ({ id, text, wipo_id, number });
+  test('identification numbers: final numbers first, else wipo_id of a body paragraph (a heading keeps stale ids)', () => {
+    const fin = [p('a', '【0049】'), p('b', '본문', 49, '0049'), p('c', '본문', null, '0050')];
+    for (const query of ['49', '0049', '【0049】', '[0049]', ' 0049 ']) expect(goTarget(query, fin)).toBe('b');
+    expect(goTarget('50', fin)).toBe('c');
+    const hlt = [p('h', '【발명의 설명】', 7), p('x', '본문', 7)];
+    expect(goTarget('7', hlt)).toBe('x');
+    expect(goTarget('8', hlt)).toBeNull();
+  });
+  test('claims · figures · headings', () => {
+    const doc = [p('t', '【기술분야】'), p('c7', '【청구항 7】'), p('c17', '【청구항 17】'), p('f', '【도 3a】')];
+    for (const query of ['청구항 7', '청구항7', '제7항', '제 7 항', '7항']) expect(goTarget(query, doc)).toBe('c7');
+    expect(goTarget('17항', doc)).toBe('c17');
+    expect(goTarget('도 3a', doc)).toBe('f');
+    expect(goTarget('도3a', doc)).toBe('f');
+    expect(goTarget('기술분야', doc)).toBe('t');
+    expect(goTarget('【기술분야】', doc)).toBe('t');
+    expect(goTarget('청구항 8', doc)).toBeNull();
+    expect(goTarget('', doc)).toBeNull();
   });
 });
