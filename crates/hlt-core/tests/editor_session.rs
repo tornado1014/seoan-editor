@@ -1330,3 +1330,128 @@ fn comparing_with_another_hlt_marks_only_the_edited_paragraphs() {
     assert_eq!(marks.added.len(), 1, "{:?}", marks.added);
     assert!(marks.removed.is_empty(), "{:?}", marks.removed);
 }
+
+#[test]
+fn find_options_case_whole_word_regex_and_group_replace() {
+    use hlt_core::{FindQuery, ReplaceFormat};
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("의견서.HLT");
+    hlt_core::save_new_opinion_as_new(&path, hlt_core::WriteOptions::default()).unwrap();
+    let mut session = EditorSession::open(&path).unwrap();
+    let body = session.paragraphs()[1].id.clone();
+    session
+        .replace_text(&body, "Abc abc 기판은 기판 기판부 기판도체 제1항 제12항")
+        .unwrap();
+    let count =
+        |session: &mut EditorSession, query: FindQuery| session.find_checked(&query).unwrap().len();
+    let text = |value: &str| FindQuery {
+        text: value.into(),
+        ..Default::default()
+    };
+    assert_eq!(count(&mut session, text("abc")), 1, "기본은 대소문자 구분");
+    assert_eq!(
+        count(
+            &mut session,
+            FindQuery {
+                case_insensitive: true,
+                ..text("abc")
+            }
+        ),
+        2
+    );
+    assert_eq!(count(&mut session, text("기판")), 4);
+    assert_eq!(
+        count(
+            &mut session,
+            FindQuery {
+                whole_word: true,
+                ..text("기판")
+            }
+        ),
+        2,
+        "「기판은」(조사) · 「기판」은 걸리고 「기판부」 · 「기판도체」는 안 걸린다"
+    );
+    assert_eq!(
+        count(&mut session, text("제(\\d+)항")),
+        0,
+        "정규식이 아니면 글 그대로"
+    );
+    let pattern = FindQuery {
+        regex: true,
+        ..text("제(\\d+)항")
+    };
+    let found = session.find_checked(&pattern).unwrap();
+    assert_eq!(found.len(), 2);
+    assert_eq!(
+        (found[1].start, found[1].end),
+        (28, 32),
+        "글자 자리(바이트 아님)"
+    );
+    let error = session
+        .find_checked(&FindQuery {
+            regex: true,
+            ..text("(")
+        })
+        .unwrap_err();
+    assert_eq!(error.details["reason"], "find_pattern");
+
+    session
+        .replace_pattern(&found, &pattern, "청구항 $1", ReplaceFormat::Keep)
+        .unwrap();
+    let after = session.paragraphs()[1].text.clone();
+    assert_eq!(
+        after,
+        "Abc abc 기판은 기판 기판부 기판도체 청구항 1 청구항 12"
+    );
+    session.undo().unwrap();
+    assert_eq!(
+        session.paragraphs()[1].text,
+        "Abc abc 기판은 기판 기판부 기판도체 제1항 제12항",
+        "되돌리기 한 번"
+    );
+}
+
+#[test]
+fn replace_texts_changes_several_paragraphs_in_one_undo_step() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("의견서.HLT");
+    hlt_core::save_new_opinion_as_new(&path, hlt_core::WriteOptions::default()).unwrap();
+    let mut session = EditorSession::open(&path).unwrap();
+    let body = session.paragraphs()[1].id.clone();
+    session
+        .replace_text(&body, "제3항에 있어서\n제5항에 있어서")
+        .unwrap();
+    let ids: Vec<String> = session.paragraphs()[1..3]
+        .iter()
+        .map(|p| p.id.clone())
+        .collect();
+    let before: Vec<String> = session
+        .paragraphs()
+        .iter()
+        .map(|p| p.text.clone())
+        .collect();
+    session
+        .replace_texts(&[
+            (ids[0].clone(), "제2항에 있어서".into()),
+            (ids[1].clone(), "제4항에 있어서".into()),
+        ])
+        .unwrap();
+    let texts: Vec<String> = session.paragraphs()[1..3]
+        .iter()
+        .map(|p| p.text.clone())
+        .collect();
+    assert_eq!(texts, ["제2항에 있어서", "제4항에 있어서"]);
+    assert_eq!(session.paragraphs().len(), before.len(), "문단 수 그대로");
+    session.undo().unwrap();
+    let undone: Vec<String> = session
+        .paragraphs()
+        .iter()
+        .map(|p| p.text.clone())
+        .collect();
+    assert_eq!(undone, before, "되돌리기 한 번에 둘 다");
+    assert!(
+        session
+            .replace_texts(&[(ids[0].clone(), "나눔\n안 됨".into())])
+            .is_err()
+    );
+}

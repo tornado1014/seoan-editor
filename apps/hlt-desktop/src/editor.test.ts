@@ -77,6 +77,9 @@ let compareAnswer: string | null = null;
 let amendAnswer: unknown = null;
 let batchAnswer: unknown = null;
 let sourceAnswer: unknown = null;
+let findError: unknown = null;
+let renumberAnswer: unknown[] = [];
+let signAnswer: unknown[] = [];
 let keysAnswer: (string | null)[] = [];
 let basisAnswer: unknown = null;
 let submitAnswer: unknown[] = [];
@@ -95,6 +98,9 @@ beforeEach(() => {
   amendAnswer = null;
   batchAnswer = null;
   sourceAnswer = null;
+  findError = null;
+  renumberAnswer = [];
+  signAnswer = [];
   keysAnswer = [];
   basisAnswer = null;
   submitAnswer = [];
@@ -145,6 +151,12 @@ beforeEach(() => {
         return sourceAnswer;
       case 'editor_paragraph_keys':
         return keysAnswer;
+      case 'editor_sign_table':
+        return signAnswer;
+      case 'editor_renumber_plan':
+        return renumberAnswer;
+      case 'editor_replace_texts':
+        return view(texts);
       case 'editor_save_csv':
         return '/d/표.csv';
       case 'editor_read_review':
@@ -191,6 +203,7 @@ beforeEach(() => {
         return view(texts);
       }
       case 'editor_find': {
+        if (findError) throw findError;
         // 가짜 찾기: 글이 있으면 글자 그대로 · 비고 서식만이면 「굵게」 = 첫 문단 [1, 2) 하나.
         const { text, format } = args!.query as { text: string; format: string | null };
         if (!text) return format === 'bold' ? [{ paragraph_id: 'paragraph:0', start: 1, end: 2, context: '나' }] : [];
@@ -356,7 +369,7 @@ describe('page editing', () => {
       root.querySelector<HTMLSelectElement>('.find-format')!.value = 'bold';
       click(root, 'find-next');
       await settle(30);
-      expect(last('editor_find')).toEqual(['editor_find', { query: { text: '', format: 'bold' } }]);
+      expect(last('editor_find')).toEqual(['editor_find', { query: { text: '', format: 'bold', case_insensitive: false, whole_word: false, regex: false } }]);
       expect(root.querySelectorAll('.nk-sel').length, '쪽 위에 고른 표시').toBeGreaterThan(0);
       expect(bar(root).hidden).toBe(false);
       expect(document.activeElement, '포커스는 찾기 칸에').toBe(findText(root));
@@ -934,13 +947,13 @@ describe('page editing', () => {
     expect(head[0]).toBe('파일');
     expect(head.slice(-2)).toEqual(['합계', '열지 못함']);
     const first = [...root.querySelectorAll('.batch-body tbody tr')][0];
-    expect([...first.querySelectorAll('td')].map((td) => td.textContent)).toEqual(['a.HLT', '0', '0', '0', '0', '0', '2', '1', '3', '']);
+    expect([...first.querySelectorAll('td')].map((td) => td.textContent)).toEqual(['a.HLT', '0', '0', '0', '0', '0', '2', '1', '0', '0', '0', '0', '0', '3', '']);
     expect(root.querySelector('.editor-status')!.textContent).toBe('폴더 제출 전 점검 — 2개 파일 · 걸린 파일 1');
     q(root, '.batch-csv').click();
     await settle(10);
     const [, args] = last('editor_save_csv')!;
     expect((args as { name: string }).name).toBe('제출 전 점검.csv');
-    expect((args as { text: string }).text.split('\r\n')[1]).toBe('"a.HLT","0","0","0","0","0","2","1","3",""');
+    expect((args as { text: string }).text.split('\r\n')[1]).toBe('"a.HLT","0","0","0","0","0","2","1","0","0","0","0","0","3",""');
   });
 
   test('toCsv: 따옴표 · 쉼표 · 줄바꿈이 든 칸', () => {
@@ -983,6 +996,202 @@ describe('page editing', () => {
     q(root, '[data-action="source"]').click();
     await settle(10);
     expect(pane.hidden).toBe(true);
+  });
+
+  test('찾기 옵션: Aa · 단어 · .* 토글이 찾기 조건에 실리고 · 정규식 모두 바꾸기는 조건을 넘긴다 · 잘못된 정규식은 까닭', async () => {
+    texts = ['제1항 제2항'];
+    const root = await open();
+    q(root, '[data-action="find"]').click();
+    const field = root.querySelector<HTMLInputElement>('.find-text')!;
+    field.value = '제1항';
+    q(root, '.find-option[data-option="case_insensitive"]').click();
+    q(root, '.find-option[data-option="regex"]').click();
+    q(root, '[data-action="find-next"]').click();
+    await settle(10);
+    expect(last('editor_find')![1]).toEqual({
+      query: { text: '제1항', format: null, case_insensitive: true, whole_word: false, regex: true },
+    });
+    root.querySelector<HTMLInputElement>('.replace-text')!.value = '청구항 $1';
+    q(root, '[data-action="replace-all"]').click();
+    await settle(10);
+    expect((last('editor_replace')![1] as { pattern: unknown }).pattern).toEqual({
+      text: '제1항', format: null, case_insensitive: true, whole_word: false, regex: true,
+    });
+    // 정규식을 끄면 넘기지 않는다.
+    q(root, '.find-option[data-option="regex"]').click();
+    field.value = '제2항';
+    q(root, '[data-action="replace-all"]').click();
+    await settle(10);
+    expect((last('editor_replace')![1] as { pattern: unknown }).pattern).toBeNull();
+    findError = { code: 'structure_invalid', details: { reason: 'find_pattern', message: 'unclosed group' } };
+    field.value = '(';
+    q(root, '[data-action="find-next"]').click();
+    await settle(10);
+    expect(root.querySelector('.find-count')!.textContent).toBe('찾을 글 오류: unclosed group');
+  });
+
+  test('도구 → 청구항 번호 다시 매기기: 미리 보기(바뀐 곳만) · 적용은 한 번에 · 이미 차례면 알림 · 최종본이면 경고', async () => {
+    texts = ['【청구항 1】', '장치.', '【청구항 3】', '제1항에 있어서, 부재.'];
+    const root = await open();
+    const tool = async (label: string) => {
+      q(root, '[data-action="tools"]').click();
+      await settle(10);
+      const items = menus[menus.length - 1] as unknown as { text: string; action: () => void }[];
+      items.find((item) => item.text === label)!.action();
+      await settle(10);
+    };
+    renumberAnswer = [];
+    await tool('청구항 번호 다시 매기기…');
+    expect(root.querySelector('.editor-status')!.textContent).toBe('청구항 번호가 이미 차례대로입니다.');
+    const long = '부재를 포함하고, 상기 부재는 기판 위에 놓이는 것을 특징으로 하는, 제3항에 있어서 그 밖의 부재를 더 포함하는 장치.';
+    renumberAnswer = [
+      { id: 'paragraph:2', before: '【청구항 3】', after: '【청구항 2】' },
+      { id: 'paragraph:3', before: long, after: long.replace('제3항', '제2항') },
+    ];
+    await tool('청구항 번호 다시 매기기…');
+    const shade = root.querySelector('.renumber-shade')!;
+    expect(shade.querySelector('strong')!.textContent).toBe('청구항 번호 다시 매기기 — 2곳');
+    expect([...shade.querySelectorAll('tbody td')].map((td) => td.textContent)).toEqual([
+      '【청구항 3】',
+      '【청구항 2】',
+      '…으로 하는, 제3항에 있어서 그…',
+      '…으로 하는, 제2항에 있어서 그…',
+    ]);
+    expect(shade.querySelector('.renumber-warn')).toBeNull();
+    q(root, '.renumber-apply').click();
+    await settle(10);
+    expect((last('editor_replace_texts')![1] as { edits: string[][] }).edits[0]).toEqual(['paragraph:2', '【청구항 2】']);
+    expect(root.querySelector('.renumber-shade')).toBeNull();
+  });
+
+  test('번호 다시 매기기: 최종본(식별번호가 있는 문서)이면 보정 실무 경고', async () => {
+    texts = ['【청구항 1】', '장치.', '【청구항 3】', '제1항에 있어서.'];
+    numbers = ['0001', null, null, null];
+    const root = await open();
+    renumberAnswer = [{ id: 'paragraph:2', before: '【청구항 3】', after: '【청구항 2】' }];
+    q(root, '[data-action="tools"]').click();
+    await settle(10);
+    (menus[menus.length - 1] as unknown as { text: string; action: () => void }[])[0].action();
+    await settle(10);
+    expect(root.querySelector('.renumber-warn')!.textContent).toContain('보정에서는 지운 청구항의 번호를 다시 매기지 않고');
+  });
+
+  test('도구 → 부호 목록: 표(부호 · 이름(수) · 부호의 설명 · 수) · 가기는 처음 나온 문단으로', async () => {
+    texts = ['가나다', '몸체(10)', '덮개'];
+    const root = await open();
+    signAnswer = [
+      { sign: '10', names: [['몸체', 2], ['본체', 1]], listed: '몸체', count: 3, first: 'paragraph:1' },
+      { sign: '30', names: [], listed: '남은 부재', count: 0, first: 'paragraph:2' },
+    ];
+    q(root, '[data-action="tools"]').click();
+    await settle(10);
+    (menus[menus.length - 1] as unknown as { text: string; action: () => void }[]).find((item) => item.text === '부호 목록')!.action();
+    await settle(10);
+    const shade = root.querySelector('.sign-shade')!;
+    expect(shade.querySelector('strong')!.textContent).toBe('부호 목록 — 2개');
+    const first = [...shade.querySelectorAll('tbody tr')][0];
+    expect([...first.querySelectorAll('td')].slice(0, 4).map((td) => td.textContent)).toEqual(['10', '몸체(2) · 본체(1)', '몸체', '3']);
+    q(shade as HTMLElement, '.table-go').click();
+    type(root, 'X');
+    await settle(500);
+    expect(last('editor_replace_text')).toEqual(['editor_replace_text', expect.objectContaining({ paragraphId: 'paragraph:1' })]);
+    expect(root.querySelector('.sign-shade')).toBeNull();
+  });
+
+  test('식별번호 미리 보기: 번호 없는 문서는 매겨질 번호를 흐리게 · ⌘G 도 그 번호로 · 번호 있는 문서는 제 번호', async () => {
+    texts = ['【기술분야】', '가나다', '라마'];
+    keysAnswer = [null, 'p:0001', 'p:0002'];
+    const root = await open();
+    await settle(20);
+    expect([...root.querySelectorAll('.nk-pnum.planned')].map((mark) => mark.textContent)).toEqual(['[0001]', '[0002]']);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'g', metaKey: true, bubbles: true }));
+    const box = root.querySelector<HTMLFormElement>('.go-ask')!;
+    box.querySelector<HTMLInputElement>('.go-text')!.value = '2';
+    box.requestSubmit();
+    expect(root.querySelector('.go-ask')).toBeNull();
+    type(root, 'X');
+    await settle(500);
+    expect(last('editor_replace_text')).toEqual(['editor_replace_text', expect.objectContaining({ paragraphId: 'paragraph:2' })]);
+  });
+
+  test('식별번호 미리 보기: 제 번호가 있는 문서(최종본)에는 미리 본 번호를 쓰지 않는다', async () => {
+    texts = ['【기술분야】', '가나다', '라마'];
+    numbers = [null, '0007', null];
+    keysAnswer = [null, 'p:0007', 'p:0002'];
+    const root = await open();
+    await settle(20);
+    expect(root.querySelectorAll('.nk-pnum.planned').length).toBe(0);
+    expect([...root.querySelectorAll('.nk-pnum')].map((mark) => mark.textContent)).toEqual(['[0007]']);
+  });
+
+  test('고친 곳 이동: ⌘] 다음 · ⌘[ 앞 · 끝에서 돌아간다 · 연 뒤 고친 것으로 묻는다', async () => {
+    texts = ['가', '나', '다', '라'];
+    const root = await open();
+    const key = (k: string) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, metaKey: true, bubbles: true }));
+    const status = () => root.querySelector('.editor-status')!.textContent;
+    marksAnswer = { paragraphs: [], changed: [], added: [], removed: [] };
+    key(']');
+    await settle(10);
+    expect(status()).toBe('연 뒤 고친 곳이 없습니다.');
+    marksAnswer = {
+      paragraphs: [
+        { id: 'paragraph:2', inserted: [[0, 1]], deleted: [] },
+        { id: 'paragraph:0', inserted: [[0, 1]], deleted: [] },
+        { id: 'paragraph:2', inserted: [[0, 1]], deleted: [] },
+      ],
+      changed: [],
+      added: [],
+      removed: [],
+    };
+    key(']');
+    await settle(10);
+    expect(status()).toBe('고친 곳 1/2');
+    expect(last('editor_amendment_marks')).toEqual(['editor_amendment_marks', { original: false, file: false }]);
+    key(']');
+    await settle(10);
+    expect(status()).toBe('고친 곳 2/2');
+    key(']');
+    await settle(10);
+    expect(status()).toBe('고친 곳 1/2 (처음으로 돌아왔습니다)');
+    key('[');
+    await settle(10);
+    expect(status()).toBe('고친 곳 2/2 (끝으로 갔습니다)');
+    type(root, 'X');
+    await settle(500);
+    expect(last('editor_replace_text')).toEqual(['editor_replace_text', expect.objectContaining({ paragraphId: 'paragraph:2' })]);
+  });
+
+  test('⌘K 명령 찾기: 툴바 · 도구를 이름으로 거르고 ↑↓ Enter 로 실행 · Esc 로 닫기', async () => {
+    texts = ['【청구범위】', '【청구항 1】', '장치.'];
+    const root = await open();
+    const key = (target: EventTarget, k: string, meta = false) =>
+      target.dispatchEvent(new KeyboardEvent('keydown', { key: k, metaKey: meta, bubbles: true }));
+    key(document, 'k', true);
+    const field = root.querySelector<HTMLInputElement>('.palette-text')!;
+    expect(document.activeElement).toBe(field);
+    const items = () => [...root.querySelectorAll('.palette-list li')].map((li) => li.textContent);
+    expect(items()).toContain('문서 통계');
+    expect(items()).toContain('저장');
+    field.value = '번호 다시';
+    field.dispatchEvent(new Event('input'));
+    // 설명(툴바 단추의 title)으로도 걸린다 — 「도구」 단추 설명에 「번호 다시 매기기」가 있다.
+    // 이름에 든 것이 먼저 · 설명에만 든 것(「도구」 단추 설명의 「번호 다시 매기기」)은 뒤.
+    expect(items()).toEqual(['청구항 번호 다시 매기기…', '도면 번호 다시 매기기…', '도구']);
+    key(field, 'ArrowDown');
+    expect(root.querySelector('.palette-list li.active')!.textContent).toBe('도면 번호 다시 매기기…');
+    key(field, 'ArrowDown');
+    key(field, 'ArrowDown');
+    expect(root.querySelector('.palette-list li.active')!.textContent, '끝에서 처음으로').toBe('청구항 번호 다시 매기기…');
+    key(field, 'Escape');
+    expect(root.querySelector('.palette-shade')).toBeNull();
+    key(document, 'k', true);
+    const again = root.querySelector<HTMLInputElement>('.palette-text')!;
+    again.value = '통계';
+    again.dispatchEvent(new Event('input'));
+    key(again, 'Enter');
+    await settle(10);
+    expect(root.querySelector('.palette-shade')).toBeNull();
+    expect(root.querySelector('.stats-shade strong')!.textContent).toBe('문서 통계');
   });
 
   test('find range: 상세설명만 · 청구항만 (replace-all too) · 고른 곳만 frozen at pick time · kept when typing anew', async () => {

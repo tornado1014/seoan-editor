@@ -22,6 +22,16 @@ pub enum SubmitKind {
     SignShared,
     /// 청구항 인용 문제(`claim_citation_issues`).
     Citation,
+    /// 【요약】 글이 권장 400자(공백 빼고)를 넘는다 — 실물 국내 최종본 224건 중 48건이 넘고도 접수됐다(확인용).
+    AbstractLong,
+    /// 도면이 있는데 【대표도】가 없거나 「도 N」이 아니거나 없는 도면을 가리킨다.
+    Representative,
+    /// 본문 없이 곧바로 다음 표제가 오는 표제(묶음 표제는 뺀다).
+    EmptyHeading,
+    /// 같은 【청구항 N】 · 【도 N】이 두 번(같은 표제가 연달아 오면 앞 것이 빈 표제로 걸린다).
+    DuplicateHeading,
+    /// 청구항 글이 「.」로 끝나지 않는다.
+    ClaimEnding,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -80,6 +90,7 @@ pub fn submission_checks(
     out.extend(figure_issues(paragraphs, &sections, &description));
     out.extend(unused_signs(&description));
     out.extend(sign_names(&description));
+    out.extend(structure_issues(paragraphs));
     out.extend(citations.iter().map(|issue| {
         let id = paragraphs
             .iter()
@@ -91,6 +102,130 @@ pub fn submission_checks(
             detail: citation_detail(issue),
         }
     }));
+    out
+}
+
+/// 요약 글자 한도(공백 빼고).
+const ABSTRACT_LIMIT: usize = 400;
+/// 아래 표제를 묶기만 하는 표제(바로 다음이 표제여도 된다).
+const CONTAINERS: [&str; 7] = [
+    "발명의 설명",
+    "발명의 내용",
+    "청구범위",
+    "특허청구범위",
+    "요약서",
+    "도면",
+    "선행기술문헌",
+];
+
+/// 모양 점검: 요약 길이 · 대표도 · 빈 표제 · 겹친 표제 · 청구항 끝 마침표.
+fn structure_issues(paragraphs: &[EditorParagraph]) -> Vec<SubmitIssue> {
+    let issue = |kind, paragraph: Option<&EditorParagraph>, detail: String| SubmitIssue {
+        kind,
+        paragraph_id: paragraph.map(|p| p.id.clone()),
+        detail,
+    };
+    let filled = |p: &EditorParagraph| p.has_objects || !p.text.trim().is_empty();
+    let mut out = Vec::new();
+    // 표제마다 본문(다음 표제 앞까지의 채운 문단).
+    let headings: Vec<(usize, &str)> = paragraphs
+        .iter()
+        .enumerate()
+        .filter_map(|(at, p)| heading(&p.text).map(|name| (at, name)))
+        .collect();
+    let body = |at: usize| -> Vec<&EditorParagraph> {
+        paragraphs[at + 1..]
+            .iter()
+            .take_while(|p| heading(&p.text).is_none())
+            .filter(|p| filled(p))
+            .collect()
+    };
+    let figures: std::collections::BTreeSet<&str> = headings
+        .iter()
+        .filter_map(|(_, name)| name.strip_prefix("도 "))
+        .collect();
+    let mut seen = std::collections::BTreeSet::new();
+    for &(at, name) in &headings {
+        let paragraph = &paragraphs[at];
+        let lines = body(at);
+        if !CONTAINERS.contains(&name) && lines.is_empty() {
+            out.push(issue(
+                SubmitKind::EmptyHeading,
+                Some(paragraph),
+                format!("【{name}】"),
+            ));
+        }
+        let numbered = name.starts_with("청구항 ") || name.starts_with("도 ");
+        if numbered && !seen.insert(name) {
+            out.push(issue(
+                SubmitKind::DuplicateHeading,
+                Some(paragraph),
+                format!("【{name}】"),
+            ));
+        }
+        if name == "요약" {
+            let count: usize = lines
+                .iter()
+                .map(|p| p.text.chars().filter(|ch| !ch.is_whitespace()).count())
+                .sum();
+            if count > ABSTRACT_LIMIT {
+                out.push(issue(
+                    SubmitKind::AbstractLong,
+                    Some(paragraph),
+                    format!("{count}자(공백 빼고) — 권장 {ABSTRACT_LIMIT}자를 넘는다(넘어도 접수는 된다)"),
+                ));
+            }
+        }
+        if name.starts_with("청구항 ") {
+            let text: String = lines.iter().map(|p| p.text.trim()).collect();
+            if !text.is_empty() && text != "삭제" && !text.ends_with('.') {
+                let tail: String = text
+                    .chars()
+                    .rev()
+                    .take(12)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                out.push(issue(
+                    SubmitKind::ClaimEnding,
+                    Some(paragraph),
+                    format!("【{name}】 …{tail}"),
+                ));
+            }
+        }
+    }
+    if !figures.is_empty() {
+        match headings.iter().find(|(_, name)| *name == "대표도") {
+            None => out.push(issue(
+                SubmitKind::Representative,
+                None,
+                "【대표도】가 없다".into(),
+            )),
+            Some(&(at, _)) => {
+                let text = body(at)
+                    .first()
+                    .map(|p| p.text.trim().to_string())
+                    .unwrap_or_default();
+                let named = text
+                    .strip_prefix("도 ")
+                    .filter(|n| !n.is_empty() && n.chars().all(|ch| ch.is_ascii_alphanumeric()));
+                let detail = match named {
+                    _ if text == "없음" => None,
+                    Some(number) if figures.contains(number) => None,
+                    Some(number) => Some(format!("「도 {number}」 — 그런 도면이 없다")),
+                    None => Some(format!("「{text}」 — 「도 N」이 아니다")),
+                };
+                if let Some(detail) = detail {
+                    out.push(issue(
+                        SubmitKind::Representative,
+                        Some(&paragraphs[at]),
+                        detail,
+                    ));
+                }
+            }
+        }
+    }
     out
 }
 
@@ -369,6 +504,82 @@ fn unused_signs(description: &[&EditorParagraph]) -> Vec<SubmitIssue> {
 
 /// 이름 · 처음 나온 문단 · 쓰인 수.
 type NameUse<'a> = (String, &'a EditorParagraph, usize);
+
+/// 부호 목록 한 줄: 부호 · 본문 이름들(쓰인 수) · 【부호의 설명】 이름 · 본문에 쓰인 수 · 처음 나온 문단.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SignRow {
+    pub sign: String,
+    pub names: Vec<(String, usize)>,
+    pub listed: Option<String>,
+    pub count: usize,
+    pub first: Option<String>,
+}
+
+/// 부호 목록(상세설명 「이름(부호)」 · 【부호의 설명】) — 부호 숫자 차례(10 · 10a · 12 · 100).
+pub fn sign_table(paragraphs: &[EditorParagraph]) -> Vec<SignRow> {
+    let sections = sections(paragraphs);
+    let mut body: Vec<(String, Vec<NameUse>)> = Vec::new();
+    let mut listed: Vec<(String, Vec<NameUse>)> = Vec::new();
+    let mut in_signs = false;
+    for (p, section) in paragraphs.iter().zip(&sections) {
+        if *section != Section::Description {
+            continue;
+        }
+        if let Some(name) = heading(&p.text) {
+            in_signs = name == "부호의 설명";
+            continue;
+        }
+        if in_signs {
+            for (sign, name) in sign_list(&p.text) {
+                record(&mut listed, &sign, &name, p);
+            }
+        } else {
+            for (sign, name) in named_signs(&p.text) {
+                record(&mut body, &sign, &name, p);
+            }
+        }
+    }
+    let mut signs: Vec<&String> = body.iter().chain(&listed).map(|(sign, _)| sign).collect();
+    signs.sort_by_key(|sign| {
+        let digits: String = sign.chars().take_while(char::is_ascii_digit).collect();
+        (digits.parse::<u64>().unwrap_or(u64::MAX), sign.to_string())
+    });
+    signs.dedup();
+    signs
+        .into_iter()
+        .map(|sign| {
+            let uses = body
+                .iter()
+                .find(|(known, _)| known == sign)
+                .map(|(_, uses)| uses.as_slice())
+                .unwrap_or(&[]);
+            let list = listed
+                .iter()
+                .find(|(known, _)| known == sign)
+                .and_then(|(_, uses)| uses.first());
+            let first = uses
+                .iter()
+                .map(|(_, p, _)| *p)
+                .chain(list.map(|(_, p, _)| *p))
+                .min_by_key(|p| {
+                    paragraphs
+                        .iter()
+                        .position(|q| q.id == p.id)
+                        .unwrap_or(usize::MAX)
+                });
+            SignRow {
+                sign: sign.clone(),
+                names: uses
+                    .iter()
+                    .map(|(name, _, count)| (name.clone(), *count))
+                    .collect(),
+                listed: list.map(|(name, _, _)| name.clone()),
+                count: uses.iter().map(|(_, _, count)| count).sum(),
+                first: first.map(|p| p.id.clone()),
+            }
+        })
+        .collect()
+}
 
 /// 부호별 이름 쓰임에 하나 더한다(처음이면 그 문단을 적는다).
 fn record<'a>(
@@ -740,6 +951,115 @@ fn contains_sign(text: &str, sign: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn sign_table_lists_body_names_and_the_sign_list_in_number_order() {
+        let paragraphs = doc(&[
+            ("【발명의 설명】", None),
+            ("【발명을 실시하기 위한 구체적인 내용】", None),
+            ("몸체(100)와 덮개(20)가 있다. 몸체(100)는 단단하다.", None),
+            ("본체(100) 옆에 홈(20a)이 있다.", None),
+            ("【부호의 설명】", None),
+            ("20: 덮개 100: 몸체", None),
+            ("30: 남은 부재", None),
+            ("【청구범위】", None),
+            ("【청구항 1】", None),
+            ("손잡이(5)를 포함하는 장치.", None),
+        ]);
+        let rows = sign_table(&paragraphs);
+        let signs: Vec<&str> = rows.iter().map(|row| row.sign.as_str()).collect();
+        assert_eq!(
+            signs,
+            ["20", "20a", "30", "100"],
+            "청구항의 부호는 보지 않는다 · 숫자 차례"
+        );
+        let body = &rows[3];
+        assert_eq!(
+            body.names,
+            [("몸체".to_string(), 2), ("본체".to_string(), 1)]
+        );
+        assert_eq!(
+            (body.count, body.listed.as_deref(), body.first.as_deref()),
+            (3, Some("몸체"), Some("p2"))
+        );
+        let only_listed = &rows[2];
+        assert_eq!(
+            (
+                only_listed.count,
+                only_listed.listed.as_deref(),
+                only_listed.first.as_deref()
+            ),
+            (0, Some("남은 부재"), Some("p6"))
+        );
+    }
+
+    #[test]
+    fn structure_checks_abstract_representative_empty_duplicate_and_claim_ending() {
+        let long = "가".repeat(401);
+        let rows: Vec<(&str, Option<&str>)> = vec![
+            ("【발명의 설명】", None),
+            ("【발명의 내용】", None),
+            ("【해결하고자 하는 과제】", None),
+            ("【과제의 해결 수단】", None),
+            ("수단.", None),
+            ("【청구범위】", None),
+            ("【청구항 1】", None),
+            ("장치.", None),
+            ("【청구항 2】", None),
+            ("방법", None),
+            ("【청구항 2】", None),
+            ("삭제", None),
+            ("【요약서】", None),
+            ("【요약】", None),
+            (long.as_str(), None),
+            ("【대표도】", None),
+            ("도 7", None),
+            ("【도면】", None),
+            ("【도 1】", None),
+            ("_", None),
+        ];
+        let issues = structure_issues(&doc(&rows));
+        let found: Vec<(SubmitKind, Option<&str>)> = issues
+            .iter()
+            .map(|issue| (issue.kind, issue.paragraph_id.as_deref()))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (SubmitKind::EmptyHeading, Some("p2")),
+                (SubmitKind::ClaimEnding, Some("p8")),
+                (SubmitKind::DuplicateHeading, Some("p10")),
+                (SubmitKind::AbstractLong, Some("p13")),
+                (SubmitKind::Representative, Some("p15")),
+            ]
+        );
+        assert!(issues[4].detail.contains("그런 도면이 없다"));
+        // 대표도가 없으면 문서 전체의 일 · 「없음」이나 있는 도면이면 괜찮다 · 400자는 괜찮다.
+        let base = |representative: Option<&str>| {
+            let mut rows = vec![("【요약】", None), ("가가가", None)];
+            if let Some(value) = representative {
+                rows.push(("【대표도】", None));
+                rows.push((value, None));
+            }
+            rows.extend([("【도면】", None), ("【도 1a】", None), ("_", None)]);
+            structure_issues(&doc(&rows))
+        };
+        assert_eq!(
+            base(None)
+                .iter()
+                .map(|i| (i.kind, i.paragraph_id.clone()))
+                .collect::<Vec<_>>(),
+            [(SubmitKind::Representative, None)]
+        );
+        assert!(base(Some("도 1a")).is_empty());
+        assert!(base(Some("없음")).is_empty());
+        assert_eq!(
+            base(Some("그림 1"))[0].detail,
+            "「그림 1」 — 「도 N」이 아니다"
+        );
+        let ok = "가".repeat(400);
+        assert!(structure_issues(&doc(&[("【요약】", None), (ok.as_str(), None)])).is_empty());
+    }
+
     fn doc(rows: &[(&str, Option<&str>)]) -> Vec<EditorParagraph> {
         rows.iter()
             .enumerate()
@@ -872,10 +1192,16 @@ mod tests {
             ("표 1 실시예(도 3 및 도 4a, 4b).", Some("0002")),
             ("구분실시예 1", None),
             ("다음 단락", Some("0004")),
+            ("【요약서】", None),
+            ("【대표도】", None),
+            ("도 3a", None),
             ("【도면】", None),
             ("【도 3a】", None),
+            ("_", None),
             ("【도 3b】", None),
+            ("_", None),
             ("【도 4】", None),
+            ("_", None),
         ]);
         // 특허문헌 목록 둘째 줄 · 번호가 건너뛴 자리(표 글)는 빈 식별번호가 아니다.
         // 「도 3」은 【도 3a】 · 【도 3b】를, 「도 4a, 4b」는 한 장 【도 4】를 덮는다.

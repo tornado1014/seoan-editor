@@ -25,6 +25,9 @@ import {
   editorBatchGenerate,
   editorBatchStop,
   editorSaveCsv,
+  editorRenumberPlan,
+  editorSignTable,
+  editorReplaceTexts,
   editorSourceOpen,
   editorParagraphKeys,
   editorApplyReview,
@@ -35,6 +38,7 @@ import {
   editorFind,
   editorReplace,
   type FindFormatDto,
+  type FindOptionsDto,
   type FindMatchDto,
   type ReplaceFormatDto,
   editorReplaceCellText,
@@ -87,7 +91,7 @@ import {
   type ReviewOutcomeDto,
   type ReviewReportDto,
 } from './contracts';
-import { nestClaims, outlineTree, renderPage, richParagraph, sectionOf, selectOffsets, selectionOffsets } from './editor-view';
+import { documentStats, nestClaims, outlineTree, repeatedSentences, renderPage, richParagraph, sectionOf, selectOffsets, selectionOffsets } from './editor-view';
 import type { OutlineNode } from './editor-view';
 import {
   type Caret,
@@ -119,6 +123,11 @@ const SUBMIT_GROUPS: [SubmitIssueDto['kind'], string][] = [
   ['sign_names', '같은 부호 · 다른 이름(괄호 안 = 쓰인 수)'],
   ['sign_shared', '같은 이름 · 다른 부호(한두 번만 다른 부호)'],
   ['citation', '청구항 인용'],
+  ['claim_ending', '마침표로 끝나지 않는 청구항'],
+  ['duplicate_heading', '두 번 나온 청구항 · 도면 번호'],
+  ['empty_heading', '본문이 없는 표제'],
+  ['representative', '대표도'],
+  ['abstract_long', '요약 길이(권장 400자)'],
 ];
 
 /** 표 → CSV(칸마다 따옴표 · 안의 따옴표는 둘로). */
@@ -166,6 +175,7 @@ export function mountEditor(root: HTMLElement): void {
           <button type="button" data-action="new-opinion" title="빈 의견서(【의견내용】)를 새로 만든다">${icon('opinion')}<span>새 의견서</span></button>
           <button type="button" data-action="import" title="워드 · KIPO XML · HML 을 불러와 새 HLT 로 만든다">${icon('import')}<span>불러와 HLT 만들기</span></button>
           <button type="button" data-action="source" disabled title="원문과 나란히 보기 — 영문 원문(.docx)을 오른쪽에 두고 식별번호 · 청구항 번호로 따라 움직인다(다시 누르면 닫기)">${icon('find')}<span>원문</span></button>
+          <button type="button" data-action="tools" disabled title="도구 — 번호 다시 매기기 · 부호 목록 · 문서 통계 · 되풀이 문장 · 고친 곳 이동(⌘K 명령 찾기)">${icon('find')}<span>도구</span></button>
           <button type="button" data-action="batch" title="폴더 일괄 처리 — 폴더 안 워드 · XML 을 HLT 로 · HLT 마다 제출 전 점검">${icon('import')}<span>일괄</span></button>
           <button type="button" data-action="new-tab" title="새 탭 (⌘T)">${icon('tab')}</button>
           <button type="button" data-action="save" disabled title="저장 — 연 HLT 에 덮어쓰기 (⌘S)">${icon('save')}<span>저장</span></button>
@@ -217,6 +227,9 @@ export function mountEditor(root: HTMLElement): void {
       </div>
       <div class="find-bar" hidden>
         <label>찾을 글 <input class="find-text" type="text" placeholder="(비우면 서식만으로)"></label>
+        <button type="button" class="find-option" data-option="case_insensitive" aria-pressed="false" title="대소문자 무시">Aa</button>
+        <button type="button" class="find-option" data-option="whole_word" aria-pressed="false" title="낱말 단위 — 뒤에 조사는 붙어도 된다(「기판」은 「기판은」 · 「기판의」에 걸리고 「기판부」에는 안 걸린다)">단어</button>
+        <button type="button" class="find-option" data-option="regex" aria-pressed="false" title="정규식(바꿀 글에 $1 · $2 …)">.*</button>
         <select class="find-range" aria-label="찾을 범위">
           <option value="">전체</option>
           <option value="description">상세설명만</option>
@@ -390,7 +403,7 @@ export function mountEditor(root: HTMLElement): void {
     void editorLog(`${label} 실패 ${JSON.stringify(error)}`).catch(() => {});
   };
   const enable = () => {
-    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'docx', 'fin', 'review', 'amend-marks', 'basis', 'amend', 'math', 'chem', 'table', 'align-justified', 'align-center', 'align-left', 'indent', 'outdent', 'source']) {
+    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'docx', 'fin', 'review', 'amend-marks', 'basis', 'amend', 'math', 'chem', 'table', 'align-justified', 'align-center', 'align-left', 'indent', 'outdent', 'source', 'tools']) {
       q<HTMLButtonElement>(`[data-action="${action}"]`).disabled = !view;
     }
   };
@@ -425,10 +438,12 @@ export function mountEditor(root: HTMLElement): void {
     const margin = Math.min(...lines.map((line) => line.stops![0]));
     for (const line of lines) {
       if (line.start !== 0) continue;
-      const number = paragraphOf(line.paragraph!)?.number;
+      const own = paragraphOf(line.paragraph!)?.number;
+      const number = own ?? planned.get(line.paragraph!);
       if (!number || number === '+') continue; // + = 새 문단(번호 없음)
       const mark = document.createElement('span');
-      mark.className = 'nk-pnum';
+      mark.className = own ? 'nk-pnum' : 'nk-pnum planned';
+      if (!own) mark.title = '제출파일을 만들 때 매겨질 식별번호';
       mark.textContent = `[${number}]`;
       mark.style.right = `${(pageWidth() - margin + 3) * SCALE}px`;
       mark.style.top = `${(line.top + 2) * SCALE}px`;
@@ -588,7 +603,7 @@ export function mountEditor(root: HTMLElement): void {
     if (keepScroll) pagesRoot.scrollTop = scroll;
     renderOutline(next);
     void refreshClaims(next);
-    void refreshSourceKeys(next);
+    void refreshKeys(next);
     // 자동 저장: 판이 바뀔 때마다(고침 · 되돌리기) 2분을 다시 센다 — 손을 멈추면 복구본을 둔다(고친 것이 없으면 지운다).
     window.clearTimeout(autosaveTimer);
     if (next.editable) autosaveTimer = window.setTimeout(() => void editorAutosave().catch(() => {}), AUTOSAVE_MS);
@@ -606,6 +621,7 @@ export function mountEditor(root: HTMLElement): void {
     pagesRoot.replaceChildren();
     outlineRoot.replaceChildren();
     claimParents = {};
+    planned = new Map();
     window.clearTimeout(autosaveTimer);
     closeSource();
     images.clear();
@@ -718,6 +734,8 @@ export function mountEditor(root: HTMLElement): void {
   const sourcePane = q<HTMLElement>('.editor-source');
   let sourceByKey = new Map<string, HTMLElement>();
   let docKeys: (string | null)[] = [];
+  /** 식별번호 없는 문서: 문단 id → 제출파일에서 매겨질 번호(「0001」). */
+  let planned = new Map<string, string>();
   function openSource(rows: SourceParagraphDto[]) {
     sourceByKey = new Map();
     sourcePane.replaceChildren(
@@ -745,11 +763,23 @@ export function mountEditor(root: HTMLElement): void {
     root.classList.remove('with-source');
   }
   /** 판이 바뀌면 문단 짝 이름을 다시 받고, 짝 없는 원문 문단을 흐리게. */
-  async function refreshSourceKeys(next: EditorViewDto) {
-    if (sourcePane.hidden) return;
+  /** 판이 바뀌면 문단 짝 이름을 다시 받는다 — 식별번호 없는 문서는 매겨질 번호를 쪽 왼쪽에 흐리게(원문 칸도 같은 이름을 쓴다). */
+  async function refreshKeys(next: EditorViewDto) {
     const keys = await editorParagraphKeys().catch(() => []);
     if (view !== next) return;
     docKeys = keys;
+    const numbered = next.paragraphs.some((paragraph) => paragraph.number);
+    const nextPlanned = new Map<string, string>();
+    if (!numbered) {
+      keys.forEach((key, at) => {
+        const paragraph = next.paragraphs[at];
+        if (paragraph && key?.startsWith('p:')) nextPlanned.set(paragraph.id, key.slice(2));
+      });
+    }
+    const changed = JSON.stringify([...nextPlanned]) !== JSON.stringify([...planned]);
+    planned = nextPlanned;
+    if (changed) for (const index of pages.keys()) redraw(index);
+    if (sourcePane.hidden) return;
     const present = new Set(keys);
     for (const element of sourcePane.querySelectorAll<HTMLElement>('p[data-key]')) {
       element.classList.toggle('unpaired', !present.has(element.dataset.key!));
@@ -1636,7 +1666,9 @@ export function mountEditor(root: HTMLElement): void {
       };
       box.addEventListener('submit', (event) => {
         event.preventDefault();
-        const id = view ? goTarget(field.value, view.paragraphs) : null;
+        // 식별번호 없는 문서는 매겨질 번호로도 간다.
+        const paragraphs = view?.paragraphs.map((p) => (p.number || !planned.has(p.id) ? p : { ...p, number: planned.get(p.id) }));
+        const id = paragraphs ? goTarget(field.value, paragraphs) : null;
         if (!id) {
           box.querySelector('.item-hint')!.textContent = `「${field.value.trim()}」이(가) 없습니다`;
           field.select();
@@ -2274,10 +2306,26 @@ export function mountEditor(root: HTMLElement): void {
   }
 
   const countLabel = q<HTMLSpanElement>('.find-count');
-  const findArgs = (): [string, FindFormatDto | null] => [
+  const findArgs = (): [string, FindFormatDto | null, FindOptionsDto] => [
     q<HTMLInputElement>('.find-text').value,
     (q<HTMLSelectElement>('.find-format').value || null) as FindFormatDto | null,
+    Object.fromEntries(
+      [...root.querySelectorAll<HTMLButtonElement>('.find-option')].map((button) => [
+        button.dataset.option!,
+        button.getAttribute('aria-pressed') === 'true',
+      ]),
+    ) as FindOptionsDto,
   ];
+  for (const button of root.querySelectorAll<HTMLButtonElement>('.find-option')) {
+    button.addEventListener('click', () =>
+      button.setAttribute('aria-pressed', String(button.getAttribute('aria-pressed') !== 'true')),
+    );
+  }
+  /** 정규식으로 찾는 중이면 그 조건(바꾸기에 넘겨 `$1` 을 채운다). */
+  const regexPattern = () => {
+    const [text, format, options] = findArgs();
+    return options.regex ? { text, format, ...options } : null;
+  };
   /** 찾기 범위(식별번호 · 보정안 오기 정정에서) — 없으면 문서 전체. */
   let findScope: string[] | null = null;
   /** 사용자가 고른 범위(절 · 고른 곳) — 보정안 번호 범위와 따로 · 새로 쳐도 남는다. 고른 곳은 고를 때 얼려 둔다. */
@@ -2353,13 +2401,21 @@ export function mountEditor(root: HTMLElement): void {
     superscript: '위첨자', subscript: '아래첨자', bold: '굵게', italic: '기울임', underline: '밑줄', plain: '서식 없는',
   };
 
-  /** 지금 조건으로 다시 찾는다(판이 바뀌었거나 조건이 바뀌었을 때). */
-  async function research() {
-    const [text, format] = findArgs();
-    found = scoped(await editorFind(text, format));
+  /** 지금 조건으로 다시 찾는다(판이 바뀌었거나 조건이 바뀌었을 때). `false` = 찾을 글이 잘못되었다(까닭은 보였다). */
+  async function research(): Promise<boolean> {
+    const [text, format, options] = findArgs();
+    try {
+      found = scoped(await editorFind(text, format, options));
+    } catch (error) {
+      found = [];
+      foundKey = '';
+      countLabel.textContent = `찾을 글 오류: ${(error as { details?: { message?: string } })?.details?.message ?? describe(error)}`;
+      return false;
+    }
     foundKey = findKey();
     foundView = view;
     foundAt = -1;
+    return true;
   }
 
   /** 커서 뒤 첫 결과(없으면 처음으로 돌아간다). */
@@ -2382,7 +2438,7 @@ export function mountEditor(root: HTMLElement): void {
       countLabel.textContent = '찾을 글이나 서식을 정하세요';
       return;
     }
-    if (foundKey !== findKey() || foundView !== view) await research();
+    if ((foundKey !== findKey() || foundView !== view) && !(await research())) return;
     if (found.length === 0) {
       const what = [text && `「${text}」`, format && `${FORMAT_LABEL[format]} 글자`].filter(Boolean).join(' · ');
       const kind = findRange?.kind;
@@ -2459,7 +2515,109 @@ export function mountEditor(root: HTMLElement): void {
       q<HTMLElement>('.find-bar').hidden = false;
       q<HTMLInputElement>('.find-text').focus();
     }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k' && !root.querySelector('.palette-shade')) {
+      event.preventDefault();
+      openPalette();
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && (event.key === ']' || event.key === '[') && view) {
+      event.preventDefault();
+      void jumpEdit(event.key === ']');
+    }
   });
+
+  /** 명령 찾기(⌘K): 툴바 단추 · 「도구」 메뉴를 이름 · 설명으로 거르고 ↑↓ · Enter 로 실행(꺼진 것은 흐리게 · 실행 안 함). */
+  function openPalette() {
+    root.querySelector('.palette-shade')?.remove();
+    const commands = [
+      ...[...root.querySelectorAll<HTMLButtonElement>('.editor-toolbar [data-action]')].map((button) => ({
+        label: (button.querySelector('span')?.textContent ?? button.textContent ?? '').trim(),
+        hint: button.title,
+        enabled: !button.disabled,
+        run: () => button.click(),
+      })),
+      ...TOOLS.map((tool) => ({ label: tool.label, hint: '도구', enabled: Boolean(view), run: tool.run })),
+    ].filter((command) => command.label);
+    const shade = document.createElement('div');
+    shade.className = 'basis-shade palette-shade';
+    shade.innerHTML = '<div class="palette"><input class="palette-text" type="text" placeholder="명령 이름 · 설명(예: 대비표, 일괄, 원문)" aria-label="명령 찾기"><ul class="palette-list"></ul></div>';
+    const field = shade.querySelector<HTMLInputElement>('.palette-text')!;
+    const list = shade.querySelector<HTMLUListElement>('.palette-list')!;
+    let shown: typeof commands = [];
+    let active = 0;
+    const close = () => {
+      shade.remove();
+      input.focus({ preventScroll: true });
+    };
+    const runAt = (index: number) => {
+      const command = shown[index];
+      if (!command) return;
+      if (!command.enabled) {
+        say(`「${command.label}」: 지금은 쓸 수 없습니다(문서를 먼저 여세요).`);
+        return;
+      }
+      close();
+      command.run();
+    };
+    const render = () => {
+      const query = field.value.trim().toLowerCase();
+      // 이름에 든 것을 먼저, 설명에만 든 것은 뒤에(「통계」 → 「문서 통계」가 「도구」보다 앞).
+      const named = commands.filter((command) => command.label.toLowerCase().includes(query));
+      shown = [...named, ...commands.filter((command) => !named.includes(command) && command.hint.toLowerCase().includes(query))];
+      active = Math.min(active, Math.max(0, shown.length - 1));
+      list.replaceChildren(
+        ...shown.map((command, index) => {
+          const item = document.createElement('li');
+          item.className = `${index === active ? 'active' : ''}${command.enabled ? '' : ' off'}`.trim();
+          item.textContent = command.label;
+          item.title = command.hint;
+          item.addEventListener('click', () => runAt(index));
+          return item;
+        }),
+      );
+    };
+    field.addEventListener('input', () => {
+      active = 0;
+      render();
+    });
+    field.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') close();
+      else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        active = (active + (event.key === 'ArrowDown' ? 1 : shown.length - 1)) % Math.max(1, shown.length);
+        render();
+      } else if (event.key === 'Enter') {
+        event.preventDefault();
+        runAt(active);
+      }
+    });
+    shade.addEventListener('click', (event) => {
+      if (event.target === shade) close();
+    });
+    root.append(shade);
+    render();
+    field.focus();
+  }
+
+  /** 고친 곳 사이 이동(⌘] 다음 · ⌘[ 앞): 연 뒤 고친 문단(보정 표시 「연 뒤 고친 것」)을 문서 차례로 · 끝에서는 처음으로. */
+  async function jumpEdit(forward: boolean) {
+    await commit();
+    const marks = await editorAmendmentMarks(false, false).catch(() => null);
+    const ids = [...new Set((marks?.paragraphs ?? []).map((mark) => mark.id))]
+      .filter((id) => order(id) >= 0)
+      .sort((a, b) => order(a) - order(b));
+    if (ids.length === 0) {
+      say('연 뒤 고친 곳이 없습니다.');
+      return;
+    }
+    const here = caret ? order(caret.paragraph) : forward ? -1 : Number.MAX_SAFE_INTEGER;
+    const at = forward
+      ? ids.findIndex((id) => order(id) > here)
+      : ids.map((id) => order(id) < here).lastIndexOf(true);
+    const index = at >= 0 ? at : forward ? 0 : ids.length - 1;
+    jumpTo(ids[index]);
+    say(`고친 곳 ${index + 1}/${ids.length}${at < 0 ? (forward ? ' (처음으로 돌아왔습니다)' : ' (끝으로 갔습니다)') : ''}`);
+  }
 
   /** 글자모양은 고치기 창에서 고른 글자에 건다(문단만 · 아직 적용 안 한 글 고침이 있으면 막는다). */
   function formatTarget(): { id: string; start: number; end: number } | null {
@@ -2548,6 +2706,152 @@ export function mountEditor(root: HTMLElement): void {
     });
     root.append(shade);
   }
+
+  /** 바뀐 곳만 앞뒤 조금(번호 다시 매기기 미리 보기). */
+  const fragment = (before: string, after: string) => {
+    const a = Array.from(before);
+    const b = Array.from(after);
+    let head = 0;
+    while (head < a.length && head < b.length && a[head] === b[head]) head += 1;
+    let tail = 0;
+    while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail += 1;
+    const from = Math.max(0, head - 8);
+    const cut = (chars: string[]) => `${from > 0 ? '…' : ''}${chars.slice(from, chars.length - tail + 8).join('')}${tail > 8 ? '…' : ''}`;
+    return [cut(a), cut(b)];
+  };
+
+  /** 번호 다시 매기기: 미리 보기 → 적용(되돌리기 한 번). */
+  async function renumber(figures: boolean) {
+    if (!view) return;
+    await commit();
+    const what = figures ? '도면' : '청구항';
+    const edits = await editorRenumberPlan(figures);
+    if (edits.length === 0) {
+      say(`${what} 번호가 이미 차례대로입니다.`);
+      return;
+    }
+    const escape = (text: string) =>
+      text.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]!);
+    // 최종본 · 보정 명세서: 보정에서는 지운 항 · 도면 번호를 다시 매기지 않는 것이 실무다.
+    const amendment = view.paragraphs.some((paragraph) => paragraph.number);
+    const shade = document.createElement('div');
+    shade.className = 'basis-shade renumber-shade';
+    shade.innerHTML = `<div class="basis-ask batch-ask"><header><strong>${what} 번호 다시 매기기 — ${edits.length}곳</strong><button type="button" class="renumber-apply">적용</button><button type="button" class="batch-close">취소</button></header>${
+      amendment
+        ? `<p class="renumber-warn">최종본(보정) 문서입니다. 보정에서는 지운 ${what}의 번호를 다시 매기지 않고 「삭제」로 남기는 것이 실무입니다. 새로 쓰는 명세서에만 쓰세요.</p>`
+        : ''
+    }<div class="batch-body"><table><thead><tr><th>바꾸기 전</th><th>바꾼 뒤</th></tr></thead><tbody>${edits
+      .map((edit) => {
+        const [before, after] = fragment(edit.before, edit.after);
+        return `<tr><td>${escape(before)}</td><td>${escape(after)}</td></tr>`;
+      })
+      .join('')}</tbody></table></div></div>`;
+    shade.querySelector('.batch-close')!.addEventListener('click', () => shade.remove());
+    shade.querySelector('.renumber-apply')!.addEventListener('click', () => {
+      shade.remove();
+      void run(`${what} 번호 다시 매기기`, () => editorReplaceTexts(edits.map((edit) => [edit.id, edit.after])));
+    });
+    root.append(shade);
+  }
+
+  /** 표 창(부호 목록 · 되풀이 문장 · 문서 통계): 제목 · 머리 · 줄(마지막 칸이 문단 id 면 「가기」). */
+  function showTable(title: string, header: string[], rows: { cells: string[]; go?: string | null }[], className: string) {
+    const escape = (text: string) =>
+      text.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]!);
+    root.querySelector(`.${className}`)?.remove();
+    const shade = document.createElement('div');
+    shade.className = `basis-shade ${className}`;
+    const withGo = rows.some((row) => row.go);
+    shade.innerHTML = `<div class="basis-ask batch-ask"><header><strong>${escape(title)}</strong><button type="button" class="batch-close">닫기</button></header><div class="batch-body"><table><thead><tr>${header
+      .map((cell) => `<th>${escape(cell)}</th>`)
+      .join('')}${withGo ? '<th></th>' : ''}</tr></thead><tbody>${rows
+      .map(
+        (row, index) =>
+          `<tr>${row.cells.map((cell) => `<td>${escape(cell)}</td>`).join('')}${
+            withGo ? `<td>${row.go ? `<button type="button" class="table-go" data-index="${index}">가기</button>` : ''}</td>` : ''
+          }</tr>`,
+      )
+      .join('')}</tbody></table></div></div>`;
+    shade.querySelector('.batch-close')!.addEventListener('click', () => shade.remove());
+    for (const button of shade.querySelectorAll<HTMLButtonElement>('.table-go')) {
+      button.addEventListener('click', () => {
+        shade.remove();
+        jumpTo(rows[Number(button.dataset.index)].go!);
+      });
+    }
+    root.append(shade);
+  }
+
+  async function signList() {
+    if (!view) return;
+    await commit();
+    const rows = await editorSignTable();
+    if (rows.length === 0) {
+      say('부호가 없습니다(상세설명의 「이름(부호)」 · 【부호의 설명】).');
+      return;
+    }
+    showTable(
+      `부호 목록 — ${rows.length}개`,
+      ['부호', '본문 이름(쓰인 수)', '【부호의 설명】', '쓰인 수'],
+      rows.map((row) => ({
+        cells: [
+          row.sign,
+          row.names.map(([name, count]) => `${name}(${count})`).join(' · '),
+          row.listed ?? '',
+          String(row.count),
+        ],
+        go: row.first,
+      })),
+      'sign-shade',
+    );
+  }
+
+  /** 되풀이 문장: 상세설명에서 두 번 넘게 나온 문장 · 본문이 같은 청구항. */
+  async function repeatedList() {
+    if (!view) return;
+    await commit();
+    const found = repeatedSentences(view.paragraphs);
+    if (found.length === 0) {
+      say('되풀이된 문장이 없습니다(상세설명 20자 넘는 문장 · 청구항 본문).');
+      return;
+    }
+    // 자리 이름: 식별번호(제 것 · 매겨질 것) · 청구항 표제 · 문단 차례.
+    const place = (id: string) => {
+      const paragraph = paragraphOf(id);
+      const number = paragraph?.number ?? planned.get(id);
+      if (number) return `【${number}】`;
+      if (paragraph && /^\s*【청구항 /.test(paragraph.text)) return paragraph.text.trim();
+      return `문단 ${order(id) + 1}`;
+    };
+    const short = (text: string) => (Array.from(text).length > 70 ? `${Array.from(text).slice(0, 70).join('')}…` : text);
+    showTable(
+      `되풀이 문장 — ${found.length}개`,
+      ['문장', '횟수', '나온 곳'],
+      found.map((item) => ({
+        cells: [item.claim ? `(청구항 본문) ${short(item.text)}` : short(item.text), String(item.at.length), item.at.map(place).join(', ')],
+        go: item.at[0],
+      })),
+      'repeated-shade',
+    );
+  }
+
+  /** 「도구」 메뉴 · ⌘K 명령 찾기가 함께 쓰는 목록. */
+  const TOOLS: { label: string; run: () => void }[] = [
+    { label: '청구항 번호 다시 매기기…', run: () => void renumber(false) },
+    { label: '도면 번호 다시 매기기…', run: () => void renumber(true) },
+    { label: '부호 목록', run: () => void signList() },
+    { label: '되풀이 문장 찾기', run: () => void repeatedList() },
+    {
+      label: '문서 통계',
+      run: () => {
+        if (!view) return;
+        const rows = documentStats(view.paragraphs, view.page_count, claimParents);
+        showTable('문서 통계', ['항목', '값'], rows.map((cells) => ({ cells })), 'stats-shade');
+      },
+    },
+    { label: '다음 고친 곳 (⌘])', run: () => void jumpEdit(true) },
+    { label: '앞 고친 곳 (⌘[)', run: () => void jumpEdit(false) },
+  ];
 
   async function runBatch(kind: 'generate' | 'check') {
     try {
@@ -2681,12 +2985,17 @@ export function mountEditor(root: HTMLElement): void {
           const rows = await editorSourceOpen();
           if (!rows) break;
           openSource(rows);
-          if (view) await refreshSourceKeys(view);
+          if (view) await refreshKeys(view);
           const paired = rows.filter((row) => row.key && docKeys.includes(row.key)).length;
           say(`원문 ${rows.filter((row) => row.key).length}곳 중 ${paired}곳 짝지음(식별번호 · 청구항 번호)`);
         } catch (error) {
           fail('원문 열기', error);
         }
+        break;
+      }
+      case 'tools': {
+        const menu = await Menu.new({ items: TOOLS.map((tool) => ({ text: tool.label, action: tool.run })) });
+        await menu.popup();
         break;
       }
       case 'batch': {
@@ -2910,9 +3219,10 @@ export function mountEditor(root: HTMLElement): void {
         }
         const replacement = replaceText();
         const format = replaceFormat();
-        await run('바꾸기', () => editorReplace([current!], replacement, format));
-        // 서식만 바꾸면(바꿀 글 비움) 글 길이 그대로.
-        const length = replacement === '' && format !== 'keep' ? current!.end - current!.start : Array.from(replacement).length;
+        const pattern = regexPattern();
+        await run('바꾸기', () => editorReplace([current!], replacement, format, pattern));
+        // 서식만 바꾸면(바꿀 글 비움) 글 길이 그대로 · 정규식은 바꾼 글 길이를 모르니 그 자리에서 다시 찾는다.
+        const length = pattern ? 0 : replacement === '' && format !== 'keep' ? current!.end - current!.start : Array.from(replacement).length;
         caret = anchor = { paragraph: current!.paragraph_id, offset: current!.start + length };
         await findNext();
         break;
@@ -2923,7 +3233,7 @@ export function mountEditor(root: HTMLElement): void {
           countLabel.textContent = '찾는 것이 없습니다';
           break;
         }
-        await run(`모두 바꾸기(${all.length}곳)`, () => editorReplace(all, replaceText(), replaceFormat()));
+        await run(`모두 바꾸기(${all.length}곳)`, () => editorReplace(all, replaceText(), replaceFormat(), regexPattern()));
         foundKey = '';
         foundAt = -1;
         anchor = caret;

@@ -19,12 +19,12 @@ use editor::{
     editor_insert_figure, editor_insert_item, editor_insert_picture, editor_insert_table,
     editor_log, editor_merge_paragraph, editor_new_opinion, editor_new_tab,
     editor_number_paragraphs, editor_open, editor_open_pending, editor_page, editor_paragraph_keys,
-    editor_print_pdf, editor_read_review, editor_redo, editor_remove_items, editor_replace,
-    editor_replace_cell_text, editor_replace_picture, editor_replace_text,
-    editor_replace_text_page_break, editor_resize_image, editor_save, editor_save_as,
-    editor_save_csv, editor_set_alignment, editor_set_indent, editor_set_size, editor_source_open,
-    editor_submission_checks, editor_table_edit, editor_toggle_format, editor_toggle_format_spans,
-    editor_undo, editor_view,
+    editor_print_pdf, editor_read_review, editor_redo, editor_remove_items, editor_renumber_plan,
+    editor_replace, editor_replace_cell_text, editor_replace_picture, editor_replace_text,
+    editor_replace_text_page_break, editor_replace_texts, editor_resize_image, editor_save,
+    editor_save_as, editor_save_csv, editor_set_alignment, editor_set_indent, editor_set_size,
+    editor_sign_table, editor_source_open, editor_submission_checks, editor_table_edit,
+    editor_toggle_format, editor_toggle_format_spans, editor_undo, editor_view,
 };
 
 /// 그 창 화면에 「닫으려 한다」를 알린다(화면이 친 글을 보낸 뒤 `editor_close`).
@@ -410,6 +410,9 @@ fn main() {
             editor_save_csv,
             editor_source_open,
             editor_paragraph_keys,
+            editor_renumber_plan,
+            editor_replace_texts,
+            editor_sign_table,
             editor_submission_checks,
             editor_resize_image,
             editor_insert_table,

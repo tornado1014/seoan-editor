@@ -323,6 +323,14 @@ export type SourceParagraphDto = { key: string | null; text: string };
 export const editorSourceOpen = () => invoke<SourceParagraphDto[] | null>('editor_source_open');
 /** 지금 판 문단마다 원문 짝 이름(화면 문단 차례). */
 export const editorParagraphKeys = () => invoke<(string | null)[]>('editor_paragraph_keys');
+/** 번호 다시 매기기: 바꿀 문단(전 · 후 글). */
+export type RenumberEditDto = { id: string; before: string; after: string };
+export const editorRenumberPlan = (figures: boolean) => invoke<RenumberEditDto[]>('editor_renumber_plan', { figures });
+/** 여러 문단 글을 한 번에(되돌리기 한 번). */
+export const editorReplaceTexts = (edits: [string, string][]) => invoke<EditorViewDto>('editor_replace_texts', { edits });
+/** 부호 목록 한 줄. */
+export type SignRowDto = { sign: string; names: [string, number][]; listed: string | null; count: number; first: string | null };
+export const editorSignTable = () => invoke<SignRowDto[]>('editor_sign_table');
 export const editorSaveCsv = (name: string, text: string) => invoke<string | null>('editor_save_csv', { name, text });
 /** 청구항 인용 문제. 앞 넷은 특허로 점검 페이지와 같은 판정 · 뒤 셋은 앱만 보는 규칙. */
 export type CitationKindDto =
@@ -337,7 +345,19 @@ export type CitationIssueDto = { claim: number; kind: CitationKindDto; cited: nu
 export const editorClaimIssues = () => invoke<CitationIssueDto[]>('editor_claim_issues');
 /** 청구항 나무: 항 번호 → 인용하는 앞 항(빈 = 독립항). */
 export const editorClaimParents = () => invoke<Record<string, number[]>>('editor_claim_parents');
-export type SubmitKindDto = 'unnumbered' | 'figure_missing' | 'figure_unmentioned' | 'sign_unused' | 'sign_names' | 'sign_shared' | 'citation';
+export type SubmitKindDto =
+  | 'unnumbered'
+  | 'figure_missing'
+  | 'figure_unmentioned'
+  | 'sign_unused'
+  | 'sign_names'
+  | 'sign_shared'
+  | 'citation'
+  | 'abstract_long'
+  | 'representative'
+  | 'empty_heading'
+  | 'duplicate_heading'
+  | 'claim_ending';
 /** 제출 전 점검 한 줄(가 볼 문단 · 없으면 문서 전체의 일). */
 export type SubmitIssueDto = { kind: SubmitKindDto; paragraph_id: string | null; detail: string };
 export const editorSubmissionChecks = () => invoke<SubmitIssueDto[]>('editor_submission_checks');
@@ -358,8 +378,15 @@ export interface FindMatchDto {
   end: number;
   context: string;
 }
-export const editorFind = (text: string, format: FindFormatDto | null) =>
-  invoke<FindMatchDto[]>('editor_find', { query: { text, format } });
-export const editorReplace = (matches: FindMatchDto[], replacement: string, format: ReplaceFormatDto) =>
-  invoke<EditorViewDto>('editor_replace', { matches, replacement, format });
+/** 찾기 옵션(대소문자 무시 · 낱말 단위 · 정규식). */
+export type FindOptionsDto = { case_insensitive?: boolean; whole_word?: boolean; regex?: boolean };
+export const editorFind = (text: string, format: FindFormatDto | null, options: FindOptionsDto = {}) =>
+  invoke<FindMatchDto[]>('editor_find', { query: { text, format, ...options } });
+/** `pattern` = 정규식으로 찾은 조건(바꿀 글의 `$1` 을 찾은 글마다 채운다). */
+export const editorReplace = (
+  matches: FindMatchDto[],
+  replacement: string,
+  format: ReplaceFormatDto,
+  pattern: { text: string; format: FindFormatDto | null } & FindOptionsDto | null = null,
+) => invoke<EditorViewDto>('editor_replace', { matches, replacement, format, pattern });
 export const editorView = () => invoke<EditorViewDto>('editor_view');

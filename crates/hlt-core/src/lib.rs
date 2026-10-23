@@ -39,6 +39,7 @@ mod pdf;
 mod print;
 mod read_model;
 mod reflow;
+mod renumber;
 mod review_report;
 mod save;
 mod schema;
@@ -165,6 +166,7 @@ pub use read_model::{
     FormatInventory, FormatParagraph, ImageOccurrence, InspectSummary, LineRecord, ParagraphRecord,
     SectionRecord, ShapeRecord, SourceRange, TableRecord, UnresolvedCellFormat, UnresolvedFormat,
 };
+pub use renumber::{RenumberEdit, claim_renumber, figure_renumber};
 pub use review_report::{
     DescriptionNote, FigureNote, Proposal, ProposedClaim, ReviewReport, read_review_report,
     review_from_document_xml,
@@ -176,7 +178,7 @@ pub use save::{
 };
 pub use schema::{PackageReport, SchemaReport, validate_kipo_package, validate_kipo_xml};
 pub use source_view::{SourceParagraph, paragraph_keys, source_keys, source_paragraphs};
-pub use submit_check::{SubmitIssue, SubmitKind, submission_checks};
+pub use submit_check::{SignRow, SubmitIssue, SubmitKind, sign_table, submission_checks};
 pub use table_edit::{
     CellPosition, NEW_TABLE_TOTAL_WIDTH, TableEditDecision, TableEditDecisionStatus, TableEditPlan,
     TableEditRequest, TableEditSaveResult, TableEditSkipReason, TableOperation, apply_table_edits,

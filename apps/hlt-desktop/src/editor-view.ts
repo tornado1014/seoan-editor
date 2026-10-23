@@ -175,6 +175,106 @@ export function nestClaims(node: OutlineNode, parents: Record<string, number[]>)
   return node;
 }
 
+/** 되풀이 문장 하나: 글 · 나온 문단들(차례대로) · 청구항 본문 통째인가. */
+export interface Repeated {
+  text: string;
+  at: string[];
+  claim: boolean;
+}
+
+/** 되풀이 문장 찾기: 상세설명 문장(「.」 뒤가 끊기는 곳에서 나눔 · 공백 정리 · 20자 넘는 것)이 두 번 넘게 나온 것,
+ *  그리고 본문이 통째로 같은 청구항. 많이 나온 것부터. */
+export function repeatedSentences(paragraphs: { id: string; text: string }[]): Repeated[] {
+  const sections = sectionOf(paragraphs);
+  const heading = (text: string) => /^\s*【[^】]+】\s*$/.test(text);
+  const tidy = (text: string) => text.replace(/\s+/g, ' ').trim();
+  const sentences = new Map<string, string[]>();
+  const claims = new Map<string, string[]>();
+  let claim: { id: string; body: string[] } | null = null;
+  const closeClaim = () => {
+    if (!claim) return;
+    const body = tidy(claim.body.join(' '));
+    if (body && body !== '삭제') claims.set(body, [...(claims.get(body) ?? []), claim.id]);
+    claim = null;
+  };
+  for (const paragraph of paragraphs) {
+    const section = sections.get(paragraph.id);
+    if (heading(paragraph.text)) {
+      closeClaim();
+      if (/^\s*【청구항 [^】]+】\s*$/.test(paragraph.text)) claim = { id: paragraph.id, body: [] };
+      continue;
+    }
+    if (section === 'claims') {
+      claim?.body.push(paragraph.text);
+      continue;
+    }
+    if (section !== 'description') continue;
+    for (const piece of paragraph.text.split(/(?<=\.)(?=\s|$)/)) {
+      const sentence = tidy(piece);
+      if (Array.from(sentence).length <= 20) continue;
+      sentences.set(sentence, [...(sentences.get(sentence) ?? []), paragraph.id]);
+    }
+  }
+  closeClaim();
+  const pick = (map: Map<string, string[]>, claim: boolean) =>
+    [...map].filter(([, at]) => at.length > 1).map(([text, at]) => ({ text, at, claim }));
+  return [...pick(sentences, false), ...pick(claims, true)].sort((a, b) => b.at.length - a.at.length);
+}
+
+/** 문서 통계(이름 · 값): 쪽 · 청구항(독립 · 종속 · 삭제) · 상세설명 문단 · 글자 · 도면 · 요약 글자, 그리고 요금이 붙는 기준.
+ *  `parents` = 청구항 → 인용하는 앞 항(빈 = 독립항). 금액은 쓰지 않는다(요금표가 바뀐다). */
+export function documentStats(
+  paragraphs: { id: string; text: string }[],
+  pageCount: number,
+  parents: Record<string, number[]>,
+): [string, string][] {
+  const sections = sectionOf(paragraphs);
+  const heading = (text: string) => /^\s*【([^】]+)】\s*$/.exec(text)?.[1];
+  const visible = (text: string) => Array.from(text.replace(/\s/g, '')).length;
+  let claims = 0;
+  let deleted = 0;
+  let figures = 0;
+  let body = 0;
+  let characters = 0;
+  let spaced = 0;
+  let abstract = 0;
+  let inAbstract = false;
+  paragraphs.forEach((paragraph, at) => {
+    const name = heading(paragraph.text);
+    if (name) {
+      inAbstract = name === '요약';
+      if (/^청구항 \d+$/.test(name)) {
+        claims += 1;
+        if (paragraphs[at + 1]?.text.trim() === '삭제') deleted += 1;
+      }
+      if (/^도 \S+$/.test(name)) figures += 1;
+      return;
+    }
+    const section = sections.get(paragraph.id);
+    if (inAbstract) abstract += visible(paragraph.text);
+    // 그림 자리만 있는 문단(「_」)은 글자가 아니다.
+    if ((section === 'description' || section === 'claims') && paragraph.text.trim() !== '_') {
+      characters += visible(paragraph.text);
+      spaced += Array.from(paragraph.text).length;
+    }
+    if (section === 'description' && paragraph.text.trim() && paragraph.text.trim() !== '_') body += 1;
+  });
+  const live = claims - deleted;
+  // 삭제한 항은 인용이 없어 독립항으로 잡힌다 — 빼고 센다. 나무를 아직 못 받았으면 수만.
+  const independent = Object.values(parents).filter((cited) => cited.length === 0).length - deleted;
+  const kinds = Object.keys(parents).length ? ` · 독립 ${independent} · 종속 ${live - independent}` : '';
+  const over = Math.max(0, pageCount - 20);
+  return [
+    ['쪽 수', `${pageCount}쪽`],
+    ['청구항', `${claims}개${deleted ? `(삭제 ${deleted})` : ''}${kinds}`],
+    ['상세설명 문단', `${body}개`],
+    ['글자 수(상세설명 · 청구항)', `${characters.toLocaleString()}자(공백 빼고) · ${spaced.toLocaleString()}자(공백 포함)`],
+    ['도면', `${figures}개`],
+    ['요약', `${abstract}자(공백 빼고 · 권장 400자)`],
+    ['요금이 붙는 기준', `20쪽 넘는 쪽 ${over}쪽 · 청구항 ${live}개 — 금액은 특허로 요금표로 확인`],
+  ];
+}
+
 export const SUPERSCRIPT = 16;
 export const SUBSCRIPT = 32;
 

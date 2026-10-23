@@ -66,12 +66,48 @@ struct Model {
     payloads: std::sync::Arc<Vec<GeneratedImagePayload>>,
 }
 
-/// 찾기: 글(비면 서식만으로 — 그 서식이 이어진 구간) · 서식 조건.
-#[derive(Debug, Clone, serde::Deserialize)]
+/// 낱말 단위 찾기에서 낱말 뒤에 붙어도 되는 조사 · 서술격(뒤가 끊겨야 한다 — 「기판도체」의 「도」는 아니다).
+const PARTICLES: [&str; 25] = [
+    "은", "는", "이", "가", "을", "를", "의", "에", "와", "과", "로", "으로", "에서", "에게",
+    "까지", "부터", "도", "만", "이다", "이며", "이고", "이나", "에는", "에도", "와의",
+];
+
+/// 찾기: 글(비면 서식만으로 — 그 서식이 이어진 구간) · 서식 조건 · 옵션(대소문자 무시 · 낱말 단위 · 정규식).
+#[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct FindQuery {
     pub text: String,
     /// `None` = 서식 상관없음.
     pub format: Option<FindFormat>,
+    #[serde(default)]
+    pub case_insensitive: bool,
+    /// 낱말 단위: 앞이 글자 · 숫자가 아니고, 뒤가 글자 · 숫자가 아니거나 조사(은 · 는 · 의 · 에서 · 으로 …) 하나로 끝나는 곳
+    /// (「기판」은 「기판은」 · 「기판의」에 걸리고 「기판부」 · 「기판도체」에는 안 걸린다).
+    #[serde(default)]
+    pub whole_word: bool,
+    /// `text` 를 정규식으로(그림 자리는 `_`).
+    #[serde(default)]
+    pub regex: bool,
+}
+
+impl FindQuery {
+    /// 찾을 글 → 정규식(정규식이 아니면 글 그대로를 이스케이프).
+    pub fn pattern(&self) -> Result<regex::Regex, CoreError> {
+        let source = if self.regex {
+            self.text.clone()
+        } else {
+            regex::escape(&self.text)
+        };
+        regex::RegexBuilder::new(&source)
+            .case_insensitive(self.case_insensitive)
+            .build()
+            .map_err(|error| {
+                let mut error_out = editor_error("find_pattern");
+                error_out
+                    .details
+                    .insert("message".into(), error.to_string());
+                error_out
+            })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
@@ -379,6 +415,37 @@ impl EditorSession {
     /// 문단 글 바꾸기. 줄바꿈(`\n`)은 문단 나누기다. 그림 자리표 `_` 수가 줄면 그 그림이 빠진다.
     pub fn replace_text(&mut self, paragraph_id: &str, text: &str) -> Result<(), CoreError> {
         self.replace_text_breaking(paragraph_id, text, false)
+    }
+
+    /// 여러 문단 글을 한 번에 바꾼다(한 번 굽기 · 되돌리기 한 번) — 번호 다시 매기기. 줄 나누기는 안 된다(문단 수가 그대로).
+    /// 바뀐 글자만 바꾸고 나머지 글자의 서식 · 그림 자리(`_`)는 그대로 둔다. 표제(【…】)는 표제 표시도 새 글로.
+    pub fn replace_texts(&mut self, edits: &[(String, String)]) -> Result<(), CoreError> {
+        if edits.is_empty() {
+            return Ok(());
+        }
+        if edits.iter().any(|(_, text)| text.contains('\n')) {
+            return Err(editor_error("replace_multiline"));
+        }
+        self.edit_model(|model| {
+            for (id, text) in edits {
+                let paragraph = model
+                    .paragraphs
+                    .iter_mut()
+                    .find(|paragraph| &paragraph.id == id)
+                    .ok_or_else(|| editor_error("paragraph"))?;
+                if paragraph.table_id.is_some() {
+                    return Err(editor_error("table_paragraph"));
+                }
+                let new: Vec<char> = text.chars().collect();
+                let edited = splice(&cells(&paragraph.inlines), &new);
+                set_cells(paragraph, &edited);
+                if paragraph.marker.is_some() {
+                    paragraph.marker = Some(text.trim().to_string());
+                }
+                paragraph.source_line_bytes.clear();
+            }
+            Ok(())
+        })
     }
 
     /// 강제 쪽나눔(워드 Ctrl+Enter): [`Self::replace_text`] 와 같되 나뉜 둘째 문단이 새 쪽에서 시작한다.
@@ -874,9 +941,16 @@ impl EditorSession {
 
     /// 찾기 — 문단 글(그림 = `_`)에서 글·서식 조건이 맞는 구간들(문서 차례).
     pub fn find(&mut self, query: &FindQuery) -> Vec<FindMatch> {
+        self.find_checked(query).unwrap_or_default()
+    }
+
+    /// 찾기 — 정규식이 잘못되었으면 그 까닭(`find_pattern` · `message`).
+    pub fn find_checked(&mut self, query: &FindQuery) -> Result<Vec<FindMatch>, CoreError> {
         // 서식 조건은 모델의 서식 구간을 본다 — 뒤에서 만들던 모델을 기다린다.
         self.settle();
-        let needle: Vec<char> = query.text.chars().collect();
+        let pattern = (!query.text.is_empty())
+            .then(|| query.pattern())
+            .transpose()?;
         let mut out = Vec::new();
         for paragraph in self.paragraphs() {
             let chars: Vec<char> = paragraph.text.chars().collect();
@@ -902,7 +976,7 @@ impl EditorSession {
                     context: chars[from..to].iter().collect(),
                 });
             };
-            if needle.is_empty() {
+            let Some(pattern) = &pattern else {
                 // 서식만: 그 서식이 이어진 구간 하나하나(그림 자리 제외).
                 if query.format.is_none() {
                     continue;
@@ -920,18 +994,33 @@ impl EditorSession {
                     }
                 }
                 continue;
-            }
-            let mut at = 0;
-            while at + needle.len() <= chars.len() {
-                if chars[at..at + needle.len()] == needle[..] && (at..at + needle.len()).all(fits) {
-                    push(at, at + needle.len());
-                    at += needle.len();
-                } else {
-                    at += 1;
+            };
+            // 바이트 자리 → 글자 자리.
+            let char_at = |byte: usize| paragraph.text[..byte].chars().count();
+            let word = |at: Option<&char>| at.is_none_or(|ch| !ch.is_alphanumeric());
+            // 뒤가 조사 하나 + 끊김이면 낱말 끝이다(명세서 명사는 거의 조사가 붙는다).
+            let word_end = |end: usize| {
+                word(chars.get(end))
+                    || PARTICLES.iter().any(|particle| {
+                        let particle: Vec<char> = particle.chars().collect();
+                        chars.get(end..end + particle.len()) == Some(&particle[..])
+                            && word(chars.get(end + particle.len()))
+                    })
+            };
+            for found in pattern.find_iter(&paragraph.text) {
+                let (start, end) = (char_at(found.start()), char_at(found.end()));
+                if start == end || !(start..end).all(fits) {
+                    continue;
                 }
+                if query.whole_word
+                    && !(word(start.checked_sub(1).and_then(|at| chars.get(at))) && word_end(end))
+                {
+                    continue;
+                }
+                push(start, end);
             }
         }
-        out
+        Ok(out)
     }
 
     /// 바꾸기 — 찾은 구간들을 새 글로(서식은 `format` 대로). 한 번 다시 굽는다(되돌리기 한 번).
@@ -944,20 +1033,61 @@ impl EditorSession {
         replacement: &str,
         format: ReplaceFormat,
     ) -> Result<usize, CoreError> {
+        let new: Vec<char> = replacement.chars().collect();
+        self.replace_each(matches, &vec![new; matches.len()], format)
+    }
+
+    /// 정규식 바꾸기: 찾은 글마다 `$1` · `${이름}` 을 그 글의 묶음으로 채운 글로 바꾼다(되돌리기 한 번).
+    pub fn replace_pattern(
+        &mut self,
+        matches: &[FindMatch],
+        query: &FindQuery,
+        replacement: &str,
+        format: ReplaceFormat,
+    ) -> Result<usize, CoreError> {
+        let pattern = query.pattern()?;
+        let paragraphs = self.paragraphs();
+        let news: Vec<Vec<char>> = matches
+            .iter()
+            .map(|found| {
+                let text: String = paragraphs
+                    .iter()
+                    .find(|paragraph| paragraph.id == found.paragraph_id)
+                    .map(|paragraph| {
+                        paragraph
+                            .text
+                            .chars()
+                            .skip(found.start)
+                            .take(found.end.saturating_sub(found.start))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                pattern.replace(&text, replacement).chars().collect()
+            })
+            .collect();
+        self.replace_each(matches, &news, format)
+    }
+
+    /// 찾은 구간마다 제 새 글로(`news[i]` = `matches[i]` 의 새 글).
+    fn replace_each(
+        &mut self,
+        matches: &[FindMatch],
+        news: &[Vec<char>],
+        format: ReplaceFormat,
+    ) -> Result<usize, CoreError> {
         if matches.is_empty() {
             return Ok(0);
         }
-        let new: Vec<char> = replacement.chars().collect();
-        if new.contains(&'\n') {
+        if news.iter().any(|new| new.contains(&'\n')) {
             return Err(editor_error("replace_multiline"));
         }
-        let mut by_paragraph: std::collections::BTreeMap<&str, Vec<&FindMatch>> =
+        let mut by_paragraph: std::collections::BTreeMap<&str, Vec<(&FindMatch, &Vec<char>)>> =
             Default::default();
-        for found in matches {
+        for (found, new) in matches.iter().zip(news) {
             by_paragraph
                 .entry(found.paragraph_id.as_str())
                 .or_default()
-                .push(found);
+                .push((found, new));
         }
         self.edit_model(|model| {
             for (id, mut found) in by_paragraph {
@@ -967,8 +1097,8 @@ impl EditorSession {
                     .find(|paragraph| paragraph.id == id)
                     .ok_or_else(|| editor_error("paragraph"))?;
                 let mut cells = cells(&paragraph.inlines);
-                found.sort_by_key(|value| std::cmp::Reverse(value.start));
-                for found in found {
+                found.sort_by_key(|(value, _)| std::cmp::Reverse(value.start));
+                for (found, new) in found {
                     if found.start >= found.end || found.end > cells.len() {
                         return Err(editor_error("range"));
                     }

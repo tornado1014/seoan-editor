@@ -312,6 +312,7 @@ progress {
 .nk-pmark { position: absolute; display: block; color: #6f9bd1; pointer-events: none; user-select: none; }
 .nk-pmark svg { display: block; overflow: visible; }
 [data-action="marks"][aria-pressed="true"] { background: #e3edf8; border-color: #6f9bd1; }
+.nk-pnum.planned { color: #9aa6c2; }
 .nk-pnum { position: absolute; color: #24407a; line-height: 1; white-space: nowrap; pointer-events: none; user-select: none; font-family: BatangChe, "바탕체", serif; }
 
 /* 도구 막대: 묶음(파일 · 편집 · 글자모양 · 정렬 · 넣기 · 내보내기)마다 둥근 상자 · 아이콘 + 짧은 이름 */
@@ -405,3 +406,13 @@ progress {
 .batch-body table { border-collapse: collapse; width: 100%; }
 .batch-body th, .batch-body td { border: 1px solid #e3dccf; padding: .25rem .5rem; text-align: left; vertical-align: top; }
 .batch-body th { background: #f3eee4; position: sticky; top: 0; }
+.find-option { min-width: 2rem; font-size: .8rem; }
+.find-option[aria-pressed="true"] { background: rgba(166, 61, 45, .16); border-color: #a63d2d; }
+.renumber-warn { margin: .5rem 1rem 0; padding: .5rem .75rem; background: #fdf1d8; border: 1px solid #e3c98f; border-radius: 6px; }
+.palette-shade { align-items: flex-start; padding-top: 12vh; }
+.palette { width: min(560px, 100%); background: #fffdf8; border: 1px solid #c9bfae; border-radius: 10px; box-shadow: 0 18px 48px rgba(0,0,0,.24); overflow: hidden; }
+.palette-text { width: 100%; box-sizing: border-box; border: 0; border-bottom: 1px solid #e3dccf; padding: .75rem 1rem; font-size: 15px; outline: none; background: transparent; }
+.palette-list { list-style: none; margin: 0; padding: .25rem 0; max-height: 50vh; overflow: auto; }
+.palette-list li { padding: .4rem 1rem; cursor: pointer; }
+.palette-list li.active { background: rgba(166, 61, 45, .14); }
+.palette-list li.off { opacity: .45; }

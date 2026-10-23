@@ -1585,6 +1585,7 @@ dependencies = [
  "jpeg-encoder",
  "krilla",
  "quick-xml",
+ "regex",
  "serde",
  "serde_json",
  "sha2",

@@ -391,6 +391,48 @@ pub async fn editor_paragraph_keys(
     })
 }
 
+/// 번호 다시 매기기 미리 보기: `figures` 면 도면, 아니면 청구항. 바꿀 문단 목록(전 · 후 글 · 비면 이미 차례).
+#[tauri::command]
+pub async fn editor_renumber_plan(
+    window: Window,
+    state: State<'_, EditorState>,
+    figures: bool,
+) -> Result<Vec<hlt_core::RenumberEdit>, CoreError> {
+    with_session(&state, &window, |session| {
+        let paragraphs = session.paragraphs();
+        Ok(if figures {
+            hlt_core::figure_renumber(&paragraphs)
+        } else {
+            hlt_core::claim_renumber(&paragraphs)
+        })
+    })
+}
+
+/// 여러 문단 글을 한 번에(되돌리기 한 번) — 번호 다시 매기기 적용.
+#[tauri::command]
+pub async fn editor_replace_texts(
+    window: Window,
+    state: State<'_, EditorState>,
+    edits: Vec<(String, String)>,
+) -> Result<EditorViewDto, CoreError> {
+    with_session(&state, &window, |session| {
+        session.replace_texts(&edits)?;
+        let title = title(session);
+        Ok(view(session, title))
+    })
+}
+
+/// 부호 목록(상세설명 「이름(부호)」 · 【부호의 설명】 — 부호 숫자 차례).
+#[tauri::command]
+pub async fn editor_sign_table(
+    window: Window,
+    state: State<'_, EditorState>,
+) -> Result<Vec<hlt_core::SignRow>, CoreError> {
+    with_session(&state, &window, |session| {
+        Ok(hlt_core::sign_table(&session.paragraphs()))
+    })
+}
+
 /// 일괄 처리 진행(창마다): 지금 파일 차례(0부터) · 전체 · 파일 이름.
 #[derive(Clone, Serialize)]
 struct BatchProgressDto {
@@ -1331,7 +1373,7 @@ pub async fn editor_find(
     state: State<'_, EditorState>,
     query: hlt_core::FindQuery,
 ) -> Result<Vec<hlt_core::FindMatch>, CoreError> {
-    with_session(&state, &window, |session| Ok(session.find(&query)))
+    with_session(&state, &window, |session| session.find_checked(&query))
 }
 
 /// 바꾸기 · 모두 바꾸기(한 번에 다시 굽는다 · 되돌리기 한 번).
@@ -1342,9 +1384,14 @@ pub async fn editor_replace(
     matches: Vec<hlt_core::FindMatch>,
     replacement: String,
     format: hlt_core::ReplaceFormat,
+    pattern: Option<hlt_core::FindQuery>,
 ) -> Result<EditorViewDto, CoreError> {
     with_session(&state, &window, |session| {
-        session.replace(&matches, &replacement, format)?;
+        // 정규식으로 찾았으면 `$1` 을 찾은 글마다 채운다.
+        match pattern.filter(|query| query.regex) {
+            Some(query) => session.replace_pattern(&matches, &query, &replacement, format)?,
+            None => session.replace(&matches, &replacement, format)?,
+        };
         {
             let title = title(session);
             Ok(view(session, title))

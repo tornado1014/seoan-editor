@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 
-import { outlineTree, renderPage, richParagraph, selectOffsets, selectionOffsets } from './editor-view';
+import { outlineTree, renderPage, richParagraph, selectOffsets, selectionOffsets, repeatedSentences, documentStats } from './editor-view';
 import type { OutlineNode } from './editor-view';
 
 describe('renderPage', () => {
@@ -111,4 +111,68 @@ describe('rich edit panel', () => {
     selectOffsets(host, 2, 99);
     expect(selectionOffsets(host)).toEqual([2, 8]);
   });
+});
+
+it('repeatedSentences: 상세설명 20자 넘는 문장이 두 번 넘게 · 본문이 같은 청구항 · 짧은 문장 · 다른 절은 빼고 · 많은 것부터', () => {
+  const long = '상기 기판은 열처리 공정을 거쳐 단단하게 굳어진 상태가 된다.';
+  const decimal = '상기 온도는 약 1.5 배로 높아져서 반응 속도가 빨라지게 된다.';
+  const paragraphs = [
+    '【발명의 설명】',
+    `${long} 짧은 문장이다.`,
+    `앞 문장. ${long}`,
+    `${long} 소수 1.5 를 쓴 문장은 끝까지 하나의 문장으로 본다.`,
+    '짧은 문장이다.',
+    decimal,
+    `${decimal} 끝.`,
+    '【청구범위】',
+    '【청구항 1】',
+    '기판을 포함하는 장치.',
+    '【청구항 2】',
+    '기판을 포함하는',
+    ' 장치.',
+    '【청구항 3】',
+    '삭제',
+    '【청구항 4】',
+    '삭제',
+    '【요약서】',
+    `${long}`,
+  ].map((text, i) => ({ id: `p${i}`, text }));
+  expect(repeatedSentences(paragraphs)).toEqual([
+    { text: long, at: ['p1', 'p2', 'p3'], claim: false },
+    { text: decimal, at: ['p5', 'p6'], claim: false },
+    { text: '기판을 포함하는 장치.', at: ['p8', 'p10'], claim: true },
+  ]);
+});
+
+it('documentStats: 쪽 · 청구항(삭제 · 독립 · 종속) · 문단 · 글자 · 도면 · 요약 · 요금 기준(금액 없음)', () => {
+  const paragraphs = [
+    '【발명의 설명】',
+    '【기술분야】',
+    '가나 다',
+    '_',
+    '【청구범위】',
+    '【청구항 1】',
+    '장치.',
+    '【청구항 2】',
+    '제1항에 있어서.',
+    '【청구항 3】',
+    '삭제',
+    '【요약서】',
+    '【요약】',
+    '요약 글',
+    '【도면】',
+    '【도 1】',
+    '_',
+    '【도 2a】',
+    '_',
+  ].map((text, i) => ({ id: `p${i}`, text }));
+  const rows = Object.fromEntries(documentStats(paragraphs, 23, { '1': [], '2': [1], '3': [] }));
+  expect(rows['쪽 수']).toBe('23쪽');
+  expect(rows['청구항']).toBe('3개(삭제 1) · 독립 1 · 종속 1');
+  expect(rows['상세설명 문단']).toBe('1개');
+  expect(rows['글자 수(상세설명 · 청구항)']).toBe('16자(공백 빼고) · 18자(공백 포함)');
+  expect(rows['도면']).toBe('2개');
+  expect(rows['요약']).toBe('3자(공백 빼고 · 권장 400자)');
+  expect(rows['요금이 붙는 기준']).toBe('20쪽 넘는 쪽 3쪽 · 청구항 2개 — 금액은 특허로 요금표로 확인');
+  expect(Object.fromEntries(documentStats(paragraphs, 5, {}))['청구항']).toBe('3개(삭제 1)');
 });
