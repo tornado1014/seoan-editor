@@ -905,12 +905,17 @@ describe('page editing', () => {
     submitAnswer = [
       { kind: 'figure_missing', paragraph_id: 'paragraph:1', detail: '「도 5」을 말하는데 【도 5】 도면이 없습니다' },
       { kind: 'unnumbered', paragraph_id: null, detail: '식별번호가 하나도 없습니다 — 「문단번호 넣기」를 누르세요' },
+      { kind: 'sign_names', paragraph_id: 'paragraph:0', detail: '부호 10: 몸체(3) · 본체(1)' },
     ];
     await make();
     let box = root.querySelector<HTMLFormElement>('.submit-ask')!;
-    expect(box.textContent).toContain('제출 전 점검 — 2건');
-    expect([...box.querySelectorAll('legend')].map((l) => l.textContent)).toEqual(['빈 식별번호', '도면이 없는 「도 N」']);
-    expect(box.querySelectorAll('.submit-go').length).toBe(1); // 문서 전체의 일은 「가기」가 없다
+    expect(box.textContent).toContain('제출 전 점검 — 3건');
+    expect([...box.querySelectorAll('legend')].map((l) => l.textContent)).toEqual([
+      '빈 식별번호',
+      '도면이 없는 「도 N」',
+      '같은 부호 · 다른 이름(괄호 안 = 쓰인 수)',
+    ]);
+    expect(box.querySelectorAll('.submit-go').length).toBe(2); // 문서 전체의 일은 「가기」가 없다
     box.querySelector<HTMLButtonElement>('.submit-go')!.click();
     expect(box.hidden).toBe(true);
     type(root, 'X');

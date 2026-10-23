@@ -16,6 +16,8 @@ pub enum SubmitKind {
     FigureUnmentioned,
     /// 【부호의 설명】에 있는데 상세설명 본문에 한 번도 안 나온다.
     SignUnused,
+    /// 같은 부호가 서로 다른 이름으로 쓰인다(「몸체(10)」 · 「본체(10)」 · 【부호의 설명】 「10: 몸체」).
+    SignNames,
     /// 청구항 인용 문제(`claim_citation_issues`).
     Citation,
 }
@@ -75,6 +77,7 @@ pub fn submission_checks(
     let mut out = unnumbered(&description);
     out.extend(figure_issues(paragraphs, &sections, &description));
     out.extend(unused_signs(&description));
+    out.extend(sign_names(&description));
     out.extend(citations.iter().map(|issue| {
         let id = paragraphs
             .iter()
@@ -362,6 +365,206 @@ fn unused_signs(description: &[&EditorParagraph]) -> Vec<SubmitIssue> {
         .collect()
 }
 
+/// 이름 · 처음 나온 문단 · 쓰인 수.
+type NameUse<'a> = (String, &'a EditorParagraph, usize);
+
+/// 부호 일관성: 부호마다 본문 「이름(부호)」 · 【부호의 설명】 「부호: 이름」을 모아, 한쪽이 다른 쪽을 품지 않는
+/// 이름이 둘 이상이면(「몸체」 · 「본체」) 건다 — 「상부 몸체」 ⊃ 「몸체」 는 줄여 부른 것.
+fn sign_names(description: &[&EditorParagraph]) -> Vec<SubmitIssue> {
+    // 부호 → (이름, 처음 나온 문단, 쓰인 수) — 처음 나온 차례.
+    let mut seen: Vec<(String, Vec<NameUse>)> = Vec::new();
+    let mut in_signs = false;
+    for p in description {
+        if let Some(name) = heading(&p.text) {
+            in_signs = name == "부호의 설명";
+            continue;
+        }
+        let pairs = if in_signs {
+            sign_list(&p.text)
+        } else {
+            named_signs(&p.text)
+        };
+        for (sign, name) in pairs {
+            let at = match seen.iter().position(|(known, _)| *known == sign) {
+                Some(at) => at,
+                None => {
+                    seen.push((sign, Vec::new()));
+                    seen.len() - 1
+                }
+            };
+            let names = &mut seen[at].1;
+            match names.iter_mut().find(|(known, _, _)| *known == name) {
+                Some(entry) => entry.2 += 1,
+                None => names.push((name, p, 1)),
+            }
+        }
+    }
+    // 띄어쓰기 · 끝 조사 하나(「모듈의(25)」 — 실물)를 떼고 견준다.
+    let compact = |name: &str| {
+        let name: String = name.split_whitespace().collect();
+        match name.char_indices().last() {
+            Some((at, ch)) if name.chars().count() >= 3 && "의가이을를은는와과에".contains(ch) => {
+                name[..at].to_string()
+            }
+            _ => name,
+        }
+    };
+    let mut out = Vec::new();
+    for (sign, mut names) in seen {
+        // 다른 이름을 품는 이름만 남긴다(「상부 몸체」가 「몸체」를 품는다).
+        // 차례말만 다른 이름(「제1 단말」 · 「제2 단말」)은 맨 이름(「단말」)도 쓰였으면 그 낱낱이다(실물).
+        let base = |name: &str| {
+            let name = compact(name);
+            name.strip_prefix('제')
+                .map(|rest| {
+                    rest.trim_start_matches(|ch: char| ch.is_ascii_digit())
+                        .to_string()
+                })
+                .filter(|rest| rest.len() < name.len() - '제'.len_utf8())
+                .unwrap_or(name)
+        };
+        let has = |name: &str| names.iter().any(|(known, _, _)| compact(known) == name);
+        let clash = names.iter().any(|(a, _, _)| {
+            names.iter().any(|(b, _, _)| {
+                let (ca, cb) = (compact(a), compact(b));
+                let instances = base(a) == base(b) && has(&base(a));
+                !ca.contains(&cb) && !cb.contains(&ca) && !instances
+            })
+        });
+        if !clash {
+            continue;
+        }
+        names.sort_by_key(|entry| std::cmp::Reverse(entry.2));
+        let rare = names.last().map(|(_, p, _)| p.id.clone());
+        let list = names
+            .iter()
+            .map(|(name, _, count)| format!("{name}({count})"))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        out.push(SubmitIssue {
+            kind: SubmitKind::SignNames,
+            paragraph_id: rare,
+            detail: format!("부호 {sign}: {list}"),
+        });
+    }
+    out
+}
+
+/// 부호 꼴: 숫자 1~4자리 + 소문자 · 「'」(「10」 · 「10a」 · 「10'」). 단계 「S110」 · 다섯 자리 이상 · 묶음 「10, 20」은 아니다.
+fn is_sign(text: &str) -> bool {
+    let digits = text.chars().take_while(char::is_ascii_digit).count();
+    (1..=4).contains(&digits)
+        && text
+            .chars()
+            .skip(digits)
+            .all(|ch| ch.is_ascii_lowercase() || ch == '\'')
+}
+
+/// 본문의 「이름(부호)」: 괄호 바로 앞 낱말(한글이 든 것) · 앞이 「제1」 같은 차례말이면 함께.
+fn named_signs(text: &str) -> Vec<(String, String)> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = Vec::new();
+    for (open, _) in chars.iter().enumerate().filter(|(_, ch)| **ch == '(') {
+        let Some(close) = chars[open..].iter().position(|ch| *ch == ')') else {
+            continue;
+        };
+        let inner: String = chars[open + 1..open + close].iter().collect();
+        if !is_sign(inner.trim()) {
+            continue;
+        }
+        let word_end = open;
+        let mut start = word_end;
+        while start > 0 && (is_hangul(chars[start - 1]) || chars[start - 1].is_ascii_alphanumeric())
+        {
+            start -= 1;
+        }
+        let word: String = chars[start..word_end].iter().collect();
+        // 식 · 표 · 실시예 번호는 부호가 아니다(「식(1)」 · 「화학식(2)」 · 「실시예(3)」).
+        if !word.chars().any(is_hangul)
+            || word.ends_with('식')
+            || word.ends_with("단계")
+            || matches!(
+                word.as_str(),
+                "표" | "도" | "실시예" | "비교예" | "제조예" | "예"
+            )
+        {
+            continue;
+        }
+        // 차례말: 「제1 몸체」 · 「제 2 몸체」.
+        let mut before = start;
+        while before > 0 && chars[before - 1] == ' ' {
+            before -= 1;
+        }
+        let mut ord_start = before;
+        while ord_start > 0
+            && (chars[ord_start - 1].is_ascii_digit()
+                || chars[ord_start - 1] == ' '
+                || chars[ord_start - 1] == '제')
+        {
+            ord_start -= 1;
+            if chars[ord_start] == '제' {
+                break;
+            }
+        }
+        let ordinal: String = chars[ord_start..before]
+            .iter()
+            .filter(|ch| **ch != ' ')
+            .collect();
+        let name = if ordinal.starts_with('제')
+            && ordinal.len() > '제'.len_utf8()
+            && ordinal.chars().skip(1).all(|ch| ch.is_ascii_digit())
+            && !ord_start
+                .checked_sub(1)
+                .is_some_and(|prev| is_hangul(chars[prev]))
+        {
+            format!("{ordinal} {word}")
+        } else {
+            word
+        };
+        out.push((inner.trim().to_string(), name));
+    }
+    out
+}
+
+/// 【부호의 설명】 「10: 몸체 20 : 덮개」 → (10, 몸체) · (20, 덮개) — 이름은 다음 부호 앞 · 쉼표 · 탭까지.
+fn sign_list(text: &str) -> Vec<(String, String)> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut found: Vec<(usize, usize, String)> = Vec::new(); // (부호 시작, 콜론, 부호)
+    for (at, ch) in chars.iter().enumerate() {
+        if !matches!(ch, ':' | '：') {
+            continue;
+        }
+        let mut end = at;
+        while end > 0 && chars[end - 1].is_whitespace() {
+            end -= 1;
+        }
+        let mut start = end;
+        while start > 0 && (chars[start - 1].is_ascii_alphanumeric() || chars[start - 1] == '\'') {
+            start -= 1;
+        }
+        let sign: String = chars[start..end].iter().collect();
+        if sign.starts_with(|c: char| c.is_ascii_digit()) {
+            found.push((start, at, sign));
+        }
+    }
+    found
+        .iter()
+        .enumerate()
+        .filter_map(|(k, (_, colon, sign))| {
+            let stop = found.get(k + 1).map_or(chars.len(), |next| next.0);
+            let name: String = chars[colon + 1..stop]
+                .iter()
+                .collect::<String>()
+                .split(['\t', ',', ';', '，', '('])
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            (!name.is_empty() && is_sign(sign)).then(|| (sign.clone(), name))
+        })
+        .collect()
+}
+
 /// 「10: 몸체 20 : 덮개 30a: …」 → 10 · 20 · 30a(콜론 앞 번호 · 앞이 숫자 · 영문이 아닌 것).
 fn sign_labels(text: &str) -> Vec<String> {
     let chars: Vec<char> = text.chars().collect();
@@ -539,5 +742,65 @@ mod tests {
         // 특허문헌 목록 둘째 줄 · 번호가 건너뛴 자리(표 글)는 빈 식별번호가 아니다.
         // 「도 3」은 【도 3a】 · 【도 3b】를, 「도 4a, 4b」는 한 장 【도 4】를 덮는다.
         assert_eq!(submission_checks(&paragraphs, &[]), []);
+    }
+
+    #[test]
+    fn same_sign_with_different_names() {
+        let names = |text: &str| named_signs(text);
+        assert_eq!(
+            names("몸체(10)와 덮개(20a)"),
+            [
+                ("10".to_string(), "몸체".to_string()),
+                ("20a".into(), "덮개".into())
+            ]
+        );
+        assert_eq!(
+            names("제1 몸체(11) · 제 2 몸체(12)"),
+            [
+                ("11".to_string(), "제1 몸체".to_string()),
+                ("12".into(), "제2 몸체".into())
+            ]
+        );
+        // 숫자 · 기호 뒤 · 단계 · 다섯 자리 · 묶음은 부호가 아니다.
+        assert!(names("식(1) 단계(S110) 연도(20201) 장치(10, 20) 1(2)").is_empty());
+        assert_eq!(
+            sign_list("10: 몸체 20 : 덮개, 30a：바퀴\t40: 축"),
+            [
+                ("10".to_string(), "몸체".to_string()),
+                ("20".into(), "덮개".into()),
+                ("30a".into(), "바퀴".into()),
+                ("40".into(), "축".into())
+            ]
+        );
+        let paragraphs = doc(&[
+            ("【발명의 설명】", None),
+            (
+                "상부몸체(10)와 몸체(10)는 같다. 제1 축(31)과 제2 축(32).",
+                Some("0001"),
+            ),
+            ("본체(20)는 덮개(20)와 붙는다. 바퀴(40)", Some("0002")),
+            (
+                "단말(50) · 제1 단말(50) · 제2 단말(50) · 제1 스프링(60) · 제2 스프링(60) · 센서모듈(70) · 모듈의(70)",
+                Some("0004"),
+            ),
+            ("【부호의 설명】", None),
+            ("10: 몸체 40: 롤러", Some("0003")),
+        ]);
+        let issues = submission_checks(&paragraphs, &[]);
+        let found: Vec<_> = issues
+            .iter()
+            .filter(|i| i.kind == SubmitKind::SignNames)
+            .map(|i| (i.paragraph_id.as_deref().unwrap_or("-"), i.detail.as_str()))
+            .collect();
+        // 10 은 「상부몸체」 ⊃ 「몸체」(부호의 설명 포함) · 31/32 는 차례말로 갈린다 · 50 은 「단말」의 낱낱 — 걸지 않는다.
+        // 60 은 맨 「스프링」이 없다 — 제1 · 제2 가 한 부호를 나눠 쓴 것.
+        assert_eq!(
+            found,
+            [
+                ("p2", "부호 20: 본체(1) · 덮개(1)"),
+                ("p5", "부호 40: 바퀴(1) · 롤러(1)"),
+                ("p3", "부호 60: 제1 스프링(1) · 제2 스프링(1)")
+            ]
+        );
     }
 }

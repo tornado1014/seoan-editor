@@ -316,7 +316,7 @@ export type CitationKindDto =
   | 'range_no_alternative';
 export type CitationIssueDto = { claim: number; kind: CitationKindDto; cited: number[] };
 export const editorClaimIssues = () => invoke<CitationIssueDto[]>('editor_claim_issues');
-export type SubmitKindDto = 'unnumbered' | 'figure_missing' | 'figure_unmentioned' | 'sign_unused' | 'citation';
+export type SubmitKindDto = 'unnumbered' | 'figure_missing' | 'figure_unmentioned' | 'sign_unused' | 'sign_names' | 'citation';
 /** 제출 전 점검 한 줄(가 볼 문단 · 없으면 문서 전체의 일). */
 export type SubmitIssueDto = { kind: SubmitKindDto; paragraph_id: string | null; detail: string };
 export const editorSubmissionChecks = () => invoke<SubmitIssueDto[]>('editor_submission_checks');

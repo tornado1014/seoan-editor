@@ -1613,33 +1613,60 @@ export function mountEditor(root: HTMLElement): void {
   function askBasis(basis: ClaimBasisDto[]): Promise<{ kind: 'copy' | 'opinion'; text: string } | null> {
     const escape = (text: string) =>
       text.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]!);
+    const phraseCount = basis.reduce((sum, claim) => sum + claim.phrases.length, 0);
     return new Promise((resolve) => {
+      // 화면 전체를 덮는 창(왼쪽 = 청구항별 근거 후보 · 오른쪽 = 초안) — 좁으면 위아래로.
+      const shade = document.createElement('div');
+      shade.className = 'basis-shade';
       const box = document.createElement('form');
-      box.className = 'item-ask basis-ask';
-      const rows = basis
+      box.className = 'basis-ask';
+      box.setAttribute('role', 'dialog');
+      box.setAttribute('aria-label', '보정 근거');
+      const hitRow = (hit: ClaimBasisDto['phrases'][number]['hits'][number], c: number, p: number, h: number) => `
+        <label class="basis-hit">
+          <input type="checkbox" data-c="${c}" data-p="${p}" data-h="${h}"${
+            (h === 0 && (hit.exact || hit.score >= 0.8)) || (h === 1 && hit.exact) ? ' checked' : ''
+          }>
+          <button type="button" class="basis-go" data-number="${hit.number}" title="그 단락으로 가기(창을 접는다)">【${hit.number}】</button>
+          <span class="basis-match ${hit.exact ? 'exact' : ''}">${hit.exact ? '통째로' : `낱말 ${Math.round(hit.score * 100)}%`}</span>
+          <span class="basis-quote" title="${escape(hit.quote)}">${escape(hit.quote)}</span>
+          <span class="basis-figures">${hit.figures.length ? `도 ${hit.figures.map(escape).join(', ')}` : ''}</span>
+        </label>`;
+      const cards = basis
         .map(
-          (claim, c) => `<fieldset><legend>청구항 ${claim.claim}${claim.added ? ' (새 항)' : ''}</legend>${claim.phrases
-            .map(
-              (phrase, p) => `<div class="basis-phrase">“${escape(phrase.text)}”${
-                phrase.hits.length
-                  ? phrase.hits
-                      .map(
-                        (hit, h) => `<label><input type="checkbox" data-c="${c}" data-p="${p}" data-h="${h}"${
-                          (h === 0 && (hit.exact || hit.score >= 0.8)) || (h === 1 && hit.exact) ? ' checked' : ''
-                        }> <button type="button" class="basis-go" data-number="${hit.number}">【${hit.number}】</button> <small>(${
-                          hit.exact ? '통째로' : `낱말 ${Math.round(hit.score * 100)}%`
-                        })</small> ${escape(hit.quote)}</label>`,
-                      )
-                      .join('')
-                  : ' <small>— 근거 단락을 찾지 못했습니다</small>'
-              }</div>`,
-            )
-            .join('')}</fieldset>`,
+          (claim, c) => `<section class="basis-claim">
+            <header><strong>청구항 ${claim.claim}</strong><span class="basis-badge ${claim.added ? 'added' : ''}">${claim.added ? '새 항' : '바뀐 항'}</span></header>
+            ${claim.phrases
+              .map(
+                (phrase, p) => `<div class="basis-phrase">
+                  <div class="basis-phrase-text"><span class="basis-label">새로 넣은 말</span>${escape(phrase.text)}</div>
+                  ${
+                    phrase.hits.length
+                      ? `<div class="basis-hits">${phrase.hits.map((hit, h) => hitRow(hit, c, p, h)).join('')}</div>`
+                      : '<div class="basis-none">근거 단락을 찾지 못했습니다 — 초안에 직접 쓰세요.</div>'
+                  }
+                </div>`,
+              )
+              .join('')}
+          </section>`,
         )
         .join('');
-      box.innerHTML = `<strong>보정 근거</strong>${rows}
-        <label class="basis-draft-label">초안(고쳐 쓸 수 있다 · 체크를 바꾸면 다시 만든다)<textarea class="basis-draft" rows="8"></textarea></label>
-        <button type="button" class="basis-copy">글 복사</button><button type="button" class="basis-opinion">새 의견서로 열기</button><button type="button" class="item-cancel">닫기</button>`;
+      box.innerHTML = `
+        <header class="basis-head">
+          <div><h2>보정 근거</h2><p>청구항 ${basis.length}개 · 새로 넣은 말 ${phraseCount}개 — 근거로 쓸 단락을 고르면 의견서 초안이 바로 바뀝니다.</p></div>
+          <button type="button" class="item-cancel basis-close" aria-label="닫기">✕</button>
+        </header>
+        <div class="basis-body">
+          <div class="basis-list">${cards}</div>
+          <aside class="basis-side">
+            <label for="basis-draft">의견서 초안 <small>고쳐 쓸 수 있습니다 · 체크를 바꾸면 다시 만듭니다</small></label>
+            <textarea id="basis-draft" class="basis-draft" spellcheck="false"></textarea>
+            <div class="basis-actions">
+              <button type="button" class="basis-copy primary">글 복사</button>
+              <button type="button" class="basis-opinion">새 의견서로 열기</button>
+            </div>
+          </aside>
+        </div>`;
       const draft = box.querySelector<HTMLTextAreaElement>('.basis-draft')!;
       const redraft = () => {
         draft.value = basisDraft(
@@ -1658,25 +1685,44 @@ export function mountEditor(root: HTMLElement): void {
       box.addEventListener('change', (event) => {
         if ((event.target as HTMLElement).matches('input[type="checkbox"]')) redraft();
       });
+      // 【번호】: 창을 접고 그 단락으로 · 띠를 누르면 고른 것 · 고쳐 쓴 초안 그대로 다시 보인다.
+      const reopen = document.createElement('button');
+      reopen.type = 'button';
+      reopen.className = 'review-reopen';
+      reopen.textContent = '보정 근거 창 다시 열기';
+      reopen.addEventListener('click', () => {
+        reopen.remove();
+        shade.hidden = false;
+      });
       const done = (value: { kind: 'copy' | 'opinion'; text: string } | null) => {
-        box.remove();
+        reopen.remove();
+        shade.remove();
         input.focus({ preventScroll: true });
         resolve(value);
       };
       box.querySelector('.basis-copy')!.addEventListener('click', () => done({ kind: 'copy', text: draft.value }));
       box.querySelector('.basis-opinion')!.addEventListener('click', () => done({ kind: 'opinion', text: draft.value }));
       box.querySelector('.item-cancel')!.addEventListener('click', () => done(null));
+      shade.addEventListener('mousedown', (event) => {
+        if (event.target === shade) done(null);
+      });
       box.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') done(null);
       });
       for (const button of box.querySelectorAll<HTMLButtonElement>('.basis-go')) {
         button.addEventListener('click', () => {
           const target = view?.paragraphs.find((paragraph) => paragraph.number === button.dataset.number);
-          if (target) place({ paragraph: target.id, offset: 0 }, false);
+          if (!target) return;
+          shade.hidden = true;
+          root.append(reopen);
+          const page = view?.paragraph_pages[target.id];
+          if (page !== undefined) pageHost(page)?.scrollIntoView({ block: 'start' });
+          place({ paragraph: target.id, offset: 0 }, false);
         });
       }
       box.addEventListener('submit', (event) => event.preventDefault());
-      root.append(box);
+      shade.append(box);
+      root.append(shade);
       box.querySelector<HTMLButtonElement>('.basis-copy')!.focus();
     });
   }
@@ -1691,6 +1737,7 @@ export function mountEditor(root: HTMLElement): void {
       ['figure_missing', '도면이 없는 「도 N」'],
       ['figure_unmentioned', '본문이 말하지 않는 도면'],
       ['sign_unused', '본문에 안 나오는 부호'],
+      ['sign_names', '같은 부호 · 다른 이름(괄호 안 = 쓰인 수)'],
       ['citation', '청구항 인용'],
     ];
     return new Promise((resolve) => {
