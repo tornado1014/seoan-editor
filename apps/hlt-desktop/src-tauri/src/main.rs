@@ -4,6 +4,7 @@
 mod capabilities;
 mod commands;
 mod editor;
+mod recent;
 mod update;
 
 use commands::{AppState, cancel_verify, select_hlt, verify_file};
@@ -26,6 +27,66 @@ use editor::{
 fn ask_close(app: &tauri::AppHandle, label: &str) {
     use tauri::Emitter;
     let _ = app.emit_to(label, "close-requested", label);
+}
+
+/// 파일 하나를 앱에서 연다(Finder · 최근 문서 · 복원): 문서 없는 첫 창이면 거기 · 아니면 포커스 창 옆 새 탭.
+fn open_in_app(app: &tauri::AppHandle, path: std::path::PathBuf) {
+    use tauri::Manager;
+    let state = app.state::<EditorState>();
+    // 실행 직후엔 첫 창이 아직 없을 수 있다(파일이 창보다 먼저 온다) — 그때도 첫 창 몫이다.
+    let main_ready = app.get_webview_window("main").is_some()
+        || !state.ready.load(std::sync::atomic::Ordering::SeqCst);
+    if main_ready && !state.has_document("main") {
+        state.set_pending("main", path);
+    } else {
+        let parent = app
+            .webview_windows()
+            .into_iter()
+            .find(|(_, window)| window.is_focused().unwrap_or(false))
+            .map(|(label, _)| label);
+        let _ = editor::new_tab(app, parent.as_deref(), Some(path));
+    }
+}
+
+/// 메뉴 「최근 문서」 항목: 없는 파일이면 알리고 목록에서 뺀다.
+fn open_recent(app: &tauri::AppHandle, index: usize) {
+    use tauri::Emitter;
+    use tauri_plugin_dialog::DialogExt;
+    let list = recent::read(app).recent;
+    let Some(path) = list.get(index).cloned() else {
+        return;
+    };
+    if !path.is_file() {
+        app.dialog()
+            .message(format!("파일이 없습니다: {}", path.display()))
+            .title("최근 문서")
+            .show(|_| {});
+        recent::set_recent(app, list.into_iter().filter(|item| *item != path).collect());
+        return;
+    }
+    open_in_app(app, path);
+    let _ = app.emit("open-file", ());
+}
+
+/// 지난번 끝낼 때 열려 있던 탭을 다시 연다(지금 있는 파일만 · 첫째는 첫 창 · 나머지는 새 탭).
+fn restore_tabs(app: &tauri::AppHandle) {
+    use tauri::{Emitter, Manager};
+    let state = app.state::<EditorState>();
+    if state.has_document("main") {
+        return; // Finder · 실행 인자로 연 파일이 있다 — 그 파일을 원했다.
+    }
+    let mut tabs = recent::read(app)
+        .tabs
+        .into_iter()
+        .filter(|path| path.is_file());
+    let Some(first) = tabs.next() else {
+        return;
+    };
+    state.set_pending("main", first);
+    for path in tabs {
+        let _ = editor::new_tab(app, Some("main"), Some(path));
+    }
+    let _ = app.emit("open-file", ());
 }
 
 /// 앱 끝내기: 문서가 열린 창이 있으면 하나씩 닫으며 저장을 묻고(`Destroyed` 가 다음 창으로 잇는다), 없으면 끝낸다.
@@ -216,6 +277,14 @@ fn main() {
                     2,
                 )?;
             }
+            // 파일 메뉴(맥 = 둘째 · 윈도 = 첫째) 맨 앞에 「최근 문서」.
+            let file_menu = if cfg!(target_os = "macos") { 1 } else { 0 };
+            if let Some(tauri::menu::MenuItemKind::Submenu(file)) = menu.items()?.get(file_menu) {
+                file.insert(
+                    &tauri::menu::Submenu::with_id(app, "recent", "최근 문서", true)?,
+                    0,
+                )?;
+            }
             #[cfg(target_os = "macos")]
             if let Some(tauri::menu::MenuItemKind::Submenu(app_menu)) = menu.items()?.first() {
                 if let Some(native_quit) = app_menu.items()?.last() {
@@ -238,6 +307,15 @@ fn main() {
                 tauri::async_runtime::spawn(update::check(app.clone(), true));
             } else if event.id() == "report-bug" {
                 report_bug(app);
+            } else if event.id() == "recent-clear" {
+                recent::set_recent(app, Vec::new());
+            } else if let Some(index) = event
+                .id()
+                .as_ref()
+                .strip_prefix("recent:")
+                .and_then(|n| n.parse().ok())
+            {
+                open_recent(app, index);
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -317,6 +395,7 @@ fn main() {
                     ..
                 } => {
                     state.forget(&label);
+                    recent::changed(app, None);
                     if state.quitting.load(std::sync::atomic::Ordering::SeqCst) {
                         match state.open_windows().first() {
                             Some(next) => ask_close(app, next),
@@ -337,25 +416,15 @@ fn main() {
                 tauri::RunEvent::Opened { urls } => {
                     use tauri::Emitter;
                     for path in urls.iter().filter_map(|url| url.to_file_path().ok()) {
-                        // 실행 직후엔 첫 창이 아직 없을 수 있다(파일이 창보다 먼저 온다) — 그때도 첫 창 몫이다.
-                        let main_ready = app.get_webview_window("main").is_some()
-                            || !state.ready.load(std::sync::atomic::Ordering::SeqCst);
-                        if main_ready && !state.has_document("main") {
-                            state.set_pending("main", path);
-                        } else {
-                            let parent = app
-                                .webview_windows()
-                                .into_iter()
-                                .find(|(_, window)| window.is_focused().unwrap_or(false))
-                                .map(|(label, _)| label);
-                            let _ = editor::new_tab(app, parent.as_deref(), Some(path));
-                        }
+                        open_in_app(app, path);
                     }
                     let _ = app.emit("open-file", ());
                 }
                 tauri::RunEvent::Exit => update::install_on_exit(app),
                 tauri::RunEvent::Ready => {
                     state.ready.store(true, std::sync::atomic::Ordering::SeqCst);
+                    recent::fill_menu(app, &recent::read(app).recent);
+                    restore_tabs(app);
                     #[cfg(target_os = "macos")]
                     dock_quit::install(app);
                 }

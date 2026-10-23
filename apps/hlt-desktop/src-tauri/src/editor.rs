@@ -103,8 +103,16 @@ impl EditorState {
             })
             .map(|(label, _)| label.clone())
             .collect();
-        labels.sort();
+        labels.sort_by_key(|label| crate::recent::tab_order(label));
         labels
+    }
+
+    /// 열린 탭의 파일(탭 차례) — 다음 실행 때 되살린다.
+    pub fn open_sources(&self) -> Vec<PathBuf> {
+        self.open_windows()
+            .iter()
+            .filter_map(|label| self.slot(label).lock().ok()?.source.clone())
+            .collect()
     }
 
     fn is_dirty(&self, label: &str) -> bool {
@@ -482,6 +490,7 @@ pub async fn editor_close_document(
         slot.session = None;
         slot.source = None;
     }
+    crate::recent::changed(&app, None);
     let _ = window.set_title("서안 통특기");
     Ok(true)
 }
@@ -555,6 +564,7 @@ fn save_current(
     if let Ok(mut slot) = state.slot(window.label()).lock() {
         slot.source = Some(path.clone());
     }
+    crate::recent::changed(window.app_handle(), Some(&path));
     if let Some(name) = path.file_name() {
         let _ = window.set_title(&name.to_string_lossy());
     }
@@ -627,7 +637,9 @@ async fn open_path(
         .lock()
         .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "editor_lock", false))?;
     slot.session = Some(session);
-    slot.source = Some(path);
+    slot.source = Some(path.clone());
+    drop(slot);
+    crate::recent::changed(window.app_handle(), Some(&path));
     // 탭 제목 = 파일 이름.
     let _ = window.set_title(&name);
     Ok(dto)
