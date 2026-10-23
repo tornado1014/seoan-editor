@@ -54,6 +54,7 @@ fn recovers_the_semantic_model_of_a_real_domestic_specification() {
 }
 
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn a_rebuilt_file_reads_back_with_the_same_geometry() {
     let source_path = repo("work/pct_a/diagnostics/pct_a_source.HLT");
     let before = inspect_path(&source_path, InspectOptions::default()).unwrap();
@@ -88,6 +89,7 @@ fn a_rebuilt_file_reads_back_with_the_same_geometry() {
 /// 왕복 게이트는 표 기하까지만 보고 있었다. 글자 크기와 문단 서식도 살아남아야 한다.
 /// 크기를 잃으면 표 셀 10pt 가 12pt 로 눌리고, 서식을 잃으면 기울임과 위첨자가 사라진다.
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn a_rebuilt_file_keeps_its_point_sizes_and_character_formats() {
     let source_path = repo("work/pct_a/diagnostics/pct_a_source.HLT");
     let before = hlt_core::inspect_format_inventory(&source_path).unwrap();
@@ -137,6 +139,7 @@ fn a_rebuilt_file_keeps_its_point_sizes_and_character_formats() {
 /// ⛔ 앞머리 탭과 꼬리 공백이 함정이다. 판독기의 `ParagraphRecord.text` 는 앞뒤 ASCII 공백을
 /// 잘라내고, `FormatParagraph.text` 는 탭과 페이지브레이크를 안 싣는다. 어느 한쪽만 믿으면 샌다.
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn a_rebuilt_file_keeps_every_paragraph_character() {
     let source_path = repo("work/pct_a/diagnostics/pct_a_source.HLT");
     let before = inspect_path(&source_path, InspectOptions::default()).unwrap();
@@ -173,6 +176,7 @@ fn a_rebuilt_file_keeps_every_paragraph_character() {
 /// 한계값 L 이 39.5 이상이면서 34.0 미만이어야 한다. 진짜 규칙은 비례 폰트 메트릭이다.
 /// 그래서 원본 줄나눔을 **계산하지 않고 옮긴다.**
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn a_rebuilt_file_keeps_the_source_line_breaks() {
     let source_path = repo("work/pct_a/diagnostics/pct_a_source.HLT");
     let before = inspect_path(&source_path, InspectOptions::default()).unwrap();

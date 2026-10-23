@@ -470,6 +470,7 @@ fn terminal_sections_preserve_claim_figure_numbers_breaks_formats_and_images() {
 }
 
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn real_counterpart_xml_matches_the_python_normalization_counts_and_geometry() {
     let path = support::repo_root().join("work/pct_a/pct_a.xml");
     let result = inspect_kipo_xml_path(&path).unwrap();
@@ -513,6 +514,7 @@ fn real_counterpart_xml_matches_the_python_normalization_counts_and_geometry() {
 }
 
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn real_docx_derived_pct_xml_matches_the_python_normalization_counts() {
     let path = support::repo_root().join("work/pct_a/diagnostics/pct_a_docx/pct_a_docx.xml");
     let result = inspect_kipo_xml_path(&path).unwrap();

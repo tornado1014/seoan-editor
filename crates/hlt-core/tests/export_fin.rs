@@ -122,6 +122,7 @@ fn builds_amendment_entries_and_dta_like_the_authoritative_amendment() {
 }
 
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn exports_a_submission_set_from_the_native_pct_file() {
     // 정본과 같은 3층 구조: .fin(zip) → .hlz(zip) → KIPO XML + 도면 JPG 69장.
     let export = export_fin_path(

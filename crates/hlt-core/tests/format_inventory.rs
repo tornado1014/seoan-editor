@@ -60,6 +60,7 @@ fn exposes_runtime_character_attributes_without_sibling_xml() {
 }
 
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn reads_formats_from_the_native_pct_file_with_formatted_paragraph_marks() {
     // 네이티브 PCT 저장본 실측: 문단 5('본 출원은 …')의 종결자 몫 슬롯이 0 이 아니라
     // 코드 2(밑줄)다. 앞 문단의 밑줄 표제가 문단 부호까지 물들인 것으로, 통특기가 실제로
@@ -87,6 +88,7 @@ fn reads_formats_from_the_native_pct_file_with_formatted_paragraph_marks() {
 /// 같은 굵게(attr=2)가 본문에서 12, 표 셀에서 10 이다. 크기는 서식 종류로 정해지지 않는다.
 /// 크기를 안 읽으면 역변환 왕복에서 표 셀 10pt 가 12pt 로 눌린다.
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn reports_the_point_size_of_every_run() {
     let inventory =
         inspect_format_inventory(Path::new("../../work/pct_a/diagnostics/pct_a_source.HLT"))

@@ -59,6 +59,7 @@ fn preserves_281_image_occurrences_independent_of_object_code() {
 }
 
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn reads_grayscale_tiff_payloads_from_the_native_pct_file() {
     // 네이티브 PCT 저장본 실측: 이미지 70장이 전부 8비트 그레이스케일 TIFF 다
     // (SamplesPerPixel=1, BitsPerSample=8, Photometric=1, Compression=1,

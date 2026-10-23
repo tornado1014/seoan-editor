@@ -149,6 +149,7 @@ fn a_bad_argument_shape_is_a_usage_error() {
 /// 백로그의 목적은 **이미 받은 HLT 안의 표를 고치는 것**이다. 표 편집이 `.HLT` 를 직접
 /// 받아 역변환기로 의미 모델을 되돌리고, 편집한 뒤 다시 굽는다.
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn table_plan_accepts_a_native_hlt_input() {
     let source = support::repo_root().join("work/pct_a/diagnostics/pct_a_source.HLT");
     let directory = tempfile::tempdir().unwrap();

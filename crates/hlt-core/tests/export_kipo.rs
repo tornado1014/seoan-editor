@@ -10,6 +10,7 @@ fn repo(path: &str) -> PathBuf {
 }
 
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn exports_the_native_pct_file_like_the_authoritative_fin_xml() {
     // 통특기 제출 XML 기준:
     // 번호 문단 181개(0001~0179 + 0001a + 0002a), 청구항 69개, 도면 69개.
@@ -109,6 +110,7 @@ fn converts_display_units_to_millimetres() {
 /// 우리는 표 뒤 꼬리 문단을 escape 만 하고, 끝 공백까지 걸친 스팬을 통째로 버려서
 /// 밑줄 7, 위첨자 17, 기울임 33 만 썼다.
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn carries_body_character_formats_at_the_authoritative_count() {
     let options = KipoExportOptions {
         document_id: "1700000001".into(),

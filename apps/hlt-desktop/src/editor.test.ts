@@ -906,16 +906,18 @@ describe('page editing', () => {
       { kind: 'figure_missing', paragraph_id: 'paragraph:1', detail: '「도 5」을 말하는데 【도 5】 도면이 없습니다' },
       { kind: 'unnumbered', paragraph_id: null, detail: '식별번호가 하나도 없습니다 — 「문단번호 넣기」를 누르세요' },
       { kind: 'sign_names', paragraph_id: 'paragraph:0', detail: '부호 10: 몸체(3) · 본체(1)' },
+      { kind: 'sign_shared', paragraph_id: 'paragraph:0', detail: '「몸체」: 부호 10(4) · 20(1)' },
     ];
     await make();
     let box = root.querySelector<HTMLFormElement>('.submit-ask')!;
-    expect(box.textContent).toContain('제출 전 점검 — 3건');
+    expect(box.textContent).toContain('제출 전 점검 — 4건');
     expect([...box.querySelectorAll('legend')].map((l) => l.textContent)).toEqual([
       '빈 식별번호',
       '도면이 없는 「도 N」',
       '같은 부호 · 다른 이름(괄호 안 = 쓰인 수)',
+      '같은 이름 · 다른 부호(한두 번만 다른 부호)',
     ]);
-    expect(box.querySelectorAll('.submit-go').length).toBe(2); // 문서 전체의 일은 「가기」가 없다
+    expect(box.querySelectorAll('.submit-go').length).toBe(3); // 문서 전체의 일은 「가기」가 없다
     box.querySelector<HTMLButtonElement>('.submit-go')!.click();
     expect(box.hidden).toBe(true);
     type(root, 'X');
@@ -953,6 +955,29 @@ describe('page editing', () => {
     q(root, '[data-action="basis"]').click();
     await settle(10);
     expect(last('editor_amendment_basis')).toEqual(['editor_amendment_basis', { original: true }]);
+  });
+
+  test('보정 근거: 위 3개 후보만 보이고 나머지는 「더 보기」(체크는 그대로 · 접기)', async () => {
+    const root = await open();
+    const hit = (number: string, score: number) => ({ number, score, exact: false, quote: `${number} 문장`, figures: [] });
+    basisAnswer = [{ claim: 1, added: false, phrases: [{ text: '새 말', hits: ['0001', '0002', '0003', '0004', '0005'].map((n) => hit(n, 0.9)) }] }];
+    q(root, '[data-action="basis"]').click();
+    await settle(10);
+    const more = root.querySelector<HTMLElement>('.basis-more')!;
+    const toggle = q(root, '.basis-more-toggle');
+    expect(more.hidden).toBe(true);
+    expect(more.querySelectorAll('input[type="checkbox"]').length).toBe(2);
+    expect(toggle.textContent).toBe('후보 2개 더 보기');
+    toggle.click();
+    expect(more.hidden).toBe(false);
+    expect(toggle.textContent).toBe('후보 접기');
+    // 더 본 후보를 고르면 초안에 들어간다.
+    const fifth = root.querySelector<HTMLInputElement>('input[data-h="4"]')!;
+    fifth.checked = true;
+    fifth.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(root.querySelector<HTMLTextAreaElement>('.basis-draft')!.value).toContain('【0005】');
+    toggle.click();
+    expect(more.hidden).toBe(true);
   });
 
   test('amendment marks: 보정 표시 draws inserted text, deletion wedges and change bars (only for a final .fin)', async () => {

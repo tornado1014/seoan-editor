@@ -33,6 +33,7 @@ fn assert_no_forbidden_keys(value: &serde_json::Value) {
 }
 
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn real_xml_summary_is_one_safe_strict_semantic_envelope() {
     let output = inspect_xml(&[
         "inspect-kipo-xml",
@@ -75,6 +76,7 @@ fn real_xml_summary_is_one_safe_strict_semantic_envelope() {
 }
 
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn xml_semantic_items_are_pageable_with_the_hml_contract() {
     let path = "work/pct_a/pct_a.xml";
     let sections = json(&inspect_xml(&[

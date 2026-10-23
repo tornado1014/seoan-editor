@@ -59,12 +59,68 @@ fn units(paragraphs: &[EditorParagraph]) -> Vec<Unit<'_>> {
             parts: vec![paragraph],
         });
     }
+    // 도면: 【도면】 절의 【도 N】 표제 뒤 · 다음 표제 앞 문단들(그림 문단) — 그림을 바꾼 것은 그림 서명으로 견준다.
+    let heading = |text: &str| {
+        let text = text.trim();
+        text.strip_prefix('【')
+            .and_then(|rest| rest.strip_suffix('】'))
+            .map(str::to_string)
+    };
+    if let Some(drawings) = paragraphs
+        .iter()
+        .position(|p| heading(&p.text).as_deref() == Some("도면"))
+    {
+        let mut at = drawings + 1;
+        while at < paragraphs.len() {
+            let Some(name) = heading(&paragraphs[at].text)
+                .and_then(|h| h.strip_prefix("도 ").map(str::to_string))
+            else {
+                at += 1;
+                continue;
+            };
+            let end = (at + 1..paragraphs.len())
+                .find(|k| heading(&paragraphs[*k].text).is_some())
+                .unwrap_or(paragraphs.len());
+            out.push(Unit {
+                key: format!("figure:{name}"),
+                label: format!("도 {name}"),
+                parts: paragraphs[at + 1..end].iter().collect(),
+            });
+            at = end;
+        }
+    }
     out
 }
 
+/// 문단 id → 그 문단 그림들의 서명(그림 바이트 · 표시 크기). 비면 그림은 견주지 않는다.
+pub type FigureSignatures = std::collections::BTreeMap<String, Vec<u64>>;
+
 /// 최종본(`before`) 대비 지금 문단(`now`)의 보정 표시. 글자 차이는 요소 글(줄을 `\n` 으로 이음)끼리 재서 문단 좌표로 돌린다.
-// ponytail: 그림만 바꾼 문단 · 도면은 화면 글(`_`)이 같아 안 잡힌다 — 그림 정체 비교는 필요해지면.
+/// 그림 정체는 모른다(화면 글 `_` 이 같다) — 도면 교체까지 보려면 `amendment_marks_with`.
 pub fn amendment_marks(before: &[EditorParagraph], now: &[EditorParagraph]) -> AmendmentMarks {
+    amendment_marks_with(
+        before,
+        now,
+        &FigureSignatures::new(),
+        &FigureSignatures::new(),
+    )
+}
+
+/// 보정 표시 + 도면 교체: 글이 같아도 도면 단위의 그림 서명이 다르면 바뀐 것(그림 문단에 바뀐 줄 표시).
+/// 문단 id 는 고치면 밀리니 단위 안 차례로 견준다.
+pub fn amendment_marks_with(
+    before: &[EditorParagraph],
+    now: &[EditorParagraph],
+    before_figures: &FigureSignatures,
+    now_figures: &FigureSignatures,
+) -> AmendmentMarks {
+    let compare_figures = !before_figures.is_empty() && !now_figures.is_empty();
+    let signature = |unit: &Unit, figures: &FigureSignatures| -> Vec<Vec<u64>> {
+        unit.parts
+            .iter()
+            .map(|part| figures.get(&part.id).cloned().unwrap_or_default())
+            .collect()
+    };
     let old_units = units(before);
     let new_units = units(now);
     let mut marks = AmendmentMarks::default();
@@ -96,7 +152,10 @@ pub fn amendment_marks(before: &[EditorParagraph], now: &[EditorParagraph]) -> A
                 .iter()
                 .zip(&unit.parts)
                 .all(|(a, b)| a.spans == b.spans);
-        if old_text == new_text && same_spans {
+        let figure_changed = compare_figures
+            && unit.key.starts_with("figure:")
+            && signature(old, before_figures) != signature(unit, now_figures);
+        if old_text == new_text && same_spans && !figure_changed {
             continue;
         }
         marks.changed.push(unit.label.clone());
@@ -210,16 +269,50 @@ pub struct ClaimBasis {
 // ponytail: 낱말 포함 비율일 뿐 뜻은 안 본다 — 형태소 분석은 실물 재현율이 모자랄 때.
 pub fn amendment_basis(before: &[EditorParagraph], now: &[EditorParagraph]) -> Vec<ClaimBasis> {
     let old_units = units(before);
-    let paragraphs: Vec<(&str, &str)> = old_units
+    // 【발명을 실시하기 위한 구체적인 내용】 아래 식별번호 — 같은 점수면 청구항을 되풀이한 「발명의 내용」보다 실시예 단락이 근거다(실물 보고서).
+    let mut detailed = std::collections::BTreeSet::new();
+    let mut inside = false;
+    for paragraph in before {
+        let text = paragraph.text.trim();
+        if let Some(name) = text
+            .strip_prefix('【')
+            .and_then(|rest| rest.strip_suffix('】'))
+        {
+            if name == "발명을 실시하기 위한 구체적인 내용" {
+                inside = true;
+            } else if matches!(
+                name,
+                "부호의 설명"
+                    | "청구범위"
+                    | "특허청구범위"
+                    | "요약서"
+                    | "도면"
+                    | "발명의 내용"
+                    | "기술분야"
+                    | "배경기술"
+                    | "선행기술문헌"
+                    | "도면의 간단한 설명"
+                    | "발명의 설명"
+                    | "발명의 명칭"
+            ) {
+                inside = false;
+            }
+        } else if inside && let Some(number) = paragraph.number.as_deref() {
+            detailed.insert(number.to_string());
+        }
+    }
+    let paragraphs: Vec<(&str, &str, bool)> = old_units
         .iter()
         // 상세설명 문단만(네 자리 · 요약서 「0001a」는 근거가 아니다).
         .filter(|unit| {
             unit.key.len() == "p:0000".len() && unit.key[2..].chars().all(|ch| ch.is_ascii_digit())
         })
         .filter_map(|unit| {
+            let number = unit.parts.first()?.number.as_deref()?;
             Some((
-                unit.parts.first()?.number.as_deref()?,
+                number,
                 unit.parts.first()?.text.as_str(),
+                detailed.contains(number),
             ))
         })
         .collect();
@@ -372,7 +465,8 @@ fn trim_phrase(text: &str) -> String {
 
 /// 구절의 내용 낱말: 문장부호를 떼고 끝 조사 하나를 떼어 2자 이상만 · 흔한 청구항 말은 뺀다.
 fn words(phrase: &str) -> Vec<String> {
-    const COMMON: [&str; 12] = [
+    const COMMON: [&str; 13] = [
+        "단계",
         "상기",
         "또는",
         "및",
@@ -405,7 +499,7 @@ fn words(phrase: &str) -> Vec<String> {
 
 /// 구절의 근거 후보: 통째로 들면 1 · 아니면 낱말이 든 비율 0.6 이상 · 위 3개. 같은 점수면 구절과 가장 길게 이어서 같은
 /// 단락(「표기 그대로」) → 이 청구항의 새 말을 더 많이 담은 단락 → 번호 차례.
-fn support(phrase: &str, context: &[String], paragraphs: &[(&str, &str)]) -> Vec<BasisHit> {
+fn support(phrase: &str, context: &[String], paragraphs: &[(&str, &str, bool)]) -> Vec<BasisHit> {
     let compact =
         |text: &str| -> String { text.chars().filter(|ch| !ch.is_whitespace()).collect() };
     let whole = compact(phrase);
@@ -417,9 +511,9 @@ fn support(phrase: &str, context: &[String], paragraphs: &[(&str, &str)]) -> Vec
             .count()
     };
     let whole_chars: Vec<char> = whole.chars().collect();
-    let mut hits: Vec<(BasisHit, usize, usize)> = paragraphs
+    let mut hits: Vec<(BasisHit, usize, usize, bool)> = paragraphs
         .iter()
-        .filter_map(|(number, text)| {
+        .filter_map(|(number, text, detailed)| {
             let exact = compact(text).contains(&whole);
             let found = words
                 .iter()
@@ -444,19 +538,25 @@ fn support(phrase: &str, context: &[String], paragraphs: &[(&str, &str)]) -> Vec
                     hit,
                     longest_common(&whole_chars, &compact(text)),
                     around(text),
+                    *detailed,
                 )
             })
         })
         .collect();
-    hits.sort_by(|(a, a_run, a_around), (b, b_run, b_around)| {
-        // 통째로(exact)는 점수 1 · 이어진 길이 최대라 따로 세지 않는다.
-        b.score
-            .total_cmp(&a.score)
-            .then(b_run.cmp(a_run))
-            .then(b_around.cmp(a_around))
-            .then(a.number.cmp(&b.number))
-    });
-    hits.into_iter().take(3).map(|(hit, _, _)| hit).collect()
+    hits.sort_by(
+        |(a, a_run, a_around, a_detail), (b, b_run, b_around, b_detail)| {
+            // 통째로(exact)는 점수 1 · 이어진 길이 최대라 따로 세지 않는다.
+            b.score
+                .total_cmp(&a.score)
+                .then(b_detail.cmp(a_detail))
+                .then(b_run.cmp(a_run))
+                .then(b_around.cmp(a_around))
+                .then(a.number.cmp(&b.number))
+        },
+    );
+    // 위 12개 — 낱말을 다 담은 단락이 여럿이면 셋으로는 보고서가 든 근거가 잘린다(실물: 보고서가 든 두 단락이 8 · 10번째).
+    // 화면은 위 3개를 보이고 나머지는 「더 보기」로.
+    hits.into_iter().take(12).map(|(hit, ..)| hit).collect()
 }
 
 /// 가장 길게 이어서 같은 글자 수(공백 뺀 글끼리).
@@ -1174,5 +1274,38 @@ mod tests {
                 deleted: vec![]
             }]
         );
+    }
+
+    #[test]
+    fn basis_reads_word_stems_skips_step_and_prefers_detailed_paragraphs() {
+        // 「누락된」 · 「보간하는」 은 줄기로 · 「단계」는 세지 않는다.
+        assert_eq!(
+            words("누락된 블록데이터를 보간하는 단계"),
+            ["누락", "블록데이터", "보간"]
+        );
+        let before = vec![
+            paragraph("a", "【발명의 설명】", None),
+            paragraph("b", "【발명의 내용】", None),
+            // 청구항을 되풀이한 요약 단락 — 낱말은 다 있다.
+            paragraph("p1", "누락 블록데이터를 보간한다.", Some("0001")),
+            paragraph("c", "【발명을 실시하기 위한 구체적인 내용】", None),
+            paragraph("p2", "실시예에서 누락 블록데이터를 보간한다.", Some("0002")),
+            paragraph("s", "【청구항 1】", None),
+            paragraph("c1", "가를 포함하는 장치.", None),
+        ];
+        let mut now = before.clone();
+        now[6].text = "가를 포함하고, 누락된 블록데이터를 보간하는 단계를 포함하는 장치.".into();
+        let basis = amendment_basis(&before, &now);
+        let hits: Vec<&str> = basis[0]
+            .phrases
+            .iter()
+            .find(|phrase| phrase.text.contains("누락"))
+            .unwrap()
+            .hits
+            .iter()
+            .map(|hit| hit.number.as_str())
+            .collect();
+        // 둘 다 낱말을 다 담았다(점수 1) — 실시예 단락이 먼저.
+        assert_eq!(hits, ["0002", "0001"]);
     }
 }

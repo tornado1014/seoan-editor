@@ -826,7 +826,7 @@ pub(crate) fn compose_hangul(text: &str) -> String {
             }
             // 받침 없는 음절 + 종성 → 받침 음절
             if (0xAC00..=0xD7A3).contains(&previous)
-                && (previous - 0xAC00) % 28 == 0
+                && (previous - 0xAC00).is_multiple_of(28)
                 && (0x11A8..0x11C3).contains(&code)
             {
                 *out.last_mut().unwrap() = char::from_u32(previous + code - 0x11A7).unwrap();
@@ -1142,6 +1142,8 @@ fn read_final_fin<R: std::io::Read + std::io::Seek>(
             .iter()
             .any(|value| value.split(',').next() == Some(name.as_str()))
         && let Some(bytes) = beside(fin, &name)
+        // 실물 첨부 fin 넷은 모두 그 dta 를 안에 담고 있었다 — 옆 것이 안의 것과 같으면 두 번 걸지 않는다(이름이 달라도).
+        && !previous.values().any(|inside| *inside == bytes)
     {
         let date = modified_date(
             &fin.and_then(Path::parent)
@@ -1512,7 +1514,7 @@ pub fn export_amendment_from_fin(
             if entry.name() == "xresult.inf" {
                 continue;
             }
-            let name = entry_names.raw(&entry.name_raw().to_vec())?;
+            let name = entry_names.raw(entry.name_raw())?;
             zip.raw_copy_file_rename(entry, name)
                 .map_err(|_| fin_error("zip_copy"))?;
         }

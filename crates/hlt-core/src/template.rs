@@ -230,7 +230,7 @@ pub fn source_generation_profile(path: &Path) -> Result<crate::GenerationProfile
             .ok_or_else(|| error(ErrorCode::StructureInvalid, what))
     };
     // 절 표 종결 레코드(67B · 번호 0xFFFFFFFF)가 본문 바로 앞에 있다.
-    let gap = regions.body_start.checked_sub(SECTION_RECORD).unwrap_or(0);
+    let gap = regions.body_start.saturating_sub(SECTION_RECORD);
     if inflated.get(gap + 55..gap + 59) != Some(&[0xff; 4][..]) {
         return Err(error(ErrorCode::StructureInvalid, "source_profile_gap"));
     }

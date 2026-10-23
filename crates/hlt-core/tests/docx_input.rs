@@ -193,6 +193,7 @@ fn package_rejects_invalid_or_oversized_docx_before_parts_are_read() {
 }
 
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn real_package_inventory_matches_the_original_docx() {
     let path = support::repo_root().join("work/pct_a/diagnostics/pct_a_source.docx");
     let result = inspect_docx_path(&path).unwrap();
@@ -374,6 +375,7 @@ fn table_normalization_preserves_grid_merges_image_caption_and_tail_order() {
 }
 
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn real_docx_preserves_normalized_counts_and_native_word_table_geometry() {
     let path = support::repo_root().join("work/pct_a/diagnostics/pct_a_source.docx");
     let result = inspect_docx_path(&path).unwrap();
@@ -438,6 +440,7 @@ fn real_docx_preserves_normalized_counts_and_native_word_table_geometry() {
 }
 
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn real_docx_table_runs_carry_their_ten_point_size_while_body_runs_stay_default() {
     // 네이티브 저장본 `pct_a_source.HLT` 실측: 표 셀 문자는 문자모양
     // attr=0/font=10, attr=2/font=10 만 쓰고 본문은 font=12 다. DOCX 는 정확히 그
@@ -470,6 +473,7 @@ fn real_docx_table_runs_carry_their_ten_point_size_while_body_runs_stay_default(
 }
 
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn centered_paragraphs_without_first_line_indent_take_the_native_line_spacing() {
     // 네이티브 저장본 `pct_a_source.HLT` 실측: 줄간격 160 문단모양
     // (가운데, 들여쓰기 0)을 쓰는 문단은 정확히 8건이고 -- 【발명의 설명】,【청구범위】,

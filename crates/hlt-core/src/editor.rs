@@ -37,10 +37,12 @@ pub struct EditorSession {
     /// 최종본(.fin)을 열었나 · 그 첫 판 문단(서식 구간까지 — 모델이 다 되면 찍는다). 보정 표시의 「보정 전」.
     from_final: bool,
     baseline: Option<Vec<EditorParagraph>>,
+    /// 첫 판의 그림 서명(도면 교체를 보정 표시에 — 화면 판은 그림을 1×1 로 구워 정체를 모른다).
+    baseline_figures: crate::FigureSignatures,
     /// 연 제출파일(.fin · .hlz) — 「원출원」 기준을 만들 때 다시 읽는다.
     source: Option<PathBuf>,
     /// 최종본의 원출원(보정서 적용 전) 문단 — 처음 고를 때 굽고 담아 둔다.
-    original: Option<Vec<EditorParagraph>>,
+    original: Option<(Vec<EditorParagraph>, crate::FigureSignatures)>,
 }
 
 /// 판 하나: 파일 · 그 판의 의미 모델(있으면 다시 해석하지 않는다) · 다시 구운 판인가(저장 때 전체 검증).
@@ -232,6 +234,7 @@ impl EditorSession {
             cp949_substitutions: Vec::new(),
             from_final: package,
             baseline: None,
+            baseline_figures: Default::default(),
             source: package.then(|| source.to_path_buf()),
             original: None,
         }
@@ -281,6 +284,7 @@ impl EditorSession {
                 self.refresh_spans();
                 if self.from_final {
                     self.baseline = Some(self.paragraphs());
+                    self.baseline_figures = self.figure_signatures();
                 }
             }
         }
@@ -619,7 +623,9 @@ impl EditorSession {
         self.edit_model(|model| {
             // 같은 문단의 구간들은 한 글자 목록에 차례로 건다 — 구간마다 따로 읽어 쓰면 마지막 구간만 남았다
             // (의견서 hlz 가져오기 · 한 문단에 굵게 구간 여럿 · 2026-10-16).
-            let mut edited: Vec<(usize, Vec<(usize, usize)>, Vec<Cell>)> = Vec::new();
+            // (문단 차례, 그 문단에 걸 구간들, 글자 목록)
+            type Edited = (usize, Vec<(usize, usize)>, Vec<Cell>);
+            let mut edited: Vec<Edited> = Vec::new();
             for (id, start, end) in spans {
                 let index = model
                     .paragraphs
@@ -873,8 +879,9 @@ impl EditorSession {
             let chars: Vec<char> = paragraph.text.chars().collect();
             let mut style = vec![0_u32; chars.len()];
             for span in &paragraph.spans {
-                for at in span.start as usize..(span.end as usize).min(chars.len()) {
-                    style[at] |= span.style;
+                let end = (span.end as usize).min(chars.len());
+                for mark in style.iter_mut().take(end).skip(span.start as usize) {
+                    *mark |= span.style;
                 }
             }
             let fits = |at: usize| match query.format {
@@ -1247,8 +1254,7 @@ impl EditorSession {
                         continue;
                     }
                     // 새 항: 번호가 작은 항 가운데 마지막 항 뒤.
-                    let Some(&(_, previous, at)) =
-                        now.iter().filter(|block| block.0 < wanted).next_back()
+                    let Some(&(_, previous, at)) = now.iter().rfind(|block| block.0 < wanted)
                     else {
                         outcome
                             .claims_failed
@@ -1371,18 +1377,26 @@ impl EditorSession {
 
     /// 보정 표시 — `original` 이면 연 상태가 아니라 원출원(fin 안 보정서 적용 전)에 견준다.
     pub fn amendment_marks_from(&mut self, original: bool) -> Option<crate::AmendmentMarks> {
-        let baseline = self.baseline_for(original)?;
-        Some(crate::amendment_marks(&baseline, &self.paragraphs()))
+        let (baseline, figures) = self.baseline_for(original)?;
+        Some(crate::amendment_marks_with(
+            &baseline,
+            &self.paragraphs(),
+            &figures,
+            &self.figure_signatures(),
+        ))
     }
 
     /// 보정 근거 — `original` 이면 원출원 명세서에서 근거를 찾는다.
     pub fn amendment_basis_from(&mut self, original: bool) -> Option<Vec<crate::ClaimBasis>> {
-        let baseline = self.baseline_for(original)?;
+        let (baseline, _) = self.baseline_for(original)?;
         Some(crate::amendment_basis(&baseline, &self.paragraphs()))
     }
 
     /// 견줄 기준: 연 상태(첫 판) · 원출원(.fin 만 — 처음 고를 때 원출원 HLT 를 굽고 열어 모델까지 기다려 담는다).
-    fn baseline_for(&mut self, original: bool) -> Option<Vec<EditorParagraph>> {
+    fn baseline_for(
+        &mut self,
+        original: bool,
+    ) -> Option<(Vec<EditorParagraph>, crate::FigureSignatures)> {
         self.settle();
         let is_fin = self
             .source
@@ -1390,7 +1404,7 @@ impl EditorSession {
             .and_then(|path| path.extension())
             .is_some_and(|ext| ext.eq_ignore_ascii_case("fin"));
         if !original || !is_fin {
-            return self.baseline.clone();
+            return Some((self.baseline.clone()?, self.baseline_figures.clone()));
         }
         if self.original.is_none() {
             let work = self.dir.path().join("original");
@@ -1403,9 +1417,35 @@ impl EditorSession {
             session.opened_numbers = numbers.clone();
             session.numbers = numbers;
             session.settle();
-            self.original = Some(session.paragraphs());
+            self.original = Some((session.paragraphs(), session.figure_signatures()));
         }
         self.original.clone()
+    }
+
+    /// 지금 판 그림 서명: 문단 id → 그림마다 (그림 바이트 · 표시 크기)의 해시. 모델이 없는 판이면 비운다.
+    fn figure_signatures(&self) -> crate::FigureSignatures {
+        use std::hash::{Hash, Hasher};
+        let mut out = crate::FigureSignatures::new();
+        let Some(model) = self.versions[self.current].model.as_ref() else {
+            return out;
+        };
+        for image in &model.document.images {
+            let Some(paragraph) = image.paragraph_id.as_ref() else {
+                continue;
+            };
+            let bytes = model
+                .payloads
+                .iter()
+                .find(|payload| payload.image_id == image.id)
+                .map_or(&[][..], |payload| payload.bytes.as_slice());
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            bytes.hash(&mut hasher);
+            (image.secondary_width, image.secondary_height).hash(&mut hasher);
+            out.entry(paragraph.clone())
+                .or_default()
+                .push(hasher.finish());
+        }
+        out
     }
 
     /// 청구항 인용 검사(지금 판 · 줄은 구분자 없이 이어 특허로 점검 목록과 같은 꼴로).

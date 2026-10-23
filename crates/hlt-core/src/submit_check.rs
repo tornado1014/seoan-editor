@@ -18,6 +18,8 @@ pub enum SubmitKind {
     SignUnused,
     /// 같은 부호가 서로 다른 이름으로 쓰인다(「몸체(10)」 · 「본체(10)」 · 【부호의 설명】 「10: 몸체」).
     SignNames,
+    /// 같은 이름이 서로 다른 부호로 쓰인다(「몸체(10)」 · 「몸체(20)」 — 「10」 · 「10a」는 같은 요소의 부분).
+    SignShared,
     /// 청구항 인용 문제(`claim_citation_issues`).
     Citation,
 }
@@ -368,34 +370,54 @@ fn unused_signs(description: &[&EditorParagraph]) -> Vec<SubmitIssue> {
 /// 이름 · 처음 나온 문단 · 쓰인 수.
 type NameUse<'a> = (String, &'a EditorParagraph, usize);
 
+/// 부호별 이름 쓰임에 하나 더한다(처음이면 그 문단을 적는다).
+fn record<'a>(
+    into: &mut Vec<(String, Vec<NameUse<'a>>)>,
+    sign: &str,
+    name: &str,
+    p: &'a EditorParagraph,
+) {
+    let at = match into.iter().position(|(known, _)| known == sign) {
+        Some(at) => at,
+        None => {
+            into.push((sign.to_string(), Vec::new()));
+            into.len() - 1
+        }
+    };
+    let names = &mut into[at].1;
+    match names.iter_mut().find(|(known, _, _)| known == name) {
+        Some(entry) => entry.2 += 1,
+        None => names.push((name.to_string(), p, 1)),
+    }
+}
+
 /// 부호 일관성: 부호마다 본문 「이름(부호)」 · 【부호의 설명】 「부호: 이름」을 모아, 한쪽이 다른 쪽을 품지 않는
 /// 이름이 둘 이상이면(「몸체」 · 「본체」) 건다 — 「상부 몸체」 ⊃ 「몸체」 는 줄여 부른 것.
 fn sign_names(description: &[&EditorParagraph]) -> Vec<SubmitIssue> {
     // 부호 → (이름, 처음 나온 문단, 쓰인 수) — 처음 나온 차례.
     let mut seen: Vec<(String, Vec<NameUse>)> = Vec::new();
+    // 같은 이름 · 다른 부호 쪽은 꾸밈말까지 든 이름으로 센다(「사용자 단말」 · 「관리자 단말」이 한 「단말」로 뭉치지 않게).
+    let mut full: Vec<(String, Vec<NameUse>)> = Vec::new();
     let mut in_signs = false;
     for p in description {
         if let Some(name) = heading(&p.text) {
             in_signs = name == "부호의 설명";
             continue;
         }
-        let pairs = if in_signs {
-            sign_list(&p.text)
+        if in_signs {
+            for (sign, name) in sign_list(&p.text) {
+                record(&mut seen, &sign, &name, p);
+                record(&mut full, &sign, &name, p);
+            }
         } else {
-            named_signs(&p.text)
-        };
-        for (sign, name) in pairs {
-            let at = match seen.iter().position(|(known, _)| *known == sign) {
-                Some(at) => at,
-                None => {
-                    seen.push((sign, Vec::new()));
-                    seen.len() - 1
-                }
-            };
-            let names = &mut seen[at].1;
-            match names.iter_mut().find(|(known, _, _)| *known == name) {
-                Some(entry) => entry.2 += 1,
-                None => names.push((name, p, 1)),
+            for (sign, name) in named_signs(&p.text) {
+                // 같은 부호 · 다른 이름은 꾸밈말을 뗀 낱말로 견준다(차례말 「제1」은 남긴다).
+                let bare = match name.split_once(' ') {
+                    Some((first, rest)) if !first.starts_with('제') => rest,
+                    _ => name.as_str(),
+                };
+                record(&mut seen, &sign, bare, p);
+                record(&mut full, &sign, &name, p);
             }
         }
     }
@@ -410,6 +432,82 @@ fn sign_names(description: &[&EditorParagraph]) -> Vec<SubmitIssue> {
         }
     };
     let mut out = Vec::new();
+    // 같은 이름 · 다른 부호: 이름(띄어쓰기 · 끝 조사 뗌) → (부호, 쓰인 수, 처음 문단). 「10」 · 「10a」 · 「10'」는 한 요소.
+    // (견줄 이름, 보일 이름, [(부호, 쓰인 수, 처음 문단)])
+    type ByName<'a> = (String, String, Vec<(String, usize, &'a EditorParagraph)>);
+    let mut by_name: Vec<ByName> = Vec::new();
+    for (sign, names) in &full {
+        for (name, p, count) in names {
+            let key = compact(name);
+            let at = match by_name.iter().position(|(known, _, _)| *known == key) {
+                Some(at) => at,
+                None => {
+                    by_name.push((key, name.clone(), Vec::new()));
+                    by_name.len() - 1
+                }
+            };
+            by_name[at].2.push((sign.clone(), *count, p));
+        }
+    }
+    let root = |sign: &str| {
+        sign.trim_end_matches(|ch: char| ch.is_ascii_lowercase() || ch == '\'')
+            .to_string()
+    };
+    // 실물: 이름은 괄호 앞 한 낱말이라 「사용자 단말(100)」 · 「관리자 단말(400)」이 둘 다 「단말」 — 그런 쓰임은 수가 고르다.
+    // 잘못 쓴 부호는 한 부호가 거의 다(4번 넘게)이고 다른 부호가 한두 번이다(「판매희망자」 10 × 158 · 20 × 1).
+    for (_, name, mut signs) in by_name {
+        if name.ends_with('다') {
+            continue; // 「판단한다(300)」 — 이름이 아니라 풀이말
+        }
+        // 한 요소(「10」 · 「10a」)는 수를 합친다.
+        let mut totals: Vec<(String, usize)> = Vec::new();
+        for (sign, count, _) in &signs {
+            let key = root(sign);
+            match totals.iter_mut().find(|(known, _)| *known == key) {
+                Some(entry) => entry.1 += count,
+                None => totals.push((key, *count)),
+            }
+        }
+        totals.sort_by_key(|entry| std::cmp::Reverse(entry.1));
+        let Some(((main, most), rest)) = totals
+            .split_first()
+            .map(|(head, rest)| (head.clone(), rest))
+        else {
+            continue;
+        };
+        let odd: Vec<&String> = rest
+            .iter()
+            .filter(|(_, count)| *count <= 2)
+            // 실시예마다 백 단위로 매긴 같은 요소(「111」 · 「211」 · 「411」)는 넘긴다.
+            .filter(|(sign, _)| !embodiment(&main, sign))
+            .map(|(sign, _)| sign)
+            .collect();
+        if most < 4 || odd.is_empty() {
+            continue;
+        }
+        signs.retain(|(sign, _, _)| root(sign) == main || odd.contains(&&root(sign)));
+        // 같은 부호를 여러 꼴(「구매희망자」 · 「구매희망자가」)로 쓴 수는 합친다.
+        let mut merged: Vec<(String, usize, &EditorParagraph)> = Vec::new();
+        for (sign, count, p) in signs {
+            match merged.iter_mut().find(|(known, _, _)| *known == sign) {
+                Some(entry) => entry.1 += count,
+                None => merged.push((sign, count, p)),
+            }
+        }
+        let mut signs = merged;
+        signs.sort_by_key(|entry| std::cmp::Reverse(entry.1));
+        let rare = signs.last().map(|(_, _, p)| p.id.clone());
+        let list = signs
+            .iter()
+            .map(|(sign, count, _)| format!("{sign}({count})"))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        out.push(SubmitIssue {
+            kind: SubmitKind::SignShared,
+            paragraph_id: rare,
+            detail: format!("「{name}」: 부호 {list}"),
+        });
+    }
     for (sign, mut names) in seen {
         // 다른 이름을 품는 이름만 남긴다(「상부 몸체」가 「몸체」를 품는다).
         // 차례말만 다른 이름(「제1 단말」 · 「제2 단말」)은 맨 이름(「단말」)도 쓰였으면 그 낱낱이다(실물).
@@ -451,6 +549,15 @@ fn sign_names(description: &[&EditorParagraph]) -> Vec<SubmitIssue> {
 }
 
 /// 부호 꼴: 숫자 1~4자리 + 소문자 · 「'」(「10」 · 「10a」 · 「10'」). 단계 「S110」 · 다섯 자리 이상 · 묶음 「10, 20」은 아니다.
+/// 실시예 번호 매김: 끝 두 자리가 같고 앞자리만 다르다(「111」 · 「211」 · 「104」 · 「1304」 · 「32」 · 「432」).
+fn embodiment(a: &str, b: &str) -> bool {
+    a != b
+        && a.len() >= 2
+        && b.len() >= 2
+        && a.len().max(b.len()) >= 3
+        && a[a.len() - 2..] == b[b.len() - 2..]
+}
+
 fn is_sign(text: &str) -> bool {
     let digits = text.chars().take_while(char::is_ascii_digit).count();
     (1..=4).contains(&digits)
@@ -519,7 +626,38 @@ fn named_signs(text: &str) -> Vec<(String, String)> {
         {
             format!("{ordinal} {word}")
         } else {
-            word
+            // 꾸밈말 한 낱말(「사용자 단말」 · 「회원 관리부」) — 조사 · 풀이말 꼴 · 「상기」 같은 가리킴말이면 안 붙인다.
+            let mut q_start = before;
+            while q_start > 0
+                && (is_hangul(chars[q_start - 1]) || chars[q_start - 1].is_ascii_alphanumeric())
+            {
+                q_start -= 1;
+            }
+            let qualifier: String = chars[q_start..before].iter().collect();
+            let plain = qualifier.chars().count() >= 2
+                && qualifier.chars().any(is_hangul)
+                && !qualifier.chars().last().is_some_and(|ch| {
+                    "의은는이가을를에와과로도만서및된한할될인던며고".contains(ch)
+                })
+                && !matches!(
+                    qualifier.as_str(),
+                    "상기"
+                        | "해당"
+                        | "전술"
+                        | "상술"
+                        | "하나"
+                        | "복수"
+                        | "각각"
+                        | "다른"
+                        | "또한"
+                        | "그리고"
+                        | "또는"
+                );
+            if plain && before < start {
+                format!("{qualifier} {word}")
+            } else {
+                word
+            }
         };
         out.push((inner.trim().to_string(), name));
     }
@@ -800,6 +938,49 @@ mod tests {
                 ("p2", "부호 20: 본체(1) · 덮개(1)"),
                 ("p5", "부호 40: 바퀴(1) · 롤러(1)"),
                 ("p3", "부호 60: 제1 스프링(1) · 제2 스프링(1)")
+            ]
+        );
+    }
+
+    #[test]
+    fn same_name_with_a_stray_sign() {
+        let body = |text: &str| doc(&[("【발명의 설명】", None), (text, Some("0001"))]);
+        let shared = |text: &str| -> Vec<String> {
+            submission_checks(&body(text), &[])
+                .into_iter()
+                .filter(|i| i.kind == SubmitKind::SignShared)
+                .map(|i| i.detail)
+                .collect()
+        };
+        // 한 부호가 거의 다 · 다른 부호 한 번 → 건다.
+        assert_eq!(
+            shared("몸체(10) 몸체(10) 몸체(10) 몸체(10) 몸체(20)"),
+            ["「몸체」: 부호 10(4) · 20(1)"]
+        );
+        // 고르게 나뉜 쓰임(꾸밈말이 갈린 다른 요소) · 한 요소의 부분(10a) · 실시예 번호(111 · 211) · 풀이말은 걸지 않는다.
+        assert!(shared("몸체(10) 몸체(10) 몸체(20) 몸체(20)").is_empty());
+        assert!(shared("몸체(10) 몸체(10) 몸체(10) 몸체(10) 몸체(10a)").is_empty());
+        // 다른 부호도 세 번 넘게 쓰이면 따로 쓴 요소다(잘못 쓴 부호는 한두 번).
+        assert!(
+            shared("몸체(10) 몸체(10) 몸체(10) 몸체(10) 몸체(20) 몸체(20) 몸체(20)").is_empty()
+        );
+        assert!(shared("축(111) 축(111) 축(111) 축(111) 축(211)").is_empty());
+        assert!(
+            shared("판단한다(30) 판단한다(30) 판단한다(30) 판단한다(30) 판단한다(40)").is_empty()
+        );
+        // 꾸밈말이 다르면 다른 이름이다(「사용자 단말」 · 「관리자 단말」).
+        assert!(
+            shared(
+                "사용자 단말(10) 사용자 단말(10) 사용자 단말(10) 사용자 단말(10) 관리자 단말(20)"
+            )
+            .is_empty()
+        );
+        // 꾸밈말은 「상기」 같은 가리킴말 · 조사 붙은 낱말이면 붙지 않는다.
+        assert_eq!(
+            named_signs("상기 단말(10) · 사용자의 단말(20)"),
+            [
+                ("10".to_string(), "단말".to_string()),
+                ("20".into(), "단말".into())
             ]
         );
     }

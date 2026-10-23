@@ -1255,3 +1255,48 @@ fn applies_a_review_report_proposal() {
         hlt_core::AmendmentMarks::default()
     );
 }
+
+/// 보정 표시에 도면 교체: 그림만 바꾼 도면도 「바뀐 것」(화면 글 `_` 은 같다) · 바꾸지 않은 도면은 그대로.
+#[test]
+fn amendment_marks_show_a_replaced_figure() {
+    let temp = tempfile::tempdir().unwrap();
+    let fin = synthetic_fin(temp.path());
+    let mut session = EditorSession::open(&fin).unwrap();
+    let figures_changed = |marks: &hlt_core::AmendmentMarks| -> Vec<String> {
+        marks
+            .changed
+            .iter()
+            .filter(|label| label.starts_with("도 "))
+            .cloned()
+            .collect()
+    };
+    assert!(figures_changed(&session.amendment_marks_from(false).unwrap()).is_empty());
+    // 크기는 그대로 · 글만 다른 그림(표시 크기가 같아도 그림이 바뀐 것은 잡혀야 한다).
+    let figure = session.document.images[1].id.clone();
+    let code = session.document.images[1].object_code;
+    let old = image::load_from_memory(&session.image_png(code).unwrap()).unwrap();
+    let mut png = Vec::new();
+    image::RgbImage::from_pixel(old.width(), old.height(), image::Rgb([200, 30, 30]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    session.replace_picture(&figure, &png).unwrap();
+    let marks = session.amendment_marks_from(false).unwrap();
+    let changed = figures_changed(&marks);
+    assert_eq!(changed.len(), 1, "{marks:?}");
+    // 바뀐 줄 표시는 그 도면의 그림 문단에.
+    let paragraphs = session.paragraphs();
+    let heading = paragraphs
+        .iter()
+        .position(|p| p.text.trim() == format!("【{}】", changed[0]))
+        .unwrap();
+    assert!(
+        marks
+            .paragraphs
+            .iter()
+            .any(|mark| mark.id == paragraphs[heading + 1].id),
+        "{marks:?}"
+    );
+    // 글만 견주는 옛 길은 그림을 모른다.
+    let plain = hlt_core::amendment_marks(&session.paragraphs(), &session.paragraphs());
+    assert!(plain.changed.is_empty());
+}

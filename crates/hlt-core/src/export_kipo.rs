@@ -315,31 +315,31 @@ pub fn export_kipo_xml(
         // 본문 인라인 그림(화학 구조식 등). 판독기는 그림 자리에 `_` 를 둔다. 자리 수가 그림 수와
         // 같을 때만 자리마다 <img/> 로 바꾸고, 다르면 문단 끝에 붙인다.
         // 셀 안 그림은 표 마크업 몫이라 여기서 빼고, 【도 N】 은 아래 도면 분기가 맡는다.
-        if !marker.starts_with("【도 ") {
-            if let Some(occurrences) = images_by_paragraph.get(paragraph.id.as_str()) {
-                let inline: Vec<&&ImageOccurrence> = occurrences
+        if !marker.starts_with("【도 ")
+            && let Some(occurrences) = images_by_paragraph.get(paragraph.id.as_str())
+        {
+            let inline: Vec<&&ImageOccurrence> = occurrences
+                .iter()
+                .filter(|image| image.cell_id.is_none())
+                .collect();
+            if !inline.is_empty() {
+                let tags: Vec<String> = inline
                     .iter()
-                    .filter(|image| image.cell_id.is_none())
+                    .map(|image| {
+                        let (tag, exported) = image_markup(
+                            document,
+                            image,
+                            &image_stem,
+                            &image_format,
+                            explicit_format,
+                            import_convention,
+                            export_images.len() + 1,
+                        );
+                        export_images.push(exported);
+                        tag
+                    })
                     .collect();
-                if !inline.is_empty() {
-                    let tags: Vec<String> = inline
-                        .iter()
-                        .map(|image| {
-                            let (tag, exported) = image_markup(
-                                document,
-                                image,
-                                &image_stem,
-                                &image_format,
-                                explicit_format,
-                                import_convention,
-                                export_images.len() + 1,
-                            );
-                            export_images.push(exported);
-                            tag
-                        })
-                        .collect();
-                    markup = place_images(markup, &tags);
-                }
+                markup = place_images(markup, &tags);
             }
         }
 

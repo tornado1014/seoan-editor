@@ -384,3 +384,7 @@ progress {
   .basis-side { border-left: none; border-top: 1px solid #e7dfd1; }
   .basis-draft { min-height: 140px; flex: none; height: 30vh; }
 }
+.basis-more { display: flex; flex-direction: column; gap: 4px; }
+.basis-more[hidden] { display: none; }
+.basis-more-toggle { align-self: flex-start; margin: 2px 0 0 8px; border: none; background: none; color: #24407a; font: inherit; font-size: 12px; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.basis-more-toggle:hover { background: #eef4fb; }

@@ -465,6 +465,7 @@ fn gen_cell(
 }
 
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn real_docx_centered_headings_use_the_native_flat_line_spacing_shape() {
     // 네이티브 저장본은 가운데 정렬, 들여쓰기 0, 줄간격 160 문단모양(내장 PCT 프로필 1번)을
     // 상단 앵커 4종, 표제 3종, 도면 문단 1건에 쓴다. 【청구범위】,【요약서】,【도면】 은

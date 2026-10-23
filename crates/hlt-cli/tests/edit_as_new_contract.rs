@@ -429,6 +429,31 @@ fn opens_an_attached_final_with_the_amendment_beside_it() {
     std::fs::write(attached.join("x보정서.dta"), &dta).unwrap();
     assert!(texts(&attached.join("x보정서첨부.fin")).contains(&amended));
 
+    // 실물처럼 dta 를 이미 담은 첨부 fin 옆에 같은 dta 가 다른 이름으로 있어도 두 번 걸지 않는다.
+    let twice = temp.path().join("twice");
+    std::fs::create_dir(&twice).unwrap();
+    std::fs::copy(path("spec_1.fin"), twice.join("z보정서첨부.fin")).unwrap();
+    std::fs::write(twice.join("z보정서.dta"), &dta).unwrap();
+    assert_eq!(
+        texts(&twice.join("z보정서첨부.fin")),
+        texts(std::path::Path::new(&path("spec_1.fin")))
+    );
+    // 다음 보정을 내면 새 최종본엔 dta 가 둘(안의 1차 + 새 2차) — 옆 것을 또 싣지 않는다.
+    edit(
+        twice.join("z보정서첨부.fin").to_str().unwrap(),
+        &path("z_2.fin"),
+        "z_2.dta",
+        "특히 덮개에 관한 것이다.",
+        "특히 작은 덮개에 관한 것이다.",
+    );
+    assert_eq!(
+        entries(&path("z_2.fin"))
+            .iter()
+            .filter(|(name, _)| name.ends_with(b".dta"))
+            .count(),
+        2
+    );
+
     // ① xresult 가 부르는 spec_1.dta 를 zip 에서 뺀 최종본 → 옆에 있으면 열리고 없으면 거절.
     let missing = temp.path().join("missing");
     std::fs::create_dir(&missing).unwrap();

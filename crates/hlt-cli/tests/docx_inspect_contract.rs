@@ -16,6 +16,7 @@ fn json(output: &Output) -> serde_json::Value {
 }
 
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn real_docx_summary_is_safe_bounded_and_schema_valid() {
     let output = run(&[
         "inspect-docx",
@@ -44,6 +45,7 @@ fn real_docx_summary_is_safe_bounded_and_schema_valid() {
 }
 
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn docx_media_is_pageable_without_payload_bytes() {
     let value = json(&run(&[
         "inspect-docx",

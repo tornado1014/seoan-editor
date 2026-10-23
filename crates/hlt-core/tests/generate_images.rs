@@ -143,6 +143,7 @@ fn plans_all_281_counterpart_image_occurrences_from_123_named_files() {
 }
 
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn plans_all_69_docx_image_occurrences_from_embedded_opc_media() {
     let source = repo_root().join("work/pct_a/diagnostics/pct_a_source.docx");
     let parsed = inspect_docx_path(&source).unwrap();
@@ -282,6 +283,7 @@ fn builds_grayscale_tiff_when_the_source_image_is_grayscale() {
 }
 
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn real_docx_generation_keeps_grayscale_payloads() {
     // 원본 DOCX 의 JPEG 69장은 전부 8비트 그레이스케일이고 네이티브 저장본도 그대로
     // 그레이스케일 TIFF 로 담는다. 레코드 크기 = 프리픽스 384 + TIFF 헤더 364 + 가로 × 세로.

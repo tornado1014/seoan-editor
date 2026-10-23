@@ -177,9 +177,10 @@ pub fn check_claims(
 /// 페이지 JS 는 「목록 위치 = 청구항 번호」를 전제한다(빈 번호가 있으면 뒤 항의 인용이 한 칸씩 밀린다).
 /// 보정 명세서는 삭제한 항이 통째로 빠진다(after: 7·17) — 빈 번호에 보정서 꼴 「삭제」 항을 채운다.
 /// 번호가 겹치거나 줄면 거절한다(예: 47·48 이 두 번 — 페이지도 스택이 넘친다 · 통특기도 변환하지 않는다).
-fn fill_deleted(
-    claims: &[(String, String)],
-) -> Result<(Vec<(String, String)>, Vec<String>), CoreError> {
+/// (번호, 본문) 목록.
+type Claims = Vec<(String, String)>;
+
+fn fill_deleted(claims: &[(String, String)]) -> Result<(Claims, Vec<String>), CoreError> {
     let (mut out, mut filled) = (Vec::new(), Vec::new());
     for (no, text) in claims {
         let number: usize = no.parse().unwrap_or(0);

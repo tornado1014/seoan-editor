@@ -210,6 +210,7 @@ fn table_cells_have_stable_ids_ranges_and_line_links() {
 /// 역변환기가 셀의 정렬, 들여쓰기, 줄간격을 되살리려면 줄마다 필요하다.
 /// 네이티브 PCT 저장본 실측: 표 셀 줄은 전부 `shape:14`(justified) 다.
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn every_line_reports_its_paragraph_shape() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")

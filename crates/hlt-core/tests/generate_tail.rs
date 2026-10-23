@@ -146,6 +146,7 @@ fn maps_semantic_table_geometry_and_line_ranges_to_tail_records() {
 }
 
 #[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
 fn real_docx_table_generation_matches_native_hlt_cell_geometry_and_shapes() {
     let path = repo_root().join("work/pct_a/diagnostics/pct_a_source.docx");
     let document = inspect_docx_path(&path).unwrap().document;

@@ -81,7 +81,7 @@ pub fn read_review_report(path: &Path) -> Result<ReviewReport, CoreError> {
         .map_err(|_| report_error("document_part"))?
         .read_to_string(&mut xml)
         .map_err(|_| report_error("document_part"))?;
-    Ok(review_from_document_xml(&xml)?)
+    review_from_document_xml(&xml)
 }
 
 /// `word/document.xml` → 보고서. 표 밖 문장과, 보정안이 아닌 표의 문장에서 오기 후보를 찾는다.

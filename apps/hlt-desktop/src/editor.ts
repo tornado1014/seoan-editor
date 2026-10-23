@@ -1642,7 +1642,14 @@ export function mountEditor(root: HTMLElement): void {
                   <div class="basis-phrase-text"><span class="basis-label">새로 넣은 말</span>${escape(phrase.text)}</div>
                   ${
                     phrase.hits.length
-                      ? `<div class="basis-hits">${phrase.hits.map((hit, h) => hitRow(hit, c, p, h)).join('')}</div>`
+                      ? `<div class="basis-hits">${phrase.hits.slice(0, 3).map((hit, h) => hitRow(hit, c, p, h)).join('')}${
+                          phrase.hits.length > 3
+                            ? `<div class="basis-more" hidden>${phrase.hits
+                                .slice(3)
+                                .map((hit, h) => hitRow(hit, c, p, h + 3))
+                                .join('')}</div><button type="button" class="basis-more-toggle">후보 ${phrase.hits.length - 3}개 더 보기</button>`
+                            : ''
+                        }</div>`
                       : '<div class="basis-none">근거 단락을 찾지 못했습니다 — 초안에 직접 쓰세요.</div>'
                   }
                 </div>`,
@@ -1720,6 +1727,13 @@ export function mountEditor(root: HTMLElement): void {
           place({ paragraph: target.id, offset: 0 }, false);
         });
       }
+      for (const toggle of box.querySelectorAll<HTMLButtonElement>('.basis-more-toggle')) {
+        toggle.addEventListener('click', () => {
+          const more = toggle.previousElementSibling as HTMLElement;
+          more.hidden = !more.hidden;
+          toggle.textContent = more.hidden ? `후보 ${more.children.length}개 더 보기` : '후보 접기';
+        });
+      }
       box.addEventListener('submit', (event) => event.preventDefault());
       shade.append(box);
       root.append(shade);
@@ -1738,6 +1752,7 @@ export function mountEditor(root: HTMLElement): void {
       ['figure_unmentioned', '본문이 말하지 않는 도면'],
       ['sign_unused', '본문에 안 나오는 부호'],
       ['sign_names', '같은 부호 · 다른 이름(괄호 안 = 쓰인 수)'],
+      ['sign_shared', '같은 이름 · 다른 부호(한두 번만 다른 부호)'],
       ['citation', '청구항 인용'],
     ];
     return new Promise((resolve) => {

@@ -291,9 +291,9 @@ pub(crate) fn line_heights(document: &InspectDocument, inflated: &[u8]) -> Heigh
             keep.insert(pair[0].2);
         }
     }
-    for line in 0..n {
+    for (line, mark) in out.iter_mut().enumerate().take(n) {
         if raw(line).contains(&FORM_FEED) {
-            out[line] = BREAK;
+            *mark = BREAK;
         }
     }
     (out, keep, pad, printed)
