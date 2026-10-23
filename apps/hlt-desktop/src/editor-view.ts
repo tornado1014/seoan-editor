@@ -91,6 +91,8 @@ export interface OutlineNode {
   id: string | null;
   label: string;
   children: OutlineNode[];
+  /** 이름 뒤 작은 글(청구항 나무: 다중 인용 · 종속항 수). */
+  note?: string;
 }
 
 /** 큰 절(뿌리 바로 아래). */
@@ -140,6 +142,37 @@ export function outlineTree(title: string, paragraphs: { id: string; text: strin
     }
   }
   return root;
+}
+
+const CLAIM = /^청구항 (\d+)$/;
+
+/** 청구항 나무: 형제로 늘어선 「청구항 N」을 첫 인용 항 아래로 옮긴다(`parents` = 항 → 인용하는 앞 항 · 빈 = 독립항).
+ *  다중 인용은 「제1·3항」, 아래 종속항이 있으면 「종속 N」을 이름 뒤에 단다. 고친 나무를 돌려준다(제자리). */
+export function nestClaims(node: OutlineNode, parents: Record<string, number[]>): OutlineNode {
+  const claims = new Map<number, OutlineNode>();
+  for (const child of node.children) {
+    const number = CLAIM.exec(child.label)?.[1];
+    if (number) claims.set(Number(number), child);
+  }
+  if (claims.size) {
+    node.children = node.children.filter((child) => {
+      const number = Number(CLAIM.exec(child.label)?.[1]);
+      const cited = parents[number] ?? [];
+      if (cited.length > 1) child.note = `제${cited.join('·')}항`;
+      const parent = claims.get(cited[0]);
+      if (!parent) return true;
+      parent.children.push(child);
+      return false;
+    });
+    const count = (claim: OutlineNode): number =>
+      claim.children.reduce((sum, child) => sum + (CLAIM.test(child.label) ? 1 + count(child) : 0), 0);
+    for (const claim of claims.values()) {
+      const below = count(claim);
+      if (below) claim.note = [claim.note, `종속 ${below}`].filter(Boolean).join(' · ');
+    }
+  }
+  for (const child of node.children) if (!CLAIM.test(child.label)) nestClaims(child, parents);
+  return node;
 }
 
 export const SUPERSCRIPT = 16;

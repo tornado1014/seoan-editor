@@ -1300,3 +1300,33 @@ fn amendment_marks_show_a_replaced_figure() {
     let plain = hlt_core::amendment_marks(&session.paragraphs(), &session.paragraphs());
     assert!(plain.changed.is_empty());
 }
+
+#[test]
+#[ignore = "실물 work/pct_a 필요(공개 저장소에 없음 · 있으면 --ignored 로)"]
+fn comparing_with_another_hlt_marks_only_the_edited_paragraphs() {
+    // 식별번호 없는 그냥 HLT 끼리: 상세설명 문단을 글 차례로 짝짓는다 — 긴 문서에서 한 곳 고침이 한 곳으로만 나와야 한다
+    // (앞 · 뒤 같은 곳을 먼저 짝짓기 전에는 되풀이 문단에 짝이 엇나가 수백 문단이 지운 것 · 넣은 것으로 나왔다).
+    let real =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../work/pct_a/pct_a_full_v5.HLT");
+    let mut session = EditorSession::open(&real).unwrap();
+    session.compare_with(&real).unwrap();
+    let unchanged = session.amendment_marks_against_file().unwrap();
+    assert!(
+        unchanged.changed.is_empty() && unchanged.added.is_empty() && unchanged.removed.is_empty()
+    );
+    let long: Vec<_> = session
+        .paragraphs()
+        .into_iter()
+        .filter(|p| p.text.chars().count() > 40 && !p.text.starts_with('【'))
+        .collect();
+    session
+        .replace_text(&long[30].id, &format!("{}추가", long[30].text))
+        .unwrap();
+    session
+        .replace_text(&long[200].id, &format!("{}\n새 문단", long[200].text))
+        .unwrap();
+    let marks = session.amendment_marks_against_file().unwrap();
+    assert_eq!(marks.changed.len(), 1, "{:?}", marks.changed);
+    assert_eq!(marks.added.len(), 1, "{:?}", marks.added);
+    assert!(marks.removed.is_empty(), "{:?}", marks.removed);
+}

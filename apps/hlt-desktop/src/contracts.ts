@@ -270,6 +270,8 @@ export interface AmendmentDoneDto {
   fin: string;
   order: number;
   items: AmendItemDto[];
+  /** 보정 전후 대비표(.docx · dta 옆 · 못 썼으면 `null`). */
+  table: string | null;
 }
 export const editorExportAmendment = () => invoke<AmendmentDoneDto | null>('editor_export_amendment');
 /** OA 검토보고서(docx)에서 읽은 보정안 · 상세설명 오기 후보 · 도면 할 일. */
@@ -302,9 +304,26 @@ export type AmendmentMarksDto = {
   added: string[];
   removed: string[];
 };
-/** `original` = 원출원(fin 안 보정서 적용 전)에 견준다 · 아니면 연 상태(연 뒤 고친 것). */
-export const editorAmendmentMarks = (original = false) =>
-  invoke<AmendmentMarksDto | null>('editor_amendment_marks', { original });
+/** `original` = 원출원(fin 안 보정서 적용 전)에 견준다 · `file` = 「다른 파일…」로 고른 파일에 · 아니면 연 상태(연 뒤 고친 것). */
+export const editorAmendmentMarks = (original = false, file = false) =>
+  invoke<AmendmentMarksDto | null>('editor_amendment_marks', { original, file });
+/** 보정 표시 기준 「다른 파일…」: 견줄 파일을 고른다(고른 파일 이름 · 취소 = `null`). */
+export const editorComparePick = () => invoke<string | null>('editor_compare_pick');
+/** 자동 저장(고친 것이 있으면 복구본을 두고 없으면 지운다). */
+export const editorAutosave = () => invoke<void>('editor_autosave');
+/** 일괄 처리(폴더를 고르는 것부터 · 취소 = `null`). 진행은 `batch-progress` 사건. */
+export type BatchRowDto = { file: string; status: string; detail: string };
+export type BatchCheckRowDto = { file: string; counts: Partial<Record<SubmitKindDto, number>>; error: string | null };
+export const editorBatchGenerate = () => invoke<BatchRowDto[] | null>('editor_batch_generate');
+export const editorBatchCheck = () => invoke<BatchCheckRowDto[] | null>('editor_batch_check');
+export const editorBatchStop = () => invoke<void>('editor_batch_stop');
+/** 표를 CSV 로 저장(이름을 묻는다 · 취소 = `null`). */
+/** 원문과 나란히 보기: 원문 문단 + 짝 이름(`p:0001` · `claim:3`). */
+export type SourceParagraphDto = { key: string | null; text: string };
+export const editorSourceOpen = () => invoke<SourceParagraphDto[] | null>('editor_source_open');
+/** 지금 판 문단마다 원문 짝 이름(화면 문단 차례). */
+export const editorParagraphKeys = () => invoke<(string | null)[]>('editor_paragraph_keys');
+export const editorSaveCsv = (name: string, text: string) => invoke<string | null>('editor_save_csv', { name, text });
 /** 청구항 인용 문제. 앞 넷은 특허로 점검 페이지와 같은 판정 · 뒤 셋은 앱만 보는 규칙. */
 export type CitationKindDto =
   | 'mis_reference'
@@ -316,6 +335,8 @@ export type CitationKindDto =
   | 'range_no_alternative';
 export type CitationIssueDto = { claim: number; kind: CitationKindDto; cited: number[] };
 export const editorClaimIssues = () => invoke<CitationIssueDto[]>('editor_claim_issues');
+/** 청구항 나무: 항 번호 → 인용하는 앞 항(빈 = 독립항). */
+export const editorClaimParents = () => invoke<Record<string, number[]>>('editor_claim_parents');
 export type SubmitKindDto = 'unnumbered' | 'figure_missing' | 'figure_unmentioned' | 'sign_unused' | 'sign_names' | 'sign_shared' | 'citation';
 /** 제출 전 점검 한 줄(가 볼 문단 · 없으면 문서 전체의 일). */
 export type SubmitIssueDto = { kind: SubmitKindDto; paragraph_id: string | null; detail: string };

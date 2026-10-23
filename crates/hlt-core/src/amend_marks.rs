@@ -24,6 +24,117 @@ pub struct AmendmentMarks {
     pub removed: Vec<String>,
 }
 
+/// 보정 전후 대비표 한 줄: 요소 이름 · 보정 전 글 · 보정 후 글(줄은 `\n`) · 지운 글자 범위(보정 전) · 넣은 글자 범위(보정 후).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct AmendRow {
+    pub label: String,
+    pub before: String,
+    pub after: String,
+    pub deleted: Vec<(usize, usize)>,
+    pub inserted: Vec<(usize, usize)>,
+}
+
+/// 보정 전후 대비표: 보정 표시와 같은 요소 · 같은 비교로 바뀐 것 · 새 것 · 지운 것만, 상세설명 → 청구항 → 도면 차례.
+/// 도면은 그림이라 글 대신 「(그림)」을 쓴다.
+pub fn amendment_table(
+    before: &[EditorParagraph],
+    now: &[EditorParagraph],
+    before_figures: &FigureSignatures,
+    now_figures: &FigureSignatures,
+) -> Vec<AmendRow> {
+    let joined = |unit: &Unit| -> String {
+        if unit.key.starts_with("figure:") {
+            return "(그림)".to_string();
+        }
+        let texts: Vec<&str> = unit.parts.iter().map(|p| p.text.as_str()).collect();
+        texts.join("\n")
+    };
+    let figures = |unit: &Unit, signatures: &FigureSignatures| -> Vec<Vec<u64>> {
+        unit.parts
+            .iter()
+            .map(|part| signatures.get(&part.id).cloned().unwrap_or_default())
+            .collect()
+    };
+    let compare_figures = !before_figures.is_empty() && !now_figures.is_empty();
+    let (old_units, new_units) = (units(before), units(now));
+    let mut rows: Vec<((u8, u64, usize), AmendRow)> = Vec::new();
+    let order = |unit: &Unit, at: usize| {
+        let rank = match unit.key.split(':').next() {
+            Some("claim") => 1,
+            Some("figure") => 2,
+            _ => 0,
+        };
+        let digits: String = unit
+            .key
+            .chars()
+            .skip_while(|c| !c.is_ascii_digit())
+            .take_while(char::is_ascii_digit)
+            .collect();
+        (rank, digits.parse().unwrap_or(u64::MAX), at)
+    };
+    for (at, unit) in new_units.iter().enumerate() {
+        let after = joined(unit);
+        let Some(old) = old_units.iter().find(|old| old.key == unit.key) else {
+            let length = after.chars().count();
+            rows.push((
+                order(unit, at),
+                AmendRow {
+                    label: unit.label.clone(),
+                    inserted: vec![(0, length)],
+                    after,
+                    ..AmendRow::default()
+                },
+            ));
+            continue;
+        };
+        let before = joined(old);
+        let figure_changed =
+            compare_figures && figures(old, before_figures) != figures(unit, now_figures);
+        if before == after && !figure_changed {
+            continue;
+        }
+        let (old_chars, new_chars): (Vec<char>, Vec<char>) =
+            (before.chars().collect(), after.chars().collect());
+        let mut row = AmendRow {
+            label: unit.label.clone(),
+            ..AmendRow::default()
+        };
+        let mut matcher = SequenceMatcher::new(&old_chars, &new_chars);
+        for op in matcher.get_opcodes() {
+            if op.tag == "equal" {
+                continue;
+            }
+            if op.first_end > op.first_start {
+                row.deleted.push((op.first_start, op.first_end));
+            }
+            if op.second_end > op.second_start {
+                row.inserted.push((op.second_start, op.second_end));
+            }
+        }
+        row.before = before;
+        row.after = after;
+        rows.push((order(unit, at), row));
+    }
+    for (at, old) in old_units.iter().enumerate() {
+        if new_units.iter().any(|unit| unit.key == old.key) {
+            continue;
+        }
+        let before = joined(old);
+        let length = before.chars().count();
+        rows.push((
+            order(old, at),
+            AmendRow {
+                label: old.label.clone(),
+                deleted: vec![(0, length)],
+                before,
+                ..AmendRow::default()
+            },
+        ));
+    }
+    rows.sort_by_key(|(key, _)| *key);
+    rows.into_iter().map(|(_, row)| row).collect()
+}
+
 /// 비교 단위 = 보정서 요소: 식별번호 문단 · 청구항(표제 뒤 본문 줄들). 「+」(새 문단)는 하나하나 새 요소.
 struct Unit<'a> {
     key: String,
@@ -90,6 +201,90 @@ fn units(paragraphs: &[EditorParagraph]) -> Vec<Unit<'_>> {
         }
     }
     out
+}
+
+/// 번호를 받을 상세설명 문단 차례(【발명의 설명】 안 · 표제와 【발명의 명칭】 글은 빼고 【표 N】 · 【수학식 N】 · 【화학식 N】은 넣는다).
+pub(crate) fn description_body(paragraphs: &[EditorParagraph]) -> Vec<usize> {
+    let (mut inside, mut title) = (false, false);
+    let mut out = Vec::new();
+    for (at, paragraph) in paragraphs.iter().enumerate() {
+        let text = paragraph.text.trim();
+        if let Some(name) = text.strip_prefix('【').and_then(|t| t.strip_suffix('】')) {
+            if ["표 ", "수학식 ", "화학식 "]
+                .iter()
+                .any(|kind| name.starts_with(kind))
+            {
+                if inside {
+                    out.push(at);
+                }
+                continue;
+            }
+            match name {
+                "발명의 설명" => inside = true,
+                "청구범위" | "특허청구범위" | "요약서" | "도면" => inside = false,
+                _ => {}
+            }
+            title = name == "발명의 명칭";
+            continue;
+        }
+        if inside && !title {
+            out.push(at);
+        }
+    }
+    out
+}
+
+/// 식별번호가 없는 두 판(그냥 HLT — 번호는 제출파일을 만들 때 매긴다)을 견주려고 상세설명 문단에 짝 번호를 매긴다.
+/// 두 판의 상세설명 문단(【발명의 설명】 안 · 표제와 【발명의 명칭】 글은 빼고 【표 N】 등은 넣는다) 글을 차례 맞춤해,
+/// 짝(같은 글 · 바뀐 글)은 같은 번호(지금 판 차례 `0001`…), 지금 판에만 있는 문단도 그 차례 번호, 앞 판에만 있는 문단은
+/// `이전 0003`(앞 판 차례)을 단다. 어느 한쪽에 번호가 하나라도 있으면 그대로 둔다.
+pub fn number_unnumbered(before: &mut [EditorParagraph], now: &mut [EditorParagraph]) {
+    if before.iter().chain(now.iter()).any(|p| p.number.is_some()) {
+        return;
+    }
+    let (old, new) = (description_body(before), description_body(now));
+    let old_texts: Vec<&str> = old.iter().map(|&at| before[at].text.as_str()).collect();
+    let new_texts: Vec<&str> = new.iter().map(|&at| now[at].text.as_str()).collect();
+    // 같은 앞 · 뒤는 차례대로 짝짓고 가운데만 맞춘다 — 긴 목록 통째로는 「_」(그림) 같은 되풀이 문단에 짝이 엇나갔다
+    // (실물: 한 곳 고침에 203 문단이 지운 것 · 넣은 것으로 나왔다).
+    let head = old_texts
+        .iter()
+        .zip(&new_texts)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let tail = old_texts[head..]
+        .iter()
+        .rev()
+        .zip(new_texts[head..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut paired: Vec<Option<usize>> = (0..old.len())
+        .map(|j| match j {
+            j if j < head => Some(j),
+            j if j >= old.len() - tail => Some(j + new.len() - old.len()),
+            _ => None,
+        })
+        .collect();
+    let (old_middle, new_middle) = (
+        &old_texts[head..old.len() - tail],
+        &new_texts[head..new.len() - tail],
+    );
+    let mut matcher = SequenceMatcher::new(old_middle, new_middle);
+    for op in matcher.get_opcodes() {
+        let pairs = (op.first_end - op.first_start).min(op.second_end - op.second_start);
+        for k in 0..pairs {
+            paired[head + op.first_start + k] = Some(head + op.second_start + k);
+        }
+    }
+    for (k, &at) in new.iter().enumerate() {
+        now[at].number = Some(format!("{:04}", k + 1));
+    }
+    for (j, &at) in old.iter().enumerate() {
+        before[at].number = Some(match paired[j] {
+            Some(k) => format!("{:04}", k + 1),
+            None => format!("이전 {:04}", j + 1),
+        });
+    }
 }
 
 /// 문단 id → 그 문단 그림들의 서명(그림 바이트 · 표시 크기). 비면 그림은 견주지 않는다.
@@ -665,6 +860,30 @@ pub struct CitationIssue {
     pub cited: Vec<u32>,
 }
 
+/// 청구항마다 인용하는 앞 항(작은 번호부터 · 겹침 없이). 인용 읽기는 인용 검사와 같다(「위 항들」 = 앞 항 전부 ·
+/// 「제N항 내지 제M항」 · 「청구항 1 내지 3」 묶음). 뒤 항 · 없는 항 인용은 뺀다(그건 인용 검사 몫). 빈 목록 = 독립항.
+pub fn claim_parents(claims: &[(u32, String)]) -> std::collections::BTreeMap<u32, Vec<u32>> {
+    let numbers: std::collections::BTreeSet<u32> =
+        claims.iter().map(|(number, _)| *number).collect();
+    claims
+        .iter()
+        .map(|(number, text)| {
+            let read = citations(text)
+                .into_iter()
+                .flat_map(|citation| match citation {
+                    Citation::AllPrevious => (1..*number).collect::<Vec<_>>(),
+                    Citation::Range(from, to, _) => (from..=to.unwrap_or(from)).collect(),
+                });
+            let grouped = groups(text).into_iter().flat_map(|group| group.numbers);
+            let parents: std::collections::BTreeSet<u32> = read
+                .chain(grouped)
+                .filter(|cited| cited < number && numbers.contains(cited))
+                .collect();
+            (*number, parents.into_iter().collect())
+        })
+        .collect()
+}
+
 /// 청구항 인용 검사. `claims` = (번호, 본문 — 줄을 구분자 없이 이은 글: 특허로 목록처럼 `<br/>` 를 지운 꼴), 번호 차례.
 pub fn claim_citation_issues(claims: &[(u32, String)]) -> Vec<CitationIssue> {
     let numbers: std::collections::BTreeSet<u32> =
@@ -1046,6 +1265,172 @@ mod tests {
             .into_iter()
             .map(|issue| (issue.claim, issue.kind, issue.cited))
             .collect()
+    }
+
+    fn plain(texts: &[&str]) -> Vec<EditorParagraph> {
+        texts
+            .iter()
+            .enumerate()
+            .map(|(at, text)| paragraph(&format!("paragraph:{at}"), text, None))
+            .collect()
+    }
+
+    #[test]
+    fn amendment_table_lists_changed_added_and_removed_in_document_order() {
+        let before = vec![
+            paragraph("c", "가나다", Some("0001")),
+            paragraph("d", "그대로", Some("0002")),
+            paragraph("e", "지울 글", Some("0003")),
+            paragraph("a", "【청구항 1】", None),
+            paragraph("b", "장치.", None),
+        ];
+        let now = vec![
+            paragraph("c", "가X다", Some("0001")),
+            paragraph("d", "그대로", Some("0002")),
+            paragraph("a", "【청구항 1】", None),
+            paragraph("b", "장치.", None),
+            paragraph("f", "【청구항 2】", None),
+            paragraph("g", "새 항.", None),
+        ];
+        let rows = amendment_table(
+            &before,
+            &now,
+            &FigureSignatures::new(),
+            &FigureSignatures::new(),
+        );
+        let labels: Vec<&str> = rows.iter().map(|row| row.label.as_str()).collect();
+        assert_eq!(labels, ["【0001】", "【0003】", "청구항 2"]);
+        assert_eq!(
+            (rows[0].before.as_str(), rows[0].after.as_str()),
+            ("가나다", "가X다")
+        );
+        assert_eq!(
+            (rows[0].deleted.clone(), rows[0].inserted.clone()),
+            (vec![(1, 2)], vec![(1, 2)])
+        );
+        assert_eq!(
+            (
+                rows[1].before.as_str(),
+                rows[1].after.as_str(),
+                rows[1].deleted.clone()
+            ),
+            ("지울 글", "", vec![(0, 4)])
+        );
+        assert_eq!(
+            (
+                rows[2].before.as_str(),
+                rows[2].after.as_str(),
+                rows[2].inserted.clone()
+            ),
+            ("", "새 항.", vec![(0, 4)])
+        );
+    }
+
+    #[test]
+    fn unnumbered_files_pair_description_paragraphs_by_text_order() {
+        let mut before = plain(&[
+            "【발명의 설명】",
+            "【발명의 명칭】",
+            "장치",
+            "【기술분야】",
+            "가나다",
+            "지울 문단",
+            "라마바",
+            "【표 1】",
+            "【청구범위】",
+            "【청구항 1】",
+            "장치.",
+        ]);
+        let mut now = plain(&[
+            "【발명의 설명】",
+            "【발명의 명칭】",
+            "장치",
+            "【기술분야】",
+            "가나다",
+            "라마바사",
+            "넣은 문단",
+            "【표 1】",
+            "【청구범위】",
+            "【청구항 1】",
+            "장치.",
+        ]);
+        number_unnumbered(&mut before, &mut now);
+        let numbers = |paragraphs: &[EditorParagraph]| -> Vec<Option<String>> {
+            paragraphs.iter().map(|p| p.number.clone()).collect()
+        };
+        let n = |text: &str| Some(text.to_string());
+        assert_eq!(
+            numbers(&now),
+            [
+                None,
+                None,
+                None,
+                None,
+                n("0001"),
+                n("0002"),
+                n("0003"),
+                n("0004"),
+                None,
+                None,
+                None
+            ]
+        );
+        // 「지울 문단」 · 「라마바」 ↔ 「라마바사」 · 「넣은 문단」: 바뀐 자리는 차례대로 짝짓는다.
+        assert_eq!(
+            numbers(&before),
+            [
+                None,
+                None,
+                None,
+                None,
+                n("0001"),
+                n("0002"),
+                n("0003"),
+                n("0004"),
+                None,
+                None,
+                None
+            ]
+        );
+        let marks = amendment_marks(&before, &now);
+        assert_eq!(marks.changed, ["【0002】", "【0003】"]);
+
+        let mut gone = plain(&["【발명의 설명】", "가", "나", "다"]);
+        let mut kept = plain(&["【발명의 설명】", "가", "다"]);
+        number_unnumbered(&mut gone, &mut kept);
+        assert_eq!(numbers(&gone), [None, n("0001"), n("이전 0002"), n("0002")]);
+        assert_eq!(amendment_marks(&gone, &kept).removed, ["【이전 0002】"]);
+
+        // 한쪽이라도 번호가 있으면(최종본 · 보정 명세서) 건드리지 않는다.
+        let mut numbered = plain(&["【발명의 설명】", "가"]);
+        numbered[1].number = n("0001");
+        let mut other = plain(&["【발명의 설명】", "가"]);
+        number_unnumbered(&mut numbered, &mut other);
+        assert_eq!(numbers(&other), [None, None]);
+    }
+
+    #[test]
+    fn claim_parents_reads_ranges_lists_and_all_previous() {
+        let claims: Vec<(u32, String)> = [
+            (1, "장치."),
+            (2, "제1항에 있어서, 부재."),
+            (3, "청구항 1 내지 2 중 어느 한 항에 있어서."),
+            (4, "제2항 또는 제3항에 있어서, 상기 청구항 1의 부재."),
+            (5, "위 항들 중 어느 한 항에 있어서."),
+            (6, "제6항 또는 제9항에 있어서."),
+            (8, "제7항에 있어서."),
+        ]
+        .into_iter()
+        .map(|(number, text)| (number, text.to_string()))
+        .collect();
+        let parents = claim_parents(&claims);
+        assert_eq!(parents[&1], Vec::<u32>::new());
+        assert_eq!(parents[&2], [1]);
+        assert_eq!(parents[&3], [1, 2]);
+        assert_eq!(parents[&4], [2, 3], "「상기 청구항 1」은 인용이 아니다");
+        assert_eq!(parents[&5], [1, 2, 3, 4]);
+        assert_eq!(parents[&6], Vec::<u32>::new(), "자기 · 뒤 항 인용은 뺀다");
+        assert_eq!(parents[&8], Vec::<u32>::new(), "없는 항 인용은 뺀다");
     }
 
     #[test]

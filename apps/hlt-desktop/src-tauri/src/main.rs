@@ -5,22 +5,26 @@ mod capabilities;
 mod commands;
 mod editor;
 mod recent;
+mod recovery;
 mod update;
 
 use commands::{AppState, cancel_verify, select_hlt, verify_file};
 use editor::{
     EditorState, editor_amendment_basis, editor_amendment_marks, editor_apply_review,
-    editor_cell_position, editor_cell_text, editor_claim_issues, editor_close,
-    editor_close_document, editor_cp949_scan, editor_delete_range, editor_delete_table,
-    editor_export_amendment, editor_export_docx, editor_export_fin, editor_find, editor_image,
-    editor_import, editor_import_finish, editor_insert_figure, editor_insert_item,
-    editor_insert_picture, editor_insert_table, editor_log, editor_merge_paragraph,
-    editor_new_opinion, editor_new_tab, editor_number_paragraphs, editor_open, editor_open_pending,
-    editor_page, editor_print_pdf, editor_read_review, editor_redo, editor_remove_items,
-    editor_replace, editor_replace_cell_text, editor_replace_picture, editor_replace_text,
+    editor_autosave, editor_batch_check, editor_batch_generate, editor_batch_stop,
+    editor_cell_position, editor_cell_text, editor_claim_issues, editor_claim_parents,
+    editor_close, editor_close_document, editor_compare_pick, editor_cp949_scan,
+    editor_delete_range, editor_delete_table, editor_export_amendment, editor_export_docx,
+    editor_export_fin, editor_find, editor_image, editor_import, editor_import_finish,
+    editor_insert_figure, editor_insert_item, editor_insert_picture, editor_insert_table,
+    editor_log, editor_merge_paragraph, editor_new_opinion, editor_new_tab,
+    editor_number_paragraphs, editor_open, editor_open_pending, editor_page, editor_paragraph_keys,
+    editor_print_pdf, editor_read_review, editor_redo, editor_remove_items, editor_replace,
+    editor_replace_cell_text, editor_replace_picture, editor_replace_text,
     editor_replace_text_page_break, editor_resize_image, editor_save, editor_save_as,
-    editor_set_alignment, editor_set_indent, editor_set_size, editor_submission_checks,
-    editor_table_edit, editor_toggle_format, editor_toggle_format_spans, editor_undo, editor_view,
+    editor_save_csv, editor_set_alignment, editor_set_indent, editor_set_size, editor_source_open,
+    editor_submission_checks, editor_table_edit, editor_toggle_format, editor_toggle_format_spans,
+    editor_undo, editor_view,
 };
 
 /// 그 창 화면에 「닫으려 한다」를 알린다(화면이 친 글을 보낸 뒤 `editor_close`).
@@ -87,6 +91,54 @@ fn restore_tabs(app: &tauri::AppHandle) {
         let _ = editor::new_tab(app, Some("main"), Some(path));
     }
     let _ = app.emit("open-file", ());
+}
+
+/// 지난 실행이 비정상으로 끝나 남은 복구본이 있으면 복구할지 묻는다(복구 = 새 탭마다 하나 · 버리기 = 지운다).
+fn offer_recovery(app: &tauri::AppHandle) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+    let Some(dir) = recovery::dir(app) else {
+        return;
+    };
+    let entries = recovery::leftovers(&dir, std::process::id());
+    if entries.is_empty() {
+        return;
+    }
+    let names: Vec<String> = entries
+        .iter()
+        .map(|entry| match &entry.source {
+            Some(source) => format!("· {} ({})", entry.title, source.display()),
+            None => format!("· {}", entry.title),
+        })
+        .collect();
+    let app = app.clone();
+    app.clone()
+        .dialog()
+        .message(format!(
+            "지난번에 저장하지 않고 끝난 문서가 {}개 있습니다. 복구할까요?\n복구한 문서는 원래 파일에 덮지 않습니다(저장할 때 이름을 묻는다).\n\n{}",
+            entries.len(),
+            names.join("\n")
+        ))
+        .title("복구")
+        .buttons(MessageDialogButtons::OkCancelCustom("복구".into(), "버리기".into()))
+        .show(move |restore| {
+            use tauri::{Emitter, Manager};
+            if !restore {
+                for entry in &entries {
+                    recovery::remove(&dir, &entry.hlt.file_stem().unwrap_or_default().to_string_lossy());
+                }
+                return;
+            }
+            let state = app.state::<EditorState>();
+            for entry in entries {
+                let main_taken = state.is_taken("main");
+                if main_taken {
+                    let _ = editor::new_tab(&app, Some("main"), Some(entry.hlt));
+                } else {
+                    state.set_pending("main", entry.hlt);
+                }
+            }
+            let _ = app.emit("open-file", ());
+        });
 }
 
 /// 앱 끝내기: 문서가 열린 창이 있으면 하나씩 닫으며 저장을 묻고(`Destroyed` 가 다음 창으로 잇는다), 없으면 끝낸다.
@@ -349,6 +401,15 @@ fn main() {
             editor_amendment_marks,
             editor_amendment_basis,
             editor_claim_issues,
+            editor_claim_parents,
+            editor_compare_pick,
+            editor_autosave,
+            editor_batch_generate,
+            editor_batch_check,
+            editor_batch_stop,
+            editor_save_csv,
+            editor_source_open,
+            editor_paragraph_keys,
             editor_submission_checks,
             editor_resize_image,
             editor_insert_table,
@@ -396,6 +457,7 @@ fn main() {
                     ..
                 } => {
                     state.forget(&label);
+                    recovery::discard(app, &label);
                     recent::changed(app, None);
                     if state.quitting.load(std::sync::atomic::Ordering::SeqCst) {
                         match state.open_windows().first() {
@@ -426,6 +488,7 @@ fn main() {
                     state.ready.store(true, std::sync::atomic::Ordering::SeqCst);
                     recent::fill_menu(app, &recent::read(app).recent);
                     restore_tabs(app);
+                    offer_recovery(app);
                     #[cfg(target_os = "macos")]
                     dock_quit::install(app);
                 }

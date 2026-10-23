@@ -73,10 +73,88 @@ pub fn docx_bytes(
     let document_xml = format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="{W}" xmlns:r="{R}" xmlns:wp="{WP}" xmlns:a="{A}" xmlns:pic="{PIC}"><w:body>{body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1701" w:right="1440" w:bottom="1440" w:left="1440" w:header="851" w:footer="992" w:gutter="0"/></w:sectPr></w:body></w:document>"#
     );
+    package(&document_xml, &media.files)
+}
+
+/// 보정 전후 대비표(.docx): 제목 한 줄 + [항목 | 보정 전 | 보정 후] 표. 지운 글자는 취소선, 넣은 글자는 밑줄.
+pub fn comparison_table_docx(title: &str, rows: &[crate::AmendRow]) -> Result<Vec<u8>, CoreError> {
+    // 줄 간격은 표에 맞게 한 줄(기본 문단은 명세서용 2.8 줄).
+    const P: &str = r#"<w:pPr><w:spacing w:after="0" w:line="300" w:lineRule="auto"/></w:pPr>"#;
+    let marked = |text: &str, ranges: &[(usize, usize)], mark: &str| -> String {
+        let chars: Vec<char> = text.chars().collect();
+        let inside = |at: usize| ranges.iter().any(|(a, b)| (*a..*b).contains(&at));
+        let mut paragraphs = vec![String::new()];
+        let mut at = 0;
+        while at < chars.len() {
+            if chars[at] == '\n' {
+                paragraphs.push(String::new());
+                at += 1;
+                continue;
+            }
+            let on = inside(at);
+            let end = (at..chars.len())
+                .find(|k| chars[*k] == '\n' || inside(*k) != on)
+                .unwrap_or(chars.len());
+            let piece: String = chars[at..end].iter().collect();
+            let props = if on {
+                format!("<w:rPr>{mark}</w:rPr>")
+            } else {
+                String::new()
+            };
+            paragraphs.last_mut().unwrap().push_str(&format!(
+                r#"<w:r>{props}<w:t xml:space="preserve">{}</w:t></w:r>"#,
+                escape(&piece)
+            ));
+            at = end;
+        }
+        paragraphs
+            .iter()
+            .map(|runs| format!("<w:p>{P}{runs}</w:p>"))
+            .collect()
+    };
+    let cell = |width: u32, content: String| {
+        format!(r#"<w:tc><w:tcPr><w:tcW w:w="{width}" w:type="dxa"/></w:tcPr>{content}</w:tc>"#)
+    };
+    let header = |text: &str| {
+        format!(
+            r#"<w:p>{P}<w:r><w:rPr><w:b/></w:rPr><w:t>{}</w:t></w:r></w:p>"#,
+            escape(text)
+        )
+    };
+    let mut table = String::from(
+        r#"<w:tbl><w:tblPr><w:tblW w:w="9026" w:type="dxa"/><w:tblBorders><w:top w:val="single" w:sz="4"/><w:left w:val="single" w:sz="4"/><w:bottom w:val="single" w:sz="4"/><w:right w:val="single" w:sz="4"/><w:insideH w:val="single" w:sz="4"/><w:insideV w:val="single" w:sz="4"/></w:tblBorders><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid><w:gridCol w:w="1426"/><w:gridCol w:w="3800"/><w:gridCol w:w="3800"/></w:tblGrid>"#,
+    );
+    table.push_str(&format!(
+        "<w:tr><w:trPr><w:tblHeader/></w:trPr>{}{}{}</w:tr>",
+        cell(1426, header("항목")),
+        cell(3800, header("보정 전")),
+        cell(3800, header("보정 후"))
+    ));
+    for row in rows {
+        table.push_str(&format!(
+            "<w:tr>{}{}{}</w:tr>",
+            cell(1426, marked(&row.label, &[], "")),
+            cell(3800, marked(&row.before, &row.deleted, "<w:strike/>")),
+            cell(
+                3800,
+                marked(&row.after, &row.inserted, r#"<w:u w:val="single"/>"#)
+            )
+        ));
+    }
+    table.push_str("</w:tbl>");
+    let document_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="{W}" xmlns:r="{R}"><w:body><w:p>{P}<w:r><w:rPr><w:b/></w:rPr><w:t>{}</w:t></w:r></w:p>{table}<w:p/><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="851" w:footer="992" w:gutter="0"/></w:sectPr></w:body></w:document>"#,
+        escape(title)
+    );
+    package(&document_xml, &[])
+}
+
+/// 문서 XML · 그림(PNG, 차례대로 `rIdImg1`…)을 .docx 로 묶는다.
+fn package(document_xml: &str, images: &[Vec<u8>]) -> Result<Vec<u8>, CoreError> {
     let mut rels = String::from(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>"#,
     );
-    for (index, _) in media.files.iter().enumerate() {
+    for (index, _) in images.iter().enumerate() {
         rels.push_str(&format!(
             r#"<Relationship Id="rIdImg{n}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image{n}.png"/>"#,
             n = index + 1
@@ -97,7 +175,7 @@ pub fn docx_bytes(
         part("word/document.xml", document_xml.as_bytes())?;
         part("word/_rels/document.xml.rels", rels.as_bytes())?;
         part("word/styles.xml", STYLES.as_bytes())?;
-        for (index, png) in media.files.iter().enumerate() {
+        for (index, png) in images.iter().enumerate() {
             part(&format!("word/media/image{}.png", index + 1), png)?;
         }
         zip.finish().map_err(zip_error)?;
@@ -304,3 +382,38 @@ const ROOT_RELS: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"
 
 /// 기본 글꼴 = 바탕 12pt · 줄 간격 배수 2.8(`w:line` = 240 × 2.8 = 672 · 사용자 지정 10-19) — 표 칸 글도 같다.
 const STYLES: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:eastAsia="바탕" w:cs="Times New Roman"/><w:sz w:val="24"/><w:szCs w:val="24"/><w:lang w:val="en-US" w:eastAsia="ko-KR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="672" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style></w:styles>"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn comparison_table_strikes_deleted_and_underlines_inserted_text() {
+        let rows = [crate::AmendRow {
+            label: "청구항 1".into(),
+            before: "가나다\n둘째 줄".into(),
+            after: "가X다\n둘째 줄".into(),
+            deleted: vec![(1, 2)],
+            inserted: vec![(1, 2)],
+        }];
+        let bytes = comparison_table_docx("보정 전후 대비표 <시험>", &rows).unwrap();
+        let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml)
+            .unwrap();
+        assert!(xml.contains("보정 전후 대비표 &lt;시험&gt;"));
+        assert!(xml.contains(
+            r#"<w:r><w:rPr><w:strike/></w:rPr><w:t xml:space="preserve">나</w:t></w:r>"#
+        ));
+        assert!(xml.contains(
+            r#"<w:r><w:rPr><w:u w:val="single"/></w:rPr><w:t xml:space="preserve">X</w:t></w:r>"#
+        ));
+        // 줄마다 문단(`\n` 은 새 문단) · 머리 행 + 한 행.
+        assert_eq!(
+            xml.matches(r#"<w:t xml:space="preserve">둘째 줄</w:t>"#)
+                .count(),
+            2
+        );
+        assert_eq!(xml.matches("</w:tr>").count(), 2);
+    }
+}

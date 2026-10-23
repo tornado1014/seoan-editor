@@ -19,8 +19,17 @@ import {
   editorReadReview,
   editorAmendmentBasis,
   editorAmendmentMarks,
+  editorComparePick,
+  editorAutosave,
+  editorBatchCheck,
+  editorBatchGenerate,
+  editorBatchStop,
+  editorSaveCsv,
+  editorSourceOpen,
+  editorParagraphKeys,
   editorApplyReview,
   editorClaimIssues,
+  editorClaimParents,
   editorSubmissionChecks,
   editorExportFin,
   editorFind,
@@ -70,6 +79,7 @@ import {
   type AmendmentMarksDto,
   type CitationIssueDto,
   type SubmitIssueDto,
+  type SourceParagraphDto,
   type ClaimBasisDto,
   type ParagraphMarkDto,
   type DescriptionNoteDto,
@@ -77,7 +87,7 @@ import {
   type ReviewOutcomeDto,
   type ReviewReportDto,
 } from './contracts';
-import { outlineTree, renderPage, richParagraph, sectionOf, selectOffsets, selectionOffsets } from './editor-view';
+import { nestClaims, outlineTree, renderPage, richParagraph, sectionOf, selectOffsets, selectionOffsets } from './editor-view';
 import type { OutlineNode } from './editor-view';
 import {
   type Caret,
@@ -100,6 +110,24 @@ import {
 } from './figure-editor';
 
 const SCALE = 1.3;
+/** 제출 전 점검 종류 → 묶음 이름(점검 창 · 일괄 점검 표의 열). */
+const SUBMIT_GROUPS: [SubmitIssueDto['kind'], string][] = [
+  ['unnumbered', '빈 식별번호'],
+  ['figure_missing', '도면이 없는 「도 N」'],
+  ['figure_unmentioned', '본문이 말하지 않는 도면'],
+  ['sign_unused', '본문에 안 나오는 부호'],
+  ['sign_names', '같은 부호 · 다른 이름(괄호 안 = 쓰인 수)'],
+  ['sign_shared', '같은 이름 · 다른 부호(한두 번만 다른 부호)'],
+  ['citation', '청구항 인용'],
+];
+
+/** 표 → CSV(칸마다 따옴표 · 안의 따옴표는 둘로). */
+export function toCsv(rows: string[][]): string {
+  return rows.map((row) => row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(',')).join('\r\n');
+}
+
+/** 자동 저장: 마지막 고침 뒤 이만큼 손을 멈추면 복구본을 둔다. */
+export const AUTOSAVE_MS = 120_000;
 
 /** 도구 막대 아이콘(Lucide 모양 · MIT). 선 굵기 2 · 24 격자 · 글자색을 따른다. */
 const ICONS: Record<string, string[]> = {
@@ -137,6 +165,8 @@ export function mountEditor(root: HTMLElement): void {
           <button type="button" data-action="open" title="HLT · 제출파일(.fin · .hlz) 열기">${icon('open')}<span>열기</span></button>
           <button type="button" data-action="new-opinion" title="빈 의견서(【의견내용】)를 새로 만든다">${icon('opinion')}<span>새 의견서</span></button>
           <button type="button" data-action="import" title="워드 · KIPO XML · HML 을 불러와 새 HLT 로 만든다">${icon('import')}<span>불러와 HLT 만들기</span></button>
+          <button type="button" data-action="source" disabled title="원문과 나란히 보기 — 영문 원문(.docx)을 오른쪽에 두고 식별번호 · 청구항 번호로 따라 움직인다(다시 누르면 닫기)">${icon('find')}<span>원문</span></button>
+          <button type="button" data-action="batch" title="폴더 일괄 처리 — 폴더 안 워드 · XML 을 HLT 로 · HLT 마다 제출 전 점검">${icon('import')}<span>일괄</span></button>
           <button type="button" data-action="new-tab" title="새 탭 (⌘T)">${icon('tab')}</button>
           <button type="button" data-action="save" disabled title="저장 — 연 HLT 에 덮어쓰기 (⌘S)">${icon('save')}<span>저장</span></button>
           <button type="button" data-action="save-as" disabled title="다른 이름으로 저장 (⇧⌘S)">${icon('saveAs')}</button>
@@ -176,6 +206,7 @@ export function mountEditor(root: HTMLElement): void {
           <select class="amend-base" aria-label="보정 표시 · 보정 근거의 기준" title="견줄 기준 — 연 뒤 고친 것 · 원출원(최종본 안 보정서까지)">
             <option value="">연 뒤 고친 것</option>
             <option value="original">원출원</option>
+            <option value="file">다른 파일…</option>
           </select>
           <button type="button" data-action="basis" disabled title="보정 근거 — 바뀐 청구항의 새 말이 있는 원출원 명세서 단락 · 인용 문장 초안">${icon('find')}<span>보정 근거</span></button>
           <button type="button" data-action="amend" disabled title="보정서 만들기(청구항 인용을 먼저 점검)">${icon('amend')}<span>보정서</span></button>
@@ -224,6 +255,7 @@ export function mountEditor(root: HTMLElement): void {
       <div class="editor-body">
         <nav class="editor-outline" aria-label="구조"></nav>
         <div class="editor-pages" tabindex="0"></div>
+        <aside class="editor-source" hidden aria-label="원문"></aside>
         <aside class="editor-panel" hidden>
           <p class="panel-title"></p>
           <div class="panel-text" contenteditable="plaintext-only" spellcheck="false"></div>
@@ -358,7 +390,7 @@ export function mountEditor(root: HTMLElement): void {
     void editorLog(`${label} 실패 ${JSON.stringify(error)}`).catch(() => {});
   };
   const enable = () => {
-    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'docx', 'fin', 'review', 'amend-marks', 'basis', 'amend', 'math', 'chem', 'table', 'align-justified', 'align-center', 'align-left', 'indent', 'outdent']) {
+    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'docx', 'fin', 'review', 'amend-marks', 'basis', 'amend', 'math', 'chem', 'table', 'align-justified', 'align-center', 'align-left', 'indent', 'outdent', 'source']) {
       q<HTMLButtonElement>(`[data-action="${action}"]`).disabled = !view;
     }
   };
@@ -383,6 +415,7 @@ export function mountEditor(root: HTMLElement): void {
     drawMarks(host, page);
     drawAmendMarks(host, page);
     paint();
+    markCurrent();
   }
 
   /** 식별번호(최종본을 연 문서): 통특기처럼 문단 첫 줄 왼쪽 여백에 [0001](본문 왼쪽 끝 바로 앞에 오른쪽 맞춤). */
@@ -453,17 +486,45 @@ export function mountEditor(root: HTMLElement): void {
   const amendBase = q<HTMLSelectElement>('.amend-base');
   /** 보정 표시 · 보정 근거의 기준이 원출원인가(기본 = 연 뒤 고친 것). */
   const fromOriginal = () => amendBase.value === 'original';
-  amendBase.addEventListener('change', () => void refreshAmend(true));
+  const fromFile = () => amendBase.value === 'file';
+  const fileOption = q<HTMLOptionElement>('.amend-base option[value="file"]');
+  /** 상태줄에 보일 기준 이름. */
+  const baseName = () => (fromOriginal() ? '원출원' : fromFile() ? fileOption.textContent! : '연 뒤 고친 것');
+  let lastBase = '';
+  amendBase.addEventListener('change', async () => {
+    if (fromFile()) {
+      // 「다른 파일…」: 고를 때마다 새로 고른다(취소하면 앞 기준으로).
+      say('견줄 파일 여는 중…');
+      const name = await editorComparePick().catch((error) => (fail('견줄 파일', error), null));
+      if (!name) {
+        amendBase.value = lastBase;
+        say('');
+        return;
+      }
+      fileOption.textContent = `파일: ${name}`;
+      if (!showAmend) {
+        q<HTMLButtonElement>('[data-action="amend-marks"]').click();
+        lastBase = amendBase.value;
+        return;
+      }
+    }
+    lastBase = amendBase.value;
+    void refreshAmend(true);
+  });
   /** 보정 표시를 새로 받아 그린다(켜 둔 동안 고칠 때마다). `announce` = 상태줄에 요약. */
   async function refreshAmend(announce: boolean) {
     if (!showAmend) return;
-    const marks = await editorAmendmentMarks(fromOriginal()).catch(() => null);
+    const marks = await editorAmendmentMarks(fromOriginal(), fromFile()).catch(() => null);
     if (!marks) {
       showAmend = false;
       amendMarks = new Map();
       q<HTMLButtonElement>('[data-action="amend-marks"]').setAttribute('aria-pressed', 'false');
       for (const index of pages.keys()) redraw(index);
-      say('보정 표시는 최종본(.fin)으로 연 문서에서만 볼 수 있습니다.');
+      if (fromFile()) {
+        // 이 문서로는 아직 고른 파일이 없다(탭에 새 문서를 열었다) — 기준을 처음으로.
+        amendBase.value = lastBase = '';
+        say('견줄 파일을 다시 고르세요(보정 표시 옆 「다른 파일…」).');
+      } else say('보정 표시는 최종본(.fin)으로 연 문서에서만 볼 수 있습니다.');
       return;
     }
     amendMarks = new Map(marks.paragraphs.map((mark) => [mark.id, mark]));
@@ -482,10 +543,12 @@ export function mountEditor(root: HTMLElement): void {
       issues.length ? `청구항 인용 문제 ${issues.length}건(「보정서」를 누르면 목록)` : '',
     ].filter(Boolean);
     return parts.length
-      ? `보정 표시(${fromOriginal() ? '원출원' : '연 뒤 고친 것'}) — ${parts.join(' · ')}`
+      ? `보정 표시(${baseName()}) — ${parts.join(' · ')}`
       : fromOriginal()
         ? '보정 표시 — 원출원과 같습니다'
-        : '보정 표시 — 연 뒤 고친 것이 없습니다(원출원에 견주려면 옆에서 「원출원」)';
+        : fromFile()
+          ? `보정 표시 — ${baseName()}과(와) 같습니다`
+          : '보정 표시 — 연 뒤 고친 것이 없습니다(원출원에 견주려면 옆에서 「원출원」)';
   }
 
   /** 표 칸 글(쪽 위 칸 편집) — 화면 판마다 바탕이 실어 준다. 모델 준비 전이면 칸을 누를 때 묻는다(`loadCell`). */
@@ -524,6 +587,11 @@ export function mountEditor(root: HTMLElement): void {
     }
     if (keepScroll) pagesRoot.scrollTop = scroll;
     renderOutline(next);
+    void refreshClaims(next);
+    void refreshSourceKeys(next);
+    // 자동 저장: 판이 바뀔 때마다(고침 · 되돌리기) 2분을 다시 센다 — 손을 멈추면 복구본을 둔다(고친 것이 없으면 지운다).
+    window.clearTimeout(autosaveTimer);
+    if (next.editable) autosaveTimer = window.setTimeout(() => void editorAutosave().catch(() => {}), AUTOSAVE_MS);
     say(`${next.title} · ${next.page_count}쪽${next.editable ? '' : ' · 보기 전용(이 서식은 고칠 수 없다)'}`);
     enable();
     watchPreparing(next);
@@ -537,6 +605,9 @@ export function mountEditor(root: HTMLElement): void {
     observer.disconnect();
     pagesRoot.replaceChildren();
     outlineRoot.replaceChildren();
+    claimParents = {};
+    window.clearTimeout(autosaveTimer);
+    closeSource();
     images.clear();
     caret = anchor = null;
     selected = selectedCell = null;
@@ -558,6 +629,8 @@ export function mountEditor(root: HTMLElement): void {
 
   /** 구조 창: 통특기 왼쪽 트리처럼 [−]/[+] 접기 · 책 아이콘 · 점선. 마디를 누르면 그 쪽으로. */
   function renderOutline(next: EditorViewDto) {
+    const order = new Map(next.paragraphs.map((paragraph, index) => [paragraph.id, index]));
+    outlineMarks = [];
     const build = (node: OutlineNode, path: string): HTMLLIElement => {
       const key = `${path}/${node.label}`;
       const item = document.createElement('li');
@@ -582,10 +655,17 @@ export function mountEditor(root: HTMLElement): void {
       label.className = node.id ? 'tree-label' : 'tree-label root';
       if (node.id) label.innerHTML = BOOK_ICON;
       label.append(node.label);
+      if (node.note) {
+        const note = document.createElement('span');
+        note.className = 'tree-note';
+        note.textContent = node.note;
+        label.append(note);
+      }
       label.addEventListener('click', () => {
-        const index = node.id ? next.paragraph_pages[node.id] : 0;
-        pagesRoot.querySelector(`.nk-page[data-index="${index}"]`)?.scrollIntoView();
+        if (node.id) jumpTo(node.id);
+        else pageHost(0)?.scrollIntoView();
       });
+      if (node.id) outlineMarks.push({ index: order.get(node.id) ?? 0, label });
       row.append(twisty, label);
       item.append(row);
       if (node.children.length) {
@@ -597,8 +677,96 @@ export function mountEditor(root: HTMLElement): void {
     };
     const tree = document.createElement('ul');
     tree.className = 'tree';
-    tree.append(build(outlineTree(next.title, next.paragraphs), ''));
+    tree.append(build(nestClaims(outlineTree(next.title, next.paragraphs), claimParents), ''));
     outlineRoot.replaceChildren(tree);
+    outlineMarks.sort((a, b) => a.index - b.index);
+    markCurrent(); // 청구항 나무만 새로 받아 다시 그릴 때(쪽은 그대로)
+  }
+
+  /** 청구항 나무(항 → 인용하는 앞 항) — 판이 바뀔 때마다 받아, 달라졌으면 개요를 다시 그린다. */
+  let claimParents: Record<string, number[]> = {};
+  let autosaveTimer = 0;
+  async function refreshClaims(next: EditorViewDto) {
+    const parents = await editorClaimParents().catch(() => ({}));
+    if (view !== next || JSON.stringify(parents) === JSON.stringify(claimParents)) return;
+    claimParents = parents;
+    renderOutline(next);
+  }
+
+  /** 개요 마디(문서 차례) — 화면 맨 위 문단이 든 절을 강조한다. */
+  let outlineMarks: { index: number; label: HTMLElement }[] = [];
+  function markCurrent() {
+    const id = topParagraph();
+    const at = id === null ? -1 : view?.paragraphs.findIndex((paragraph) => paragraph.id === id) ?? -1;
+    const current = at < 0 ? undefined : outlineMarks.filter((mark) => mark.index <= at).pop();
+    for (const mark of outlineMarks) {
+      const on = mark === current;
+      if (on && !mark.label.classList.contains('current')) mark.label.scrollIntoView({ block: 'nearest' });
+      mark.label.classList.toggle('current', on);
+    }
+  }
+  let marking = 0;
+  pagesRoot.addEventListener('scroll', () => {
+    cancelAnimationFrame(marking);
+    marking = requestAnimationFrame(() => {
+      markCurrent();
+      syncSource();
+    });
+  });
+
+  // 원문과 나란히 보기: 원문 문단(짝 이름 → 첫 문단) · 지금 판 문단 짝 이름.
+  const sourcePane = q<HTMLElement>('.editor-source');
+  let sourceByKey = new Map<string, HTMLElement>();
+  let docKeys: (string | null)[] = [];
+  function openSource(rows: SourceParagraphDto[]) {
+    sourceByKey = new Map();
+    sourcePane.replaceChildren(
+      ...rows.map((row) => {
+        const element = document.createElement('p');
+        element.textContent = row.text;
+        if (row.key) {
+          element.dataset.key = row.key;
+          if (!sourceByKey.has(row.key)) sourceByKey.set(row.key, element);
+          element.addEventListener('click', () => {
+            const at = docKeys.indexOf(row.key);
+            if (at >= 0 && view) jumpTo(view.paragraphs[at].id);
+          });
+        }
+        return element;
+      }),
+    );
+    sourcePane.hidden = false;
+    root.classList.add('with-source');
+  }
+  function closeSource() {
+    sourcePane.hidden = true;
+    sourcePane.replaceChildren();
+    sourceByKey = new Map();
+    root.classList.remove('with-source');
+  }
+  /** 판이 바뀌면 문단 짝 이름을 다시 받고, 짝 없는 원문 문단을 흐리게. */
+  async function refreshSourceKeys(next: EditorViewDto) {
+    if (sourcePane.hidden) return;
+    const keys = await editorParagraphKeys().catch(() => []);
+    if (view !== next) return;
+    docKeys = keys;
+    const present = new Set(keys);
+    for (const element of sourcePane.querySelectorAll<HTMLElement>('p[data-key]')) {
+      element.classList.toggle('unpaired', !present.has(element.dataset.key!));
+    }
+    syncSource();
+  }
+  /** 화면 맨 위 문단(짝 이름이 없으면 앞 문단의 것)의 원문을 원문 칸 맨 위로. */
+  function syncSource() {
+    if (sourcePane.hidden || !view) return;
+    const id = topParagraph();
+    let at = id === null ? -1 : view.paragraphs.findIndex((paragraph) => paragraph.id === id);
+    while (at > 0 && !docKeys[at]) at -= 1;
+    const element = at >= 0 && docKeys[at] ? sourceByKey.get(docKeys[at]!) : undefined;
+    if (!element || element.classList.contains('current')) return;
+    sourcePane.querySelector('.current')?.classList.remove('current');
+    element.classList.add('current');
+    sourcePane.scrollTop = element.offsetTop;
   }
 
   // 고침은 줄을 세워 차례로 보낸다 — 처리 중에 누른 단추도 버리지 않는다(앞 고침이 끝나면 이어서).
@@ -677,6 +845,8 @@ export function mountEditor(root: HTMLElement): void {
   let goalX: number | null = null;
   let composing = false;
   let reveal = false;
+  /** 다음 커서 보이기의 자리(가기는 화면 가운데로 · 평소 입력은 가장 가까이). */
+  let revealBlock: ScrollLogicalPosition = 'nearest';
   /** 다시 굽지 않은 글 고침이 있는 문단 · 임시 고침 수(다시 굽는 동안 더 쳤는가). */
   let dirtyId: string | null = null;
   let edits = 0;
@@ -720,6 +890,25 @@ export function mountEditor(root: HTMLElement): void {
       : null;
   };
   const pageHost = (index: number) => pagesRoot.querySelector<HTMLElement>(`.nk-page[data-index="${index}"]`);
+  /** 그 문단으로 가서 커서를 둔다(쪽을 먼저 보여 그리게 한 뒤 커서 줄을 화면 가운데로). */
+  function jumpTo(id: string) {
+    const page = view?.paragraph_pages[id];
+    if (page !== undefined) pageHost(page)?.scrollIntoView({ block: 'start' });
+    revealBlock = 'center';
+    place({ paragraph: id, offset: 0 }, false);
+  }
+  /** 화면 맨 위에 보이는 문단(그린 쪽의 줄 자리로 · 못 정하면 `null`). */
+  function topParagraph(): string | null {
+    const top = pagesRoot.getBoundingClientRect().top;
+    for (const host of pagesRoot.querySelectorAll<HTMLElement>('.nk-page')) {
+      const box = host.getBoundingClientRect();
+      if (box.bottom <= top) continue;
+      const lines = pages.get(Number(host.dataset.index))?.lines.filter((line) => line.paragraph) ?? [];
+      const line = lines.find((each) => box.top + each.top * SCALE >= top) ?? lines[lines.length - 1];
+      return line?.paragraph ?? null;
+    }
+    return null;
+  }
   const act = (job: () => void) => (holding > 0 ? backlog.push(job) : job());
 
   function overlay(host: HTMLElement, className: string, x: number, top: number, width: number) {
@@ -759,7 +948,8 @@ export function mountEditor(root: HTMLElement): void {
     input.style.top = `${rect.top}px`;
     if (reveal) {
       reveal = false;
-      mark.scrollIntoView({ block: 'nearest' });
+      mark.scrollIntoView({ block: revealBlock });
+      revealBlock = 'nearest';
     }
   }
 
@@ -1453,9 +1643,7 @@ export function mountEditor(root: HTMLElement): void {
           return;
         }
         done();
-        const page = view?.paragraph_pages[id];
-        if (page !== undefined) pageHost(page)?.scrollIntoView({ block: 'start' });
-        place({ paragraph: id, offset: 0 }, false);
+        jumpTo(id);
         say(`가기: ${field.value.trim()}`);
       });
       field.addEventListener('keydown', (event) => {
@@ -1722,9 +1910,7 @@ export function mountEditor(root: HTMLElement): void {
           if (!target) return;
           shade.hidden = true;
           root.append(reopen);
-          const page = view?.paragraph_pages[target.id];
-          if (page !== undefined) pageHost(page)?.scrollIntoView({ block: 'start' });
-          place({ paragraph: target.id, offset: 0 }, false);
+          jumpTo(target.id);
         });
       }
       for (const toggle of box.querySelectorAll<HTMLButtonElement>('.basis-more-toggle')) {
@@ -1746,15 +1932,7 @@ export function mountEditor(root: HTMLElement): void {
   function askSubmit(issues: SubmitIssueDto[]): Promise<boolean> {
     const escape = (text: string) =>
       text.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]!);
-    const groups: [SubmitIssueDto['kind'], string][] = [
-      ['unnumbered', '빈 식별번호'],
-      ['figure_missing', '도면이 없는 「도 N」'],
-      ['figure_unmentioned', '본문이 말하지 않는 도면'],
-      ['sign_unused', '본문에 안 나오는 부호'],
-      ['sign_names', '같은 부호 · 다른 이름(괄호 안 = 쓰인 수)'],
-      ['sign_shared', '같은 이름 · 다른 부호(한두 번만 다른 부호)'],
-      ['citation', '청구항 인용'],
-    ];
+    const groups = SUBMIT_GROUPS;
     return new Promise((resolve) => {
       const box = document.createElement('form');
       box.className = 'item-ask review-ask submit-ask';
@@ -1799,9 +1977,7 @@ export function mountEditor(root: HTMLElement): void {
           const id = issues[Number(button.dataset.index)].paragraph_id!;
           box.hidden = true;
           root.append(reopen);
-          const page = view?.paragraph_pages[id];
-          if (page !== undefined) pageHost(page)?.scrollIntoView({ block: 'start' });
-          place({ paragraph: id, offset: 0 }, false);
+          jumpTo(id);
         });
       }
       root.append(box);
@@ -2339,6 +2515,67 @@ export function mountEditor(root: HTMLElement): void {
   void listen('open-file', () => void openPending()).catch(() => {});
   // 닫기 · 앱 끝내기: 친 글을 먼저 보내고(고침이 끝날 때까지 기다린다) 바탕에 맡긴다 — 고친 것이 있으면 바탕이 저장을 묻는다.
   const myLabel = getCurrentWindow().label;
+  // 일괄 처리 진행: 「n/N · 파일」 + 멈춤.
+  const batchBar = document.createElement('div');
+  batchBar.className = 'batch-progress';
+  batchBar.hidden = true;
+  batchBar.innerHTML = '<span></span><button type="button">멈춤</button>';
+  batchBar.querySelector('button')!.addEventListener('click', () => {
+    void editorBatchStop();
+    batchBar.querySelector('span')!.textContent = '멈추는 중(지금 파일을 끝내고)…';
+  });
+  root.append(batchBar);
+  void listen<{ at: number; total: number; file: string }>('batch-progress', (event) => {
+    batchBar.hidden = false;
+    batchBar.querySelector('span')!.textContent = `일괄 ${event.payload.at + 1}/${event.payload.total} · ${event.payload.file}`;
+  });
+
+  /** 일괄 처리 결과 창: 표 · CSV 로 저장 · 닫기. */
+  function showBatch(title: string, header: string[], rows: string[][], csvName: string) {
+    const escape = (text: string) =>
+      text.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]!);
+    const shade = document.createElement('div');
+    shade.className = 'basis-shade batch-shade';
+    shade.innerHTML = `<div class="basis-ask batch-ask"><header><strong>${escape(title)}</strong><button type="button" class="batch-csv">CSV 로 저장</button><button type="button" class="batch-close">닫기</button></header><div class="batch-body"><table><thead><tr>${header
+      .map((cell) => `<th>${escape(cell)}</th>`)
+      .join('')}</tr></thead><tbody>${rows
+      .map((row) => `<tr>${row.map((cell) => `<td>${escape(cell)}</td>`).join('')}</tr>`)
+      .join('')}</tbody></table></div></div>`;
+    shade.querySelector('.batch-close')!.addEventListener('click', () => shade.remove());
+    shade.querySelector('.batch-csv')!.addEventListener('click', async () => {
+      const path = await editorSaveCsv(csvName, toCsv([header, ...rows])).catch((error) => (fail('CSV 저장', error), null));
+      if (path) say(`저장함: ${path}`);
+    });
+    root.append(shade);
+  }
+
+  async function runBatch(kind: 'generate' | 'check') {
+    try {
+      if (kind === 'generate') {
+        const rows = await editorBatchGenerate();
+        if (!rows) return;
+        const count = (status: string) => rows.filter((row) => row.status === status).length;
+        say(`폴더 HLT 만들기 — 만듦 ${count('만듦')} · 있음 ${count('있음')} · 실패 ${count('실패')}${count('멈춤') ? ` · 멈춤 ${count('멈춤')}` : ''}`);
+        showBatch('폴더 HLT 만들기', ['파일', '결과', '내용'], rows.map((row) => [row.file, row.status, row.detail]), 'HLT 만들기.csv');
+      } else {
+        const rows = await editorBatchCheck();
+        if (!rows) return;
+        const total = (row: (typeof rows)[number]) => Object.values(row.counts).reduce((sum, n) => sum + (n ?? 0), 0);
+        say(`폴더 제출 전 점검 — ${rows.length}개 파일 · 걸린 파일 ${rows.filter((row) => total(row) > 0).length}`);
+        showBatch(
+          '폴더 제출 전 점검',
+          ['파일', ...SUBMIT_GROUPS.map(([, name]) => name.replace(/\(.*\)$/, '')), '합계', '열지 못함'],
+          rows.map((row) => [row.file, ...SUBMIT_GROUPS.map(([kind]) => String(row.counts[kind] ?? 0)), String(total(row)), row.error ?? '']),
+          '제출 전 점검.csv',
+        );
+      }
+    } catch (error) {
+      fail('일괄', error);
+    } finally {
+      batchBar.hidden = true;
+    }
+  }
+
   void listen<string>('close-requested', async (event) => {
     if (event.payload !== myLabel) return;
     await commit();
@@ -2433,6 +2670,33 @@ export function mountEditor(root: HTMLElement): void {
         } catch (error) {
           fail('새 의견서', error);
         }
+        break;
+      }
+      case 'source': {
+        if (!sourcePane.hidden) {
+          closeSource();
+          break;
+        }
+        try {
+          const rows = await editorSourceOpen();
+          if (!rows) break;
+          openSource(rows);
+          if (view) await refreshSourceKeys(view);
+          const paired = rows.filter((row) => row.key && docKeys.includes(row.key)).length;
+          say(`원문 ${rows.filter((row) => row.key).length}곳 중 ${paired}곳 짝지음(식별번호 · 청구항 번호)`);
+        } catch (error) {
+          fail('원문 열기', error);
+        }
+        break;
+      }
+      case 'batch': {
+        const menu = await Menu.new({
+          items: [
+            { text: '폴더 HLT 만들기…', action: () => void runBatch('generate') },
+            { text: '폴더 제출 전 점검…', action: () => void runBatch('check') },
+          ],
+        });
+        await menu.popup();
         break;
       }
       case 'import': {
@@ -2561,7 +2825,7 @@ export function mountEditor(root: HTMLElement): void {
           say('보정서 만드는 중…');
           const done = await editorExportAmendment();
           if (done) {
-            say(`보정서(${done.order}차) 생성작업을 완료하였습니다. ${done.dta} · 최종본 갱신 ${done.fin}`);
+            say(`보정서(${done.order}차) 생성작업을 완료하였습니다. ${done.dta} · 최종본 갱신 ${done.fin}${done.table ? ` · 대비표 ${done.table}` : ''}`);
             showAmendment(done);
           } else say('');
         } catch (error) {

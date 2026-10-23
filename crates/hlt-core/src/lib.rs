@@ -1,6 +1,7 @@
 #![allow(clippy::result_large_err)]
 
 mod amend_marks;
+mod batch;
 mod cancel;
 mod cell_format_edit;
 mod claim_check;
@@ -42,6 +43,7 @@ mod review_report;
 mod save;
 mod schema;
 mod serde_u64;
+mod source_view;
 mod submit_check;
 mod table_edit;
 mod template;
@@ -51,10 +53,11 @@ mod verify;
 mod write;
 
 pub use amend_marks::{
-    AmendmentMarks, BasisHit, CitationIssue, CitationKind, ClaimBasis, FigureSignatures,
+    AmendRow, AmendmentMarks, BasisHit, CitationIssue, CitationKind, ClaimBasis, FigureSignatures,
     ParagraphMark, PhraseBasis, amendment_basis, amendment_marks, amendment_marks_with,
-    claim_citation_issues,
+    amendment_table, claim_citation_issues, claim_parents, number_unnumbered,
 };
+pub use batch::{BatchCheckRow, BatchRow, batch_generate_hlt, batch_submission_checks};
 pub use cancel::{CancellationToken, ProgressEvent, ProgressSink, ProgressTotals, VerifyOptions};
 pub use cell_format_edit::{
     CellFormatEdit, CellFormatEditDecision, CellFormatEditDecisionStatus, CellFormatEditPlan,
@@ -77,7 +80,7 @@ pub use docx::{
     DocxDocument, DocxMediaAsset, DocxPackageSummary, DocxPageBreak, inspect_docx_path,
     load_docx_image_payloads,
 };
-pub use docx_write::docx_bytes;
+pub use docx_write::{comparison_table_docx, docx_bytes};
 pub use drawmark::{DrawMark, read_drf, write_drf};
 pub use edit::{
     EditDecision, EditDecisionStatus, EditPlan, EditSaveResult, EditSkipReason,
@@ -172,6 +175,7 @@ pub use save::{
     save_new_opinion_as_new,
 };
 pub use schema::{PackageReport, SchemaReport, validate_kipo_package, validate_kipo_xml};
+pub use source_view::{SourceParagraph, paragraph_keys, source_keys, source_paragraphs};
 pub use submit_check::{SubmitIssue, SubmitKind, submission_checks};
 pub use table_edit::{
     CellPosition, NEW_TABLE_TOTAL_WIDTH, TableEditDecision, TableEditDecisionStatus, TableEditPlan,

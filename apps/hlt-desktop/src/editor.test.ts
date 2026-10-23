@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 import type { EditorViewDto, PlannedImageDto, PlannedPageDto } from './contracts';
-import { basisDraft, goTarget, mountEditor } from './editor';
+import { AUTOSAVE_MS, basisDraft, goTarget, mountEditor, toCsv } from './editor';
 import { sectionOf } from './editor-view';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
@@ -72,6 +72,12 @@ let numbers: (string | null)[] = [];
 let closeAnswer = true;
 let marksAnswer: unknown = null;
 let issuesAnswer: unknown[] = [];
+let parentsAnswer: Record<string, number[]> = {};
+let compareAnswer: string | null = null;
+let amendAnswer: unknown = null;
+let batchAnswer: unknown = null;
+let sourceAnswer: unknown = null;
+let keysAnswer: (string | null)[] = [];
 let basisAnswer: unknown = null;
 let submitAnswer: unknown[] = [];
 const calls: [string, unknown][] = [];
@@ -84,6 +90,12 @@ beforeEach(() => {
   closeAnswer = true;
   marksAnswer = null;
   issuesAnswer = [];
+  parentsAnswer = {};
+  compareAnswer = null;
+  amendAnswer = null;
+  batchAnswer = null;
+  sourceAnswer = null;
+  keysAnswer = [];
   basisAnswer = null;
   submitAnswer = [];
   calls.length = 0;
@@ -114,6 +126,10 @@ beforeEach(() => {
         return marksAnswer;
       case 'editor_claim_issues':
         return issuesAnswer;
+      case 'editor_claim_parents':
+        return parentsAnswer;
+      case 'editor_compare_pick':
+        return compareAnswer;
       case 'editor_amendment_basis':
         return basisAnswer;
       case 'editor_submission_checks':
@@ -121,7 +137,16 @@ beforeEach(() => {
       case 'editor_export_fin':
         return '/tmp/x.fin';
       case 'editor_export_amendment':
-        return null;
+        return amendAnswer;
+      case 'editor_batch_generate':
+      case 'editor_batch_check':
+        return batchAnswer;
+      case 'editor_source_open':
+        return sourceAnswer;
+      case 'editor_paragraph_keys':
+        return keysAnswer;
+      case 'editor_save_csv':
+        return '/d/표.csv';
       case 'editor_read_review':
         return {
           proposals: [
@@ -817,6 +842,149 @@ describe('page editing', () => {
     expect(root.querySelector('.go-ask')).toBeNull();
   });
 
+  test('개요: 마디를 누르면 그 문단에 커서 · 화면 맨 위 문단이 든 절이 강조된다', async () => {
+    texts = ['【발명의 설명】', '가나', '【청구범위】', '【청구항 1】', '가나', '【청구항 2】', '라마'];
+    const root = await open();
+    const label = (name: string) =>
+      [...root.querySelectorAll<HTMLButtonElement>('.tree-label')].find((each) => each.textContent === name)!;
+    label('청구항 2').click();
+    type(root, 'X');
+    await settle(500);
+    expect(last('editor_replace_text')).toEqual(['editor_replace_text', expect.objectContaining({ paragraphId: 'paragraph:5' })]);
+    // 화면 맨 위 = 넷째 줄(【청구항 1】 · 줄 top = 100 + 20 × 3).
+    const pagesRoot = root.querySelector<HTMLElement>('.editor-pages')!;
+    pagesRoot.getBoundingClientRect = () => ({ top: 0, bottom: 800 }) as DOMRect;
+    root.querySelector<HTMLElement>('.nk-page')!.getBoundingClientRect = () => ({ top: -160 * 1.3, bottom: 900 }) as DOMRect;
+    pagesRoot.dispatchEvent(new Event('scroll'));
+    await settle(50);
+    expect([...root.querySelectorAll('.tree-label.current')].map((each) => each.textContent)).toEqual(['청구항 1']);
+  });
+
+  test('청구항 나무: 종속항은 첫 인용 항 아래 · 다중 인용 · 종속 수 · 누르면 그 항으로', async () => {
+    texts = ['【청구범위】', '【청구항 1】', '가', '【청구항 2】', '나', '【청구항 3】', '다', '【청구항 4】', '라', '【청구항 5】', '마'];
+    parentsAnswer = { '1': [], '2': [1], '3': [1, 2], '4': [], '5': [3] };
+    const root = await open();
+    await settle(50);
+    const row = (name: string) =>
+      [...root.querySelectorAll<HTMLLIElement>('.tree li')].find((li) => li.querySelector(':scope > .tree-row .tree-label')!.firstChild?.nextSibling?.textContent === name)!;
+    const kids = (name: string) =>
+      [...row(name).querySelectorAll(':scope > ul > li > .tree-row .tree-label')].map((label) => label.textContent);
+    expect(kids('청구범위')).toEqual(['청구항 1종속 3', '청구항 4']);
+    expect(kids('청구항 1')).toEqual(['청구항 2', '청구항 3제1·2항 · 종속 1']);
+    expect(kids('청구항 2')).toEqual([]);
+    expect(kids('청구항 3')).toEqual(['청구항 5']);
+    row('청구항 3').querySelector<HTMLButtonElement>('.tree-label')!.click();
+    type(root, 'X');
+    await settle(500);
+    expect(last('editor_replace_text')).toEqual(['editor_replace_text', expect.objectContaining({ paragraphId: 'paragraph:5' })]);
+  });
+
+  test('자동 저장: 판이 바뀐 뒤 2분 손을 멈추면 한 번 · 그 사이 고치면 다시 센다', async () => {
+    const root = await open();
+    vi.useFakeTimers();
+    try {
+      const saves = () => calls.filter(([c]) => c === 'editor_autosave').length;
+      clickAt(root, 63, 104);
+      type(root, 'X');
+      await vi.advanceTimersByTimeAsync(500); // 친 글을 보내 판이 바뀐다
+      vi.advanceTimersByTime(60_000);
+      type(root, 'Y');
+      await vi.advanceTimersByTimeAsync(500); // 다시 고침 → 처음부터 센다
+      vi.advanceTimersByTime(AUTOSAVE_MS - 60_000);
+      expect(saves()).toBe(0);
+      vi.advanceTimersByTime(60_000);
+      expect(saves()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('일괄: 메뉴 → 폴더 HLT 만들기(진행 · 결과 표 · 요약) · 폴더 점검(종류별 열 · CSV)', async () => {
+    const root = await open();
+    q(root, '[data-action="batch"]').click();
+    await settle(10);
+    const items = menus[menus.length - 1] as unknown as { text: string; action: () => void }[];
+    expect(items.map((item) => item.text)).toEqual(['폴더 HLT 만들기…', '폴더 제출 전 점검…']);
+    batchAnswer = [
+      { file: 'a.docx', status: '만듦', detail: 'a.HLT' },
+      { file: 'b.xml', status: '있음', detail: 'b.HLT' },
+      { file: 'c.xml', status: '실패', detail: 'structure_invalid' },
+    ];
+    items[0].action();
+    handlers.get('batch-progress')!({ payload: { at: 1, total: 3, file: 'b.xml' } });
+    expect(root.querySelector('.batch-progress')!.textContent).toContain('일괄 2/3 · b.xml');
+    await settle(10);
+    expect(root.querySelector<HTMLElement>('.batch-progress')!.hidden).toBe(true);
+    expect(root.querySelector('.editor-status')!.textContent).toBe('폴더 HLT 만들기 — 만듦 1 · 있음 1 · 실패 1');
+    expect([...root.querySelectorAll('.batch-body tbody tr')].map((tr) => tr.textContent)).toEqual([
+      'a.docx만듦a.HLT',
+      'b.xml있음b.HLT',
+      'c.xml실패structure_invalid',
+    ]);
+    q(root, '.batch-close').click();
+    expect(root.querySelector('.batch-shade')).toBeNull();
+
+    batchAnswer = [
+      { file: 'a.HLT', counts: { sign_shared: 2, citation: 1 }, error: null },
+      { file: 'z.fin', counts: {}, error: 'io_error' },
+    ];
+    items[1].action();
+    await settle(10);
+    const head = [...root.querySelectorAll('.batch-body th')].map((th) => th.textContent);
+    expect(head[0]).toBe('파일');
+    expect(head.slice(-2)).toEqual(['합계', '열지 못함']);
+    const first = [...root.querySelectorAll('.batch-body tbody tr')][0];
+    expect([...first.querySelectorAll('td')].map((td) => td.textContent)).toEqual(['a.HLT', '0', '0', '0', '0', '0', '2', '1', '3', '']);
+    expect(root.querySelector('.editor-status')!.textContent).toBe('폴더 제출 전 점검 — 2개 파일 · 걸린 파일 1');
+    q(root, '.batch-csv').click();
+    await settle(10);
+    const [, args] = last('editor_save_csv')!;
+    expect((args as { name: string }).name).toBe('제출 전 점검.csv');
+    expect((args as { text: string }).text.split('\r\n')[1]).toBe('"a.HLT","0","0","0","0","0","2","1","3",""');
+  });
+
+  test('toCsv: 따옴표 · 쉼표 · 줄바꿈이 든 칸', () => {
+    expect(toCsv([['a,b', '그는 "예"'], ['줄\n바꿈', '']])).toBe('"a,b","그는 ""예"""\r\n"줄\n바꿈",""');
+  });
+
+  test('원문과 나란히: 짝 수 · 짝 없는 원문은 흐리게 · 원문을 누르면 그 문단 · 스크롤을 따라 원문 · 다시 누르면 닫기', async () => {
+    texts = ['【발명의 설명】', '【기술분야】', '가', '나', '【청구범위】', '【청구항 1】', '장치.'];
+    sourceAnswer = [
+      { key: null, text: 'TITLE' },
+      { key: 'p:0001', text: '[0001] One.' },
+      { key: 'p:0002', text: '[0002] Two.' },
+      { key: 'p:0009', text: '[0009] Nine.' },
+      { key: 'claim:1', text: 'A device.' },
+    ];
+    keysAnswer = [null, null, 'p:0001', 'p:0002', null, 'claim:1', 'claim:1'];
+    const root = await open();
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    const pane = root.querySelector<HTMLElement>('.editor-source')!;
+    expect(pane.hidden).toBe(false);
+    expect(root.querySelector('.editor-status')!.textContent).toBe('원문 4곳 중 3곳 짝지음(식별번호 · 청구항 번호)');
+    expect([...pane.querySelectorAll('.unpaired')].map((p) => p.textContent)).toEqual(['[0009] Nine.']);
+    [...pane.querySelectorAll<HTMLElement>('p')].find((p) => p.textContent === 'A device.')!.click();
+    type(root, 'X');
+    await settle(500);
+    expect(last('editor_replace_text')).toEqual(['editor_replace_text', expect.objectContaining({ paragraphId: 'paragraph:5' })]);
+    // 고친 뒤 판이 바뀌면 짝을 다시 받는다(이제 p:0009 도 짝이 있다).
+    keysAnswer = [null, null, 'p:0001', 'p:0002', null, 'claim:1', 'claim:1', 'p:0009'];
+    type(root, 'Y');
+    await settle(500);
+    expect(pane.querySelectorAll('.unpaired').length).toBe(0);
+    // 화면 맨 위 = 다섯째 줄(【청구범위】 · 짝 이름 없음 → 앞 문단 「나」 · p:0002).
+    const pagesRoot = root.querySelector<HTMLElement>('.editor-pages')!;
+    pagesRoot.getBoundingClientRect = () => ({ top: 0, bottom: 800 }) as DOMRect;
+    root.querySelector<HTMLElement>('.nk-page')!.getBoundingClientRect = () => ({ top: -180 * 1.3, bottom: 900 }) as DOMRect;
+    pagesRoot.dispatchEvent(new Event('scroll'));
+    await settle(50);
+    expect(pane.querySelector('.current')!.textContent).toBe('[0002] Two.');
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    expect(pane.hidden).toBe(true);
+  });
+
   test('find range: 상세설명만 · 청구항만 (replace-all too) · 고른 곳만 frozen at pick time · kept when typing anew', async () => {
     texts = ['【발명의 설명】', '가나가나가', '【청구범위】', '【청구항 1】', '가나', '【요약서】', '가'];
     const root = await open();
@@ -943,18 +1111,41 @@ describe('page editing', () => {
     marksAnswer = { paragraphs: [], changed: [], added: [], removed: [] };
     q(root, '[data-action="amend-marks"]').click();
     await settle(10);
-    expect(last('editor_amendment_marks')).toEqual(['editor_amendment_marks', { original: false }]);
+    expect(last('editor_amendment_marks')).toEqual(['editor_amendment_marks', { original: false, file: false }]);
     expect(root.querySelector('.editor-status')!.textContent).toContain('연 뒤 고친 것이 없습니다');
     marksAnswer = { paragraphs: [{ id: 'paragraph:0', inserted: [[0, 1]], deleted: [] }], changed: ['【0001】'], added: [], removed: [] };
     const base = root.querySelector<HTMLSelectElement>('.amend-base')!;
     base.value = 'original';
     base.dispatchEvent(new Event('change'));
     await settle(10);
-    expect(last('editor_amendment_marks')).toEqual(['editor_amendment_marks', { original: true }]);
+    expect(last('editor_amendment_marks')).toEqual(['editor_amendment_marks', { original: true, file: false }]);
     expect(root.querySelector('.editor-status')!.textContent).toBe('보정 표시(원출원) — 바뀐 것: 【0001】');
     q(root, '[data-action="basis"]').click();
     await settle(10);
     expect(last('editor_amendment_basis')).toEqual(['editor_amendment_basis', { original: true }]);
+  });
+
+  test('다른 파일: 고르면 보정 표시를 켜고 그 파일에 견준다 · 취소하면 앞 기준 · 상태줄에 파일 이름', async () => {
+    const root = await open();
+    marksAnswer = { paragraphs: [], changed: ['【0002】'], added: [], removed: [] };
+    const base = root.querySelector<HTMLSelectElement>('.amend-base')!;
+    const pick = async (value: string) => {
+      base.value = value;
+      base.dispatchEvent(new Event('change'));
+      await settle(10);
+    };
+    await pick('file'); // 취소
+    expect(base.value).toBe('');
+    expect(calls.some(([c]) => c === 'editor_amendment_marks')).toBe(false);
+    compareAnswer = '1차본.HLT';
+    await pick('file');
+    expect(q(root, '[data-action="amend-marks"]').getAttribute('aria-pressed')).toBe('true');
+    expect(last('editor_amendment_marks')).toEqual(['editor_amendment_marks', { original: false, file: true }]);
+    expect(root.querySelector('.editor-status')!.textContent).toBe('보정 표시(파일: 1차본.HLT) — 바뀐 것: 【0002】');
+    await pick('original');
+    compareAnswer = null;
+    await pick('file'); // 취소 → 원출원으로
+    expect(base.value).toBe('original');
   });
 
   test('보정 근거: 위 3개 후보만 보이고 나머지는 「더 보기」(체크는 그대로 · 접기)', async () => {
@@ -1076,6 +1267,12 @@ describe('page editing', () => {
     root.querySelector<HTMLFormElement>('.citation-ask')!.requestSubmit();
     await settle(10);
     expect(calls.some(([command]) => command === 'editor_export_amendment')).toBe(true);
+    // 다 만들면 상태줄에 대비표 자리도.
+    issuesAnswer = [];
+    amendAnswer = { dta: '/d/보정.dta', fin: '/d/x.fin', order: 1, items: [], table: '/d/보정_대비표.docx' };
+    root.querySelector<HTMLButtonElement>('[data-action="amend"]')!.click();
+    await settle(10);
+    expect(root.querySelector('.editor-status')!.textContent).toContain('대비표 /d/보정_대비표.docx');
   });
 
   test('identification item: right-click submenu → number (next one filled in) → heading + empty paragraph below', async () => {

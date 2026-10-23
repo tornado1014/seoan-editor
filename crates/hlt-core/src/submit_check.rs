@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::{CitationIssue, CitationKind, EditorParagraph};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SubmitKind {
     /// 번호를 받아야 할 상세설명 단락에 식별번호가 없다.

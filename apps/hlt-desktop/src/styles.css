@@ -223,7 +223,14 @@ progress {
 .mode-panel[hidden] { display: none; }
 .editor { display: flex; flex-direction: column; height: calc(100vh - 2.6rem); }
 .editor-status { margin-left: auto; color: var(--muted); font-size: .85rem; }
-.editor-body { flex: 1; display: grid; grid-template-columns: 17.5rem 1fr auto; min-height: 0; }
+.editor-body { flex: 1; display: grid; grid-template-columns: 17.5rem 1fr auto auto; min-height: 0; }
+/* 원문과 나란히 보기: 문서 오른쪽 칸(문서 폭의 절반쯤). */
+.editor-source { position: relative; width: min(38vw, 42rem); overflow: auto; border-left: 1px solid var(--rule); padding: .5rem .9rem; font-family: "Times New Roman", serif; font-size: 14px; line-height: 1.55; }
+.editor-source[hidden] { display: none; }
+.editor-source p { margin: 0 0 .6rem; padding: .15rem .3rem; border-radius: 4px; }
+.editor-source p[data-key] { cursor: pointer; }
+.editor-source p.current { background: rgba(166, 61, 45, .12); }
+.editor-source p.unpaired { opacity: .45; }
 .editor-outline { overflow: auto; border-right: 1px solid var(--rule); padding: .5rem 0; }
 .tree, .tree ul { list-style: none; margin: 0; padding: 0; }
 .tree { padding: 0 .4rem; font-size: .85rem; }
@@ -238,6 +245,8 @@ progress {
 .tree-label { display: inline-flex; align-items: center; gap: 3px; border: 0; background: none; padding: .1rem .25rem; cursor: pointer; font-size: inherit; color: inherit; text-align: left; }
 .tree-label.root { font-weight: 600; }
 .tree-label:hover { background: rgba(166, 61, 45, .08); }
+.tree-note { margin-left: .35rem; font-size: .85em; color: var(--muted); }
+.tree-label.current { background: rgba(166, 61, 45, .16); font-weight: 600; }
 .tree-icon { width: 15px; height: 15px; flex: none; }
 .editor-pages { overflow: auto; background: #d9d4c8; padding: 1.5rem; display: flex; flex-direction: column; align-items: center; gap: 1.2rem; }
 .nk-page { position: relative; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.25); flex: none; }
@@ -388,3 +397,11 @@ progress {
 .basis-more[hidden] { display: none; }
 .basis-more-toggle { align-self: flex-start; margin: 2px 0 0 8px; border: none; background: none; color: #24407a; font: inherit; font-size: 12px; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
 .basis-more-toggle:hover { background: #eef4fb; }
+.batch-progress { position: fixed; right: 16px; bottom: 16px; z-index: 31; display: flex; gap: .5rem; align-items: center; padding: .5rem .75rem; background: #fffdf8; border: 1px solid #c9bfae; border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.18); font-size: 13px; }
+.batch-progress[hidden] { display: none; }
+.batch-ask header { display: flex; gap: .5rem; align-items: center; padding: .75rem 1rem; border-bottom: 1px solid #e3dccf; }
+.batch-ask header strong { margin-right: auto; }
+.batch-body { overflow: auto; padding: .5rem 1rem 1rem; }
+.batch-body table { border-collapse: collapse; width: 100%; }
+.batch-body th, .batch-body td { border: 1px solid #e3dccf; padding: .25rem .5rem; text-align: left; vertical-align: top; }
+.batch-body th { background: #f3eee4; position: sticky; top: 0; }

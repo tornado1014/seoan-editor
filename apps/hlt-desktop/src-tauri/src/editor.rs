@@ -39,6 +39,8 @@ pub struct EditorState {
     pub ready: std::sync::atomic::AtomicBool,
     /// 창 → 확인 표를 기다리는 불러오기(CP949 밖 글자를 고른 뒤 `editor_import_finish` 가 굽는다).
     pending_import: Mutex<HashMap<String, PendingImport>>,
+    /// 일괄 처리 「멈춤」(다음 파일부터 멈춘다).
+    batch_stop: std::sync::atomic::AtomicBool,
 }
 
 /// 불러온 원본(CP949 바꾸기 전) · 굽을 자리.
@@ -126,6 +128,15 @@ impl EditorState {
         if let Ok(mut pending) = self.pending.lock() {
             pending.insert(label.to_string(), path);
         }
+    }
+
+    /// 그 창이 문서를 들었거나 열 파일이 맡겨져 있다.
+    pub fn is_taken(&self, label: &str) -> bool {
+        self.has_document(label)
+            || self
+                .pending
+                .lock()
+                .is_ok_and(|pending| pending.contains_key(label))
     }
 
     /// 창을 닫으면 그 문서를 놓는다.
@@ -284,8 +295,6 @@ pub async fn editor_import(
     app: AppHandle,
     state: State<'_, EditorState>,
 ) -> Result<ImportDto, CoreError> {
-    use hlt_core::GenerationDialect;
-    use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogResult};
     let Some(input) = app
         .dialog()
         .file()
@@ -295,27 +304,8 @@ pub async fn editor_import(
     else {
         return Ok(ImportDto::cancelled());
     };
-    let dialect = match app
-        .dialog()
-        .message("어떤 출원으로 만들까요?")
-        .title("불러와 HLT 만들기")
-        .parent(&window)
-        .buttons(MessageDialogButtons::YesNoCancelCustom(
-            "PCT 국내진입".into(),
-            "국내 출원".into(),
-            "취소".into(),
-        ))
-        .blocking_show_with_result()
-    {
-        MessageDialogResult::Yes => GenerationDialect::PctPatent,
-        MessageDialogResult::Custom(label) if label == "PCT 국내진입" => {
-            GenerationDialect::PctPatent
-        }
-        MessageDialogResult::No => GenerationDialect::PatentSpecificationKo,
-        MessageDialogResult::Custom(label) if label == "국내 출원" => {
-            GenerationDialect::PatentSpecificationKo
-        }
-        _ => return Ok(ImportDto::cancelled()),
+    let Some(dialect) = ask_dialect(&app, &window, "불러와 HLT 만들기") else {
+        return Ok(ImportDto::cancelled());
     };
     let mut dialog = app
         .dialog()
@@ -367,6 +357,174 @@ pub async fn editor_import(
         view,
         ..ImportDto::cancelled()
     })
+}
+
+/// 원문과 나란히 보기: 영문 원문(.docx)을 골라 문단 + 짝 이름을 준다(취소 = `null`).
+#[tauri::command]
+pub async fn editor_source_open(
+    app: AppHandle,
+) -> Result<Option<Vec<hlt_core::SourceParagraph>>, CoreError> {
+    let Some(path) = app
+        .dialog()
+        .file()
+        .set_title("나란히 볼 원문(영문 .docx)")
+        .add_filter("Word", &["docx"])
+        .blocking_pick_file()
+        .and_then(|picked| picked.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    tauri::async_runtime::spawn_blocking(move || hlt_core::source_paragraphs(&path))
+        .await
+        .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "worker", false))?
+        .map(Some)
+}
+
+/// 지금 판 문단마다 원문 짝 이름(`p:0001` · `claim:3` · 없으면 `null`) — 화면 문단 차례 그대로.
+#[tauri::command]
+pub async fn editor_paragraph_keys(
+    window: Window,
+    state: State<'_, EditorState>,
+) -> Result<Vec<Option<String>>, CoreError> {
+    with_session(&state, &window, |session| {
+        Ok(hlt_core::paragraph_keys(&session.paragraphs()))
+    })
+}
+
+/// 일괄 처리 진행(창마다): 지금 파일 차례(0부터) · 전체 · 파일 이름.
+#[derive(Clone, Serialize)]
+struct BatchProgressDto {
+    at: usize,
+    total: usize,
+    file: String,
+}
+
+/// 일괄 처리의 한 걸음: 진행을 그 창에 알리고, 「멈춤」을 눌렀으면 `false`.
+fn batch_step(
+    app: &AppHandle,
+    label: &str,
+) -> impl FnMut(usize, usize, &str) -> bool + Send + use<> {
+    use tauri::Emitter;
+    let app = app.clone();
+    let label = label.to_string();
+    move |at, total, file| {
+        let _ = app.emit_to(
+            &label,
+            "batch-progress",
+            BatchProgressDto {
+                at,
+                total,
+                file: file.to_string(),
+            },
+        );
+        !app.state::<EditorState>().batch_stop.load(Ordering::SeqCst)
+    }
+}
+
+/// 일괄 HLT 만들기: 폴더를 고르고 출원 종류를 한 번 묻고, 폴더 안 워드 · XML · HML 을 하나씩 HLT 로(있으면 건너뜀). 취소 = `null`.
+#[tauri::command]
+pub async fn editor_batch_generate(
+    window: Window,
+    app: AppHandle,
+    state: State<'_, EditorState>,
+) -> Result<Option<Vec<hlt_core::BatchRow>>, CoreError> {
+    let Some(folder) = app
+        .dialog()
+        .file()
+        .set_title("HLT 로 만들 워드 · XML · HML 이 든 폴더")
+        .blocking_pick_folder()
+        .and_then(|picked| picked.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    let Some(dialect) = ask_dialect(&app, &window, "폴더 HLT 만들기") else {
+        return Ok(None);
+    };
+    state.batch_stop.store(false, Ordering::SeqCst);
+    let step = batch_step(&app, window.label());
+    tauri::async_runtime::spawn_blocking(move || {
+        hlt_core::batch_generate_hlt(&folder, dialect, step)
+    })
+    .await
+    .map(Some)
+    .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "worker", false))
+}
+
+/// 일괄 제출 전 점검: 폴더를 고르고 그 안 HLT · 최종본마다 점검(종류별 수). 취소 = `null`.
+#[tauri::command]
+pub async fn editor_batch_check(
+    window: Window,
+    app: AppHandle,
+    state: State<'_, EditorState>,
+) -> Result<Option<Vec<hlt_core::BatchCheckRow>>, CoreError> {
+    let Some(folder) = app
+        .dialog()
+        .file()
+        .set_title("점검할 HLT · 최종본(.fin)이 든 폴더")
+        .blocking_pick_folder()
+        .and_then(|picked| picked.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    state.batch_stop.store(false, Ordering::SeqCst);
+    let step = batch_step(&app, window.label());
+    tauri::async_runtime::spawn_blocking(move || hlt_core::batch_submission_checks(&folder, step))
+        .await
+        .map(Some)
+        .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "worker", false))
+}
+
+/// 일괄 처리 멈춤(지금 파일을 끝내고 멈춘다).
+#[tauri::command]
+pub fn editor_batch_stop(state: State<'_, EditorState>) {
+    state.batch_stop.store(true, Ordering::SeqCst);
+}
+
+/// 표를 CSV 로 저장(엑셀이 한글을 읽게 BOM 을 붙인다). 저장한 경로(취소 = `null`).
+#[tauri::command]
+pub async fn editor_save_csv(
+    app: AppHandle,
+    name: String,
+    text: String,
+) -> Result<Option<String>, CoreError> {
+    let Some(path) = pick_save(&app, &name, "csv") else {
+        return Ok(None);
+    };
+    write_replacing(&path, format!("\u{feff}{text}").as_bytes())
+        .map_err(|_| CoreError::new(ErrorCode::IoError, "save_csv", false))?;
+    Ok(Some(path.display().to_string()))
+}
+
+/// 출원 종류(PCT · 국내)를 묻는다 — 생성 규칙(섹션 표제 · 줄지도)이 갈리는데 파일만 보고는 못 가른다. 취소 = `None`.
+fn ask_dialect(
+    app: &AppHandle,
+    window: &Window,
+    title: &str,
+) -> Option<hlt_core::GenerationDialect> {
+    use hlt_core::GenerationDialect;
+    use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogResult};
+    match app
+        .dialog()
+        .message("어떤 출원으로 만들까요?")
+        .title(title)
+        .parent(&window)
+        .buttons(MessageDialogButtons::YesNoCancelCustom(
+            "PCT 국내진입".into(),
+            "국내 출원".into(),
+            "취소".into(),
+        ))
+        .blocking_show_with_result()
+    {
+        MessageDialogResult::Yes => Some(GenerationDialect::PctPatent),
+        MessageDialogResult::Custom(label) if label == "PCT 국내진입" => {
+            Some(GenerationDialect::PctPatent)
+        }
+        MessageDialogResult::No => Some(GenerationDialect::PatentSpecificationKo),
+        MessageDialogResult::Custom(label) if label == "국내 출원" => {
+            Some(GenerationDialect::PatentSpecificationKo)
+        }
+        _ => None,
+    }
 }
 
 /// 확인 표 뒤: 고른 대응(글자 → 바꿀 글 · 빈 글 = 지움)으로 굽고 연다. `None` = 취소(불러오기를 버린다).
@@ -495,6 +653,7 @@ pub async fn editor_close_document(
         slot.session = None;
         slot.source = None;
     }
+    crate::recovery::discard(&app, window.label());
     crate::recent::changed(&app, None);
     let _ = window.set_title("서안 통특기");
     Ok(true)
@@ -569,11 +728,52 @@ fn save_current(
     if let Ok(mut slot) = state.slot(window.label()).lock() {
         slot.source = Some(path.clone());
     }
+    crate::recovery::discard(app, window.label());
     crate::recent::changed(window.app_handle(), Some(&path));
     if let Some(name) = path.file_name() {
         let _ = window.set_title(&name.to_string_lossy());
     }
     Ok(Some(path))
+}
+
+/// 자동 저장(고친 뒤 손을 멈추면 화면이 부른다): 고친 것이 있으면 지금 판을 복구본으로 두고, 없으면 복구본을 지운다.
+#[tauri::command]
+pub async fn editor_autosave(
+    window: Window,
+    app: AppHandle,
+    state: State<'_, EditorState>,
+) -> Result<(), CoreError> {
+    let Some(dir) = crate::recovery::dir(&app) else {
+        return Ok(());
+    };
+    let key = crate::recovery::key(window.label());
+    let source = state
+        .slot(window.label())
+        .lock()
+        .ok()
+        .and_then(|slot| slot.source.clone());
+    let current = with_session(&state, &window, |session| {
+        if session.is_dirty() {
+            session.materialize().map(Some)
+        } else {
+            Ok(None)
+        }
+    })?;
+    match current {
+        Some(current) => {
+            let entry = crate::recovery::Entry {
+                hlt: PathBuf::new(),
+                title: window.title().unwrap_or_default(),
+                source,
+            };
+            crate::recovery::store(&dir, &key, &current, &entry)
+                .map_err(|_| CoreError::new(ErrorCode::IoError, "autosave", false))
+        }
+        None => {
+            crate::recovery::remove(&dir, &key);
+            Ok(())
+        }
+    }
 }
 
 /// 저장(⌘S).
@@ -635,6 +835,11 @@ async fn open_path(
         .await
         .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "worker", false))??;
     let mut session = session;
+    // 복구본: 원래 파일에 덮지 않게 「새 문서」로 둔다(저장하면 이름을 묻는다) · 고친 문서로 친다 · 복구본은 지운다.
+    let recovered = crate::recovery::entry_of(window.app_handle(), &path);
+    if recovered.is_some() {
+        session.mark_unsaved();
+    }
     let label = title(&session);
     let dto = view(&mut session, label);
     let slot = state.slot(window.label());
@@ -642,8 +847,18 @@ async fn open_path(
         .lock()
         .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "editor_lock", false))?;
     slot.session = Some(session);
-    slot.source = Some(path.clone());
+    slot.source = recovered.is_none().then(|| path.clone());
     drop(slot);
+    if let Some(entry) = recovered {
+        if let Some(dir) = crate::recovery::dir(window.app_handle()) {
+            crate::recovery::remove(
+                &dir,
+                &path.file_stem().unwrap_or_default().to_string_lossy(),
+            );
+        }
+        let _ = window.set_title(&format!("복구: {}", entry.title));
+        return Ok(dto);
+    }
     crate::recent::changed(window.app_handle(), Some(&path));
     // 탭 제목 = 파일 이름.
     let _ = window.set_title(&name);
@@ -941,10 +1156,37 @@ pub async fn editor_amendment_marks(
     window: Window,
     state: State<'_, EditorState>,
     original: Option<bool>,
+    file: Option<bool>,
 ) -> Result<Option<hlt_core::AmendmentMarks>, CoreError> {
     with_session(&state, &window, |session| {
-        Ok(session.amendment_marks_from(original.unwrap_or(false)))
+        Ok(if file.unwrap_or(false) {
+            session.amendment_marks_against_file()
+        } else {
+            session.amendment_marks_from(original.unwrap_or(false))
+        })
     })
+}
+
+/// 보정 표시 기준 「다른 파일…」: 견줄 HLT · fin 을 골라 연다(사본 · 원본은 안 건드린다). 고른 파일 이름(취소 = `null`).
+#[tauri::command]
+pub async fn editor_compare_pick(
+    window: Window,
+    app: AppHandle,
+    state: State<'_, EditorState>,
+) -> Result<Option<String>, CoreError> {
+    let Some(path) = app
+        .dialog()
+        .file()
+        .add_filter("HLT · 최종본", &["HLT", "hlt", "fin", "hlz"])
+        .blocking_pick_file()
+        .and_then(|picked| picked.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    with_session(&state, &window, |session| session.compare_with(&path))?;
+    Ok(path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned()))
 }
 
 /// 보정 근거 초안: 최종본(.fin)으로 연 문서만(아니면 `null`).
@@ -968,6 +1210,15 @@ pub async fn editor_claim_issues(
     with_session(&state, &window, |session| {
         Ok(session.claim_citation_issues())
     })
+}
+
+/// 청구항 나무: 항마다 인용하는 앞 항(빈 = 독립항).
+#[tauri::command]
+pub async fn editor_claim_parents(
+    window: Window,
+    state: State<'_, EditorState>,
+) -> Result<std::collections::BTreeMap<u32, Vec<u32>>, CoreError> {
+    with_session(&state, &window, |session| Ok(session.claim_parents()))
 }
 
 /// 제출 전 점검(제출파일 직전) — 의견서(종류 7)는 볼 것이 없다.
@@ -1476,6 +1727,8 @@ pub struct AmendmentDoneDto {
     /// 보정서 차수(1차 · 2차 …).
     pub order: u32,
     pub items: Vec<AmendItemDto>,
+    /// 보정 전후 대비표(.docx · dta 옆). 못 썼으면 `None`(보정서는 그대로 낸다).
+    pub table: Option<String>,
 }
 
 /// 보정서생성(통특기 「보정서생성」): 최종본(.fin)으로 연 문서만. 보정서 파일 이름을 묻고(기본 `<문서>.dta` ·
@@ -1548,7 +1801,23 @@ pub async fn editor_export_amendment(
     write_replacing(&dta_path, &export.dta).map_err(io)?;
     // 연 fin 을 그 자리에서 바꾼다(통특기 보정서생성도 그렇다).
     write_replacing(&fin, &export.fin).map_err(io)?;
+    // 보정 전후 대비표 — 보정서와 같은 기준(연 상태 = 최종본). 덤이라 못 써도 보정서는 낸다.
+    let table_path = dta_path.with_file_name(format!("{}_대비표.docx", stem(&dta_name)));
+    let table = with_session(&state, &window, |session| Ok(session.amendment_table()))
+        .ok()
+        .flatten()
+        .filter(|rows| !rows.is_empty())
+        .and_then(|rows| {
+            hlt_core::comparison_table_docx(
+                &format!("보정 전후 대비표 — {}", stem(&dta_name)),
+                &rows,
+            )
+            .ok()
+        })
+        .filter(|bytes| write_replacing(&table_path, bytes).is_ok())
+        .map(|_| table_path.display().to_string());
     Ok(Some(AmendmentDoneDto {
+        table,
         dta: dta_path.display().to_string(),
         fin: fin.display().to_string(),
         order: amendment_order(&export.xml),

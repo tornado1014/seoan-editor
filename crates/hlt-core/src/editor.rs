@@ -43,6 +43,8 @@ pub struct EditorSession {
     source: Option<PathBuf>,
     /// 최종본의 원출원(보정서 적용 전) 문단 — 처음 고를 때 굽고 담아 둔다.
     original: Option<(Vec<EditorParagraph>, crate::FigureSignatures)>,
+    /// 「다른 파일」 기준(고른 파일을 열어 담아 둔 문단 · 그림 서명).
+    compared: Option<(Vec<EditorParagraph>, crate::FigureSignatures)>,
 }
 
 /// 판 하나: 파일 · 그 판의 의미 모델(있으면 다시 해석하지 않는다) · 다시 구운 판인가(저장 때 전체 검증).
@@ -237,6 +239,7 @@ impl EditorSession {
             baseline_figures: Default::default(),
             source: package.then(|| source.to_path_buf()),
             original: None,
+            compared: None,
         }
         .with_spans()
         .centered_items()
@@ -1378,12 +1381,46 @@ impl EditorSession {
     /// 보정 표시 — `original` 이면 연 상태가 아니라 원출원(fin 안 보정서 적용 전)에 견준다.
     pub fn amendment_marks_from(&mut self, original: bool) -> Option<crate::AmendmentMarks> {
         let (baseline, figures) = self.baseline_for(original)?;
-        Some(crate::amendment_marks_with(
+        Some(self.marks_against(baseline, &figures))
+    }
+
+    /// 보정 전후 대비표 — 연 상태(보정서와 같은 최종본)에 견준 바뀐 요소들.
+    pub fn amendment_table(&mut self) -> Option<Vec<crate::AmendRow>> {
+        let (mut baseline, figures) = self.baseline_for(false)?;
+        let mut now = self.paragraphs();
+        crate::number_unnumbered(&mut baseline, &mut now);
+        Some(crate::amendment_table(
             &baseline,
-            &self.paragraphs(),
+            &now,
             &figures,
             &self.figure_signatures(),
         ))
+    }
+
+    /// 다른 파일을 비교 기준으로 연다(사본으로 · 원본은 안 건드린다). 그 뒤 `amendment_marks_against_file`.
+    pub fn compare_with(&mut self, path: &Path) -> Result<(), CoreError> {
+        let mut other = EditorSession::open(path)?;
+        other.settle();
+        self.compared = Some((other.paragraphs(), other.figure_signatures()));
+        Ok(())
+    }
+
+    /// 보정 표시 — `compare_with` 로 고른 파일에 견준다(고른 것이 없으면 `None`).
+    pub fn amendment_marks_against_file(&mut self) -> Option<crate::AmendmentMarks> {
+        self.settle();
+        let (baseline, figures) = self.compared.clone()?;
+        Some(self.marks_against(baseline, &figures))
+    }
+
+    /// 지금 판을 기준에 견준다 — 두 판 모두 식별번호가 없으면(그냥 HLT) 상세설명 문단을 글 차례로 짝지어 번호를 단다.
+    fn marks_against(
+        &self,
+        mut baseline: Vec<EditorParagraph>,
+        figures: &crate::FigureSignatures,
+    ) -> crate::AmendmentMarks {
+        let mut now = self.paragraphs();
+        crate::number_unnumbered(&mut baseline, &mut now);
+        crate::amendment_marks_with(&baseline, &now, figures, &self.figure_signatures())
     }
 
     /// 보정 근거 — `original` 이면 원출원 명세서에서 근거를 찾는다.
@@ -1448,15 +1485,24 @@ impl EditorSession {
         out
     }
 
-    /// 청구항 인용 검사(지금 판 · 줄은 구분자 없이 이어 특허로 점검 목록과 같은 꼴로).
-    pub fn claim_citation_issues(&self) -> Vec<crate::CitationIssue> {
+    /// 청구항 목록(번호, 본문 — 줄은 구분자 없이 이어 특허로 점검 목록과 같은 꼴로).
+    fn claims(&self) -> Vec<(u32, String)> {
         let paragraphs = self.paragraphs();
         let texts: Vec<&str> = paragraphs.iter().map(|p| p.text.as_str()).collect();
-        let claims: Vec<(u32, String)> = claim_blocks(&texts)
+        claim_blocks(&texts)
             .into_iter()
             .map(|(number, heading, end)| (number, texts[heading + 1..end].concat()))
-            .collect();
-        crate::claim_citation_issues(&claims)
+            .collect()
+    }
+
+    /// 청구항 인용 검사(지금 판).
+    pub fn claim_citation_issues(&self) -> Vec<crate::CitationIssue> {
+        crate::claim_citation_issues(&self.claims())
+    }
+
+    /// 청구항마다 인용하는 앞 항(빈 목록 = 독립항) — 청구항 나무.
+    pub fn claim_parents(&self) -> std::collections::BTreeMap<u32, Vec<u32>> {
+        crate::claim_parents(&self.claims())
     }
 
     /// 제출 전 점검(빈 식별번호 · 도면 대응 · 안 쓰인 부호 · 청구항 인용).
@@ -2159,6 +2205,11 @@ impl EditorSession {
     /// 연(또는 마지막으로 저장한) 뒤 고친 것이 있는가(닫을 때 저장을 묻는다). 되돌려 그 판으로 오면 없다.
     pub fn is_dirty(&self) -> bool {
         self.saved != Some(self.current)
+    }
+
+    /// 저장한 적 없는 문서로 친다(복구본을 열었다 — 닫을 때 저장을 묻고 자동 저장도 이어 한다).
+    pub fn mark_unsaved(&mut self) {
+        self.saved = None;
     }
 
     fn next_path(&self) -> PathBuf {
