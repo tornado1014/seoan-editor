@@ -415,14 +415,17 @@ async fn bake_import(
             dialect,
         } = pending;
         hlt_core::apply_cp949(&mut document, &choices)?;
-        hlt_core::save_generated_hlt_as_new(
-            &input,
-            &document,
-            dialect,
-            &payloads,
-            &output,
-            hlt_core::WriteOptions::default(),
-        )
+        bake_replacing(&output, |staged| {
+            hlt_core::save_generated_hlt_as_new(
+                &input,
+                &document,
+                dialect,
+                &payloads,
+                staged,
+                hlt_core::WriteOptions::default(),
+            )
+            .map(|_| ())
+        })
     })
     .await
     .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "worker", false))??;
@@ -447,10 +450,12 @@ pub async fn editor_new_opinion(
         return Ok(None);
     };
     let target = output.clone();
-    tauri::async_runtime::spawn_blocking(move || match body {
-        Some(body) => hlt_core::opinion_hlt_from_text(&body, &target),
-        None => hlt_core::save_new_opinion_as_new(&target, hlt_core::WriteOptions::default())
-            .map(|_| ()),
+    tauri::async_runtime::spawn_blocking(move || {
+        bake_replacing(&target, |staged| match body {
+            Some(body) => hlt_core::opinion_hlt_from_text(&body, staged),
+            None => hlt_core::save_new_opinion_as_new(staged, hlt_core::WriteOptions::default())
+                .map(|_| ()),
+        })
     })
     .await
     .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "worker", false))??;
@@ -1280,7 +1285,7 @@ fn pick_save(app: &AppHandle, name: &str, extension: &str) -> Option<PathBuf> {
         .ok()
 }
 
-/// 다른 이름으로 저장 — 있는 파일은 덮지 않는다(세션이 거절한다).
+/// 다른 이름으로 저장 — 덮어쓰기는 저장 대화상자가 이미 물었다(`save_over` = 옆 임시 파일에 쓴 뒤 바꿔 끼운다).
 #[tauri::command]
 pub async fn editor_save_as(
     window: Window,
@@ -1290,7 +1295,7 @@ pub async fn editor_save_as(
     let Some(path) = pick_save(&app, "편집본.HLT", "HLT") else {
         return Ok(None);
     };
-    with_session(&state, &window, |session| session.save_as(&path))?;
+    with_session(&state, &window, |session| session.save_over(&path))?;
     Ok(Some(path.display().to_string()))
 }
 
@@ -1306,11 +1311,9 @@ pub async fn editor_print_pdf(
     let Some(path) = pick_save(&app, "인쇄.pdf", "pdf") else {
         return Ok(None);
     };
-    if path.exists() {
-        return Err(CoreError::new(ErrorCode::OutputExists, "print_pdf", false));
-    }
+    // 덮어쓰기는 저장 대화상자가 이미 물었다.
     let pdf = with_session(&state, &window, |session| session.print_pdf(font, 1))?;
-    std::fs::write(&path, pdf)
+    write_replacing(&path, &pdf)
         .map_err(|_| CoreError::new(ErrorCode::IoError, "print_pdf", false))?;
     Ok(Some(path.display().to_string()))
 }
@@ -1563,6 +1566,24 @@ fn write_replacing(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> 
     })
 }
 
+/// 새 `.HLT` 굽기(코어는 있는 파일을 거절한다)를 덮어쓰기로 — 덮어쓰기는 저장 대화상자가 이미 물었다.
+/// 옆 임시 파일(`이름.seoan-tmp.HLT`)에 구운 뒤 바꿔 끼워, 실패해도 옛 파일이 남는다.
+fn bake_replacing(
+    path: &std::path::Path,
+    bake: impl FnOnce(&std::path::Path) -> Result<(), CoreError>,
+) -> Result<(), CoreError> {
+    let staged = path.with_extension("seoan-tmp.HLT");
+    let _ = std::fs::remove_file(&staged);
+    let baked = bake(&staged).and_then(|()| {
+        std::fs::rename(&staged, path)
+            .map_err(|_| CoreError::new(ErrorCode::IoError, "replace", false))
+    });
+    if baked.is_err() {
+        let _ = std::fs::remove_file(&staged);
+    }
+    baked
+}
+
 /// 차수 = dtaVersion − 1(첫 보정서 002 — 실물 보정서 320/320).
 fn amendment_order(xml: &str) -> u32 {
     xml.split_once("dtaVersion=\"")
@@ -1650,6 +1671,46 @@ fn system_batang() -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bakes_over_a_file_the_save_dialog_agreed_to_replace() {
+        let dir = std::env::temp_dir().join(format!("seoan-bake-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("명세서.HLT");
+        std::fs::write(&path, "옛").unwrap();
+        // 지난번에 끊겨 남은 임시 파일이 있어도 굽는다.
+        std::fs::write(dir.join("명세서.seoan-tmp.HLT"), "끊김").unwrap();
+        // 코어처럼 있는 파일은 거절하는 굽기.
+        let bake = |text: &'static str| {
+            move |staged: &std::path::Path| {
+                if staged.exists() {
+                    return Err(CoreError::new(ErrorCode::OutputExists, "output", false));
+                }
+                std::fs::write(staged, text)
+                    .map_err(|_| CoreError::new(ErrorCode::IoError, "write", false))
+            }
+        };
+        bake_replacing(&path, bake("새")).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "새");
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            1,
+            "임시 파일이 남지 않는다"
+        );
+        // 굽다 실패하면 옛 파일이 남고 임시 파일은 치운다.
+        let failed = bake_replacing(&path, |staged| {
+            std::fs::write(staged, "반쯤").unwrap();
+            Err(CoreError::new(
+                ErrorCode::VerificationFailed,
+                "verify",
+                false,
+            ))
+        });
+        assert!(failed.is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "새");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn each_tab_keeps_its_own_document_slot() {
