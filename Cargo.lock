@@ -1595,7 +1595,7 @@ dependencies = [
 
 [[package]]
 name = "hlt-desktop"
-version = "0.6.24"
+version = "0.6.25"
 dependencies = [
  "base64 0.22.1",
  "chrono",
