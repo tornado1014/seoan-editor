@@ -75,7 +75,7 @@ import {
   type ReviewOutcomeDto,
   type ReviewReportDto,
 } from './contracts';
-import { outlineTree, renderPage, richParagraph, selectOffsets, selectionOffsets } from './editor-view';
+import { outlineTree, renderPage, richParagraph, sectionOf, selectOffsets, selectionOffsets } from './editor-view';
 import type { OutlineNode } from './editor-view';
 import {
   type Caret,
@@ -180,6 +180,12 @@ export function mountEditor(root: HTMLElement): void {
       </div>
       <div class="find-bar" hidden>
         <label>찾을 글 <input class="find-text" type="text" placeholder="(비우면 서식만으로)"></label>
+        <select class="find-range" aria-label="찾을 범위">
+          <option value="">전체</option>
+          <option value="description">상세설명만</option>
+          <option value="claims">청구항만</option>
+          <option value="span">고른 곳만</option>
+        </select>
         <span class="find-scope" hidden><span></span> <button type="button" data-action="find-unscope" title="범위 풀기">✕</button></span>
         <select class="find-format" aria-label="찾을 서식">
           <option value="">서식 상관없음</option>
@@ -1957,23 +1963,58 @@ export function mountEditor(root: HTMLElement): void {
   ];
   /** 찾기 범위(식별번호 · 보정안 오기 정정에서) — 없으면 문서 전체. */
   let findScope: string[] | null = null;
-  const findKey = () => JSON.stringify([...findArgs(), findScope]);
+  /** 사용자가 고른 범위(절 · 고른 곳) — 보정안 번호 범위와 따로 · 새로 쳐도 남는다. 고른 곳은 고를 때 얼려 둔다. */
+  let findRange: { kind: 'description' | 'claims' | 'span'; from?: Caret; to?: Caret } | null = null;
+  const RANGE_LABEL = { description: '상세설명', claims: '청구항', span: '고른 곳' } as const;
+  const rangeSelect = q<HTMLSelectElement>('.find-range');
+  rangeSelect.addEventListener('change', () => {
+    const kind = rangeSelect.value as '' | 'description' | 'claims' | 'span';
+    if (kind === 'span') {
+      const picked = span();
+      if (!picked) {
+        countLabel.textContent = '고른 곳만: 쪽에서 범위를 먼저 고르세요';
+        rangeSelect.value = '';
+        findRange = null;
+        return;
+      }
+      findRange = { kind, ...picked };
+    } else findRange = kind ? { kind } : null;
+    countLabel.textContent = '';
+  });
+  const findKey = () => JSON.stringify([...findArgs(), findScope, findRange]);
   const setScope = (numbers: string[] | null) => {
     findScope = numbers;
     const label = q<HTMLElement>('.find-scope');
     label.hidden = !numbers;
     label.querySelector('span')!.textContent = numbers ? `범위 【${numbers.join('】, 【')}】` : '';
   };
-  /** 범위 안 결과만(번호 문단). */
-  const scoped = (matches: FindMatchDto[]) => {
+  /** 보정안 번호 범위 안 결과만(번호 문단). */
+  const byNumbers = (matches: FindMatchDto[]) => {
     if (!findScope) return matches;
     const inside = new Set(view?.paragraphs.filter((p) => p.number && findScope!.includes(p.number)).map((p) => p.id));
     return matches.filter((match) => inside.has(match.paragraph_id));
   };
+  /** 고른 범위 안 결과만(절 · 고른 곳 [from, to) 안에 통째로). */
+  const byRange = (matches: FindMatchDto[]) => {
+    const range = findRange;
+    if (!range) return matches;
+    if (range.kind === 'span') {
+      const before = (a: Caret, b: Caret) => order(a.paragraph) < order(b.paragraph) || (a.paragraph === b.paragraph && a.offset <= b.offset);
+      return matches.filter(
+        (m) => before(range.from!, { paragraph: m.paragraph_id, offset: m.start }) && before({ paragraph: m.paragraph_id, offset: m.end }, range.to!),
+      );
+    }
+    const sections = sectionOf(view?.paragraphs ?? []);
+    return matches.filter((match) => sections.get(match.paragraph_id) === range.kind);
+  };
+  /** 찾기 · 모두 바꾸기가 함께 쓰는 거르기. */
+  const scoped = (matches: FindMatchDto[]) => byRange(byNumbers(matches));
   /** 그 번호 문단 안에서 그 말을 찾기 막대로(「다음 찾기」로 차례로). */
   async function findIn(text: string, numbers: string[]) {
     q<HTMLInputElement>('.find-text').value = text;
     q<HTMLSelectElement>('.find-format').value = '';
+    rangeSelect.value = '';
+    findRange = null;
     setScope(numbers);
     q<HTMLElement>('.find-bar').hidden = false;
     await findNext();
@@ -2027,16 +2068,21 @@ export function mountEditor(root: HTMLElement): void {
     if (foundKey !== findKey() || foundView !== view) await research();
     if (found.length === 0) {
       const what = [text && `「${text}」`, format && `${FORMAT_LABEL[format]} 글자`].filter(Boolean).join(' · ');
-      countLabel.textContent = `${what}: 찾는 것이 없습니다`;
+      const kind = findRange?.kind;
+      const missing =
+        (kind === 'description' || kind === 'claims') && ![...sectionOf(view.paragraphs).values()].includes(kind);
+      countLabel.textContent = missing ? `이 문서에는 ${RANGE_LABEL[kind]} 절이 없습니다` : `${rangeName()}${what}: 찾는 것이 없습니다`;
       return;
     }
     foundAt = nextFrom(caret);
     show(found[foundAt]);
   }
 
+  const rangeName = () => (findRange ? `${RANGE_LABEL[findRange.kind]} · ` : '');
+
   /** 결과를 쪽 위에서 고른다 — 찾기 칸에 포커스를 둔 채(문단 창을 열면 다음 Enter 가 그 창에 줄바꿈으로 들어갔다). */
   function show(match: FindMatchDto) {
-    countLabel.textContent = `${foundAt + 1} / ${found.length} · …${match.context}…`;
+    countLabel.textContent = `${rangeName()}${foundAt + 1} / ${found.length} · …${match.context}…`;
     const page = view?.paragraph_pages[match.paragraph_id];
     if (page !== undefined) pageHost(page)?.scrollIntoView({ block: 'center' });
     anchor = { paragraph: match.paragraph_id, offset: match.start };
@@ -2340,7 +2386,7 @@ export function mountEditor(root: HTMLElement): void {
           let places = 0;
           for (const note of skipped) {
             setScope(note.paragraphs);
-            const count = scoped(await editorFind(note.wrong, null)).length;
+            const count = byNumbers(await editorFind(note.wrong, null)).length;
             if (count > 0) leftNotes.push(note);
             places += count;
           }
@@ -2467,7 +2513,7 @@ export function mountEditor(root: HTMLElement): void {
         foundAt = -1;
         anchor = caret;
         paint();
-        countLabel.textContent = `${all.length}곳 바꿈`;
+        countLabel.textContent = `${rangeName()}${all.length}곳 바꿈`;
         break;
       }
       case 'figure-draw': {

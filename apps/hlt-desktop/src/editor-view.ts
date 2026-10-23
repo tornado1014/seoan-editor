@@ -103,6 +103,20 @@ const THIRD: Record<string, Set<string>> = {
 /** 식별항목(통특기 우클릭 「식별항목」 7종 + 번호) — 그때 열린 가장 깊은 절 아래. */
 const ITEM = /^(도|표|청구항|수학식|화학식|반응식|참고도) [A-Za-z0-9]+$/;
 
+/** 문단마다 큰 절: 【발명의 설명】 → 상세설명 · 【청구범위】(【특허청구범위】) → 청구항 · 【요약서】 · 【도면】 · 첫 큰 절 앞 → 그 밖. */
+export function sectionOf(paragraphs: { id: string; text: string }[]): Map<string, 'description' | 'claims' | 'other'> {
+  const out = new Map<string, 'description' | 'claims' | 'other'>();
+  let section: 'description' | 'claims' | 'other' = 'other';
+  for (const paragraph of paragraphs) {
+    const heading = /^\s*【([^】]+)】\s*$/.exec(paragraph.text)?.[1];
+    if (heading && TOP.has(heading)) {
+      section = heading === '발명의 설명' ? 'description' : heading === '청구범위' || heading === '특허청구범위' ? 'claims' : 'other';
+    }
+    out.set(paragraph.id, section);
+  }
+  return out;
+}
+
 /** 구조 창 나무(통특기 왼쪽 트리처럼 큰 절 → 절 → 아래 절 · 식별항목). */
 export function outlineTree(title: string, paragraphs: { id: string; text: string }[]): OutlineNode {
   const root: OutlineNode = { id: null, label: title, children: [] };

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { invoke } from '@tauri-apps/api/core';
 import type { EditorViewDto, PlannedImageDto, PlannedPageDto } from './contracts';
 import { basisDraft, goTarget, mountEditor } from './editor';
+import { sectionOf } from './editor-view';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('./figure-editor', () => ({}));
@@ -255,6 +256,7 @@ function press(root: HTMLElement, key: string) {
   root.querySelector('.caret-input')!.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
 }
 
+const q = (root: HTMLElement, selector: string) => root.querySelector<HTMLButtonElement>(selector)!;
 const last = (name: string) => calls.filter(([command]) => command === name).at(-1);
 const glyphs = (root: HTMLElement) => Array.from(root.querySelectorAll('.nk-glyph')).map((glyph) => glyph.textContent).join('');
 
@@ -730,6 +732,10 @@ describe('page editing', () => {
     root.querySelector<HTMLButtonElement>('[data-action="review"]')!.click();
     await settle(10);
     const box = root.querySelector<HTMLFormElement>('.review-ask')!;
+    // 찾기 막대에 고른 범위가 있어도 「N곳」은 그 번호 문단 전체에서(고른 범위를 「전체」로).
+    const range = root.querySelector<HTMLSelectElement>('.find-range')!;
+    range.value = 'claims';
+    range.dispatchEvent(new Event('change'));
     // 한 자리만 고치라는 정정(꺼짐) 「2곳」 → 창을 접고 찾기 막대로 · 범위 밖 같은 말은 세지 않는다.
     box.querySelector<HTMLButtonElement>('.review-goto[data-note="3"]')!.click();
     await settle(10);
@@ -803,6 +809,82 @@ describe('page editing', () => {
     box = root.querySelector<HTMLFormElement>('.go-ask')!;
     box.querySelector('.go-text')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(root.querySelector('.go-ask')).toBeNull();
+  });
+
+  test('find range: 상세설명만 · 청구항만 (replace-all too) · 고른 곳만 frozen at pick time · kept when typing anew', async () => {
+    texts = ['【발명의 설명】', '가나가나가', '【청구범위】', '【청구항 1】', '가나', '【요약서】', '가'];
+    const root = await open();
+    q(root, '[data-action="find"]').click();
+    const field = root.querySelector<HTMLInputElement>('.find-text')!;
+    const range = root.querySelector<HTMLSelectElement>('.find-range')!;
+    const label = root.querySelector('.find-count')!;
+    const pick = (value: string) => {
+      range.value = value;
+      range.dispatchEvent(new Event('change'));
+    };
+    const next = async () => {
+      q(root, '[data-action="find-next"]').click();
+      await settle(10);
+    };
+    field.value = '가';
+    await next();
+    expect(label.textContent).toMatch(/^1 \/ 5/);
+    pick('claims');
+    await next();
+    expect(label.textContent).toMatch(/^청구항 · 1 \/ 1/);
+    q(root, '[data-action="replace-all"]').click();
+    await settle(10);
+    const replaced = last('editor_replace')![1] as { matches: { paragraph_id: string }[] };
+    expect(replaced.matches.map((m) => m.paragraph_id)).toEqual(['paragraph:4']);
+    expect(label.textContent).toBe('청구항 · 1곳 바꿈');
+    pick('description');
+    await next();
+    expect(label.textContent).toMatch(/^상세설명 · \d \/ 3/);
+    // 새로 쳐도 고른 범위는 남는다(보정안 번호 범위만 풀린다).
+    field.value = '가';
+    field.dispatchEvent(new Event('input'));
+    await next();
+    expect(range.value).toBe('description');
+    expect(label.textContent).toMatch(/\/ 3/);
+    // 고른 곳만: 둘째 문단 1..3(「나가」)을 고르고 고른다 → 그 안의 「가」 하나 · 다음 찾기로 선택이 옮겨 가도 그대로.
+    clickAt(root, 63, 124);
+    root.querySelector('.nk-page')!.dispatchEvent(
+      new MouseEvent('mousedown', { bubbles: true, button: 0, shiftKey: true, clientX: 87 * SCALE, clientY: 124 * SCALE }),
+    );
+    pick('span');
+    await next();
+    expect(label.textContent).toMatch(/^고른 곳 · 1 \/ 1/);
+    await next();
+    expect(label.textContent).toMatch(/^고른 곳 · 1 \/ 1 · …가나가나가…/);
+    // 범위를 고른 뒤 쪽에서 다른 곳(청구항 「가나」)을 골라도 모두 바꾸기는 얼린 범위 안만.
+    clickAt(root, 51, 184);
+    root.querySelector('.nk-page')!.dispatchEvent(
+      new MouseEvent('mousedown', { bubbles: true, button: 0, shiftKey: true, clientX: 75 * SCALE, clientY: 184 * SCALE }),
+    );
+    q(root, '[data-action="replace-all"]').click();
+    await settle(10);
+    expect(last('editor_replace')![1]).toEqual(
+      expect.objectContaining({ matches: [expect.objectContaining({ paragraph_id: 'paragraph:1', start: 2, end: 3 })] }),
+    );
+    await settle(500);
+  });
+
+  test('find range: 고른 곳만 without a selection → hint and back to 전체 · a missing section says so', async () => {
+    texts = ['【의견내용】', '가나'];
+    const root = await open();
+    q(root, '[data-action="find"]').click();
+    const range = root.querySelector<HTMLSelectElement>('.find-range')!;
+    const label = root.querySelector('.find-count')!;
+    range.value = 'span';
+    range.dispatchEvent(new Event('change'));
+    expect(range.value).toBe('');
+    expect(label.textContent).toContain('범위를 먼저 고르세요');
+    range.value = 'claims';
+    range.dispatchEvent(new Event('change'));
+    root.querySelector<HTMLInputElement>('.find-text')!.value = '가';
+    q(root, '[data-action="find-next"]').click();
+    await settle(10);
+    expect(label.textContent).toBe('이 문서에는 청구항 절이 없습니다');
   });
 
   test('amendment marks: 보정 표시 draws inserted text, deletion wedges and change bars (only for a final .fin)', async () => {
@@ -1049,5 +1131,16 @@ describe('goTarget', () => {
     expect(goTarget('【기술분야】', doc)).toBe('t');
     expect(goTarget('청구항 8', doc)).toBeNull();
     expect(goTarget('', doc)).toBeNull();
+  });
+});
+
+describe('sectionOf', () => {
+  test('big headings switch the section; before the first one is other', () => {
+    const ps = ['【발명의 명칭】', '【발명의 설명】', '본문', '【특허청구범위】', '【청구항 1】', '가', '【요약서】', '나', '【청구범위】', '다', '【도면】', '라'].map(
+      (text, i) => ({ id: `p${i}`, text }),
+    );
+    expect([...sectionOf(ps).values()]).toEqual([
+      'other', 'description', 'description', 'claims', 'claims', 'claims', 'other', 'other', 'claims', 'claims', 'other', 'other',
+    ]);
   });
 });
