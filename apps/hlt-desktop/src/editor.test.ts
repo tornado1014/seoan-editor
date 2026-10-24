@@ -1194,6 +1194,106 @@ describe('page editing', () => {
     expect(root.querySelector('.stats-shade strong')!.textContent).toBe('문서 통계');
   });
 
+  test('툴바: 묶음 이름 · 보이는 단추 아이콘이 겹치지 않는다 · 예전 data-action 은 모두 남는다', async () => {
+    const root = await open();
+    const groups = [...root.querySelectorAll('.editor-toolbar .tb-group')].map((group) => group.getAttribute('aria-label'));
+    expect(groups).toEqual(['파일', '편집', '글자', '문단', '넣기', '보기', '도구', '보정(OA 대응)', '내보내기', '도움말']);
+    const icons = [...root.querySelectorAll('.editor-toolbar .tb-group button svg')].map((svg) => svg.innerHTML);
+    expect(new Set(icons).size, '같은 아이콘을 두 단추가 쓰지 않는다').toBe(icons.length);
+    const kept = ['open', 'new-opinion', 'import', 'source', 'tools', 'batch', 'new-tab', 'save', 'save-as', 'close-document', 'undo', 'redo', 'find',
+      'align-justified', 'align-center', 'align-left', 'indent', 'outdent', 'math', 'chem', 'table', 'marks', 'pdf', 'docx', 'fin', 'review', 'amend-marks', 'basis', 'amend'];
+    for (const action of kept) expect(root.querySelector(`[data-action="${action}"]`), action).not.toBeNull();
+    // 새로 만들기 ▾ = 새 의견서 · HLT 만들기 · 새 탭
+    q(root, '[data-action="new-menu"]').click();
+    await settle(10);
+    const items = menus[menus.length - 1] as unknown as { text: string; action: () => void }[];
+    expect(items.map((item) => item.text)).toEqual(['새 의견서', '워드/XML로 HLT 만들기…', '새 탭']);
+  });
+
+  test('메뉴 막대 → 화면: 툴바 단추 · 도구 · 도움말 · 꺼진 단추는 문서를 먼저', async () => {
+    const root = await open();
+    const send = async (payload: string) => {
+      handlers.get('menu-action')!({ payload });
+      await settle(10);
+    };
+    await send('action:find');
+    expect(root.querySelector<HTMLElement>('.find-bar')!.hidden).toBe(false);
+    await send('tool:문서 통계');
+    expect(root.querySelector('.stats-shade strong')!.textContent).toBe('문서 통계');
+    await send('help:shortcuts');
+    expect(root.querySelector('.shortcut-shade strong')!.textContent).toBe('단축키 모음');
+    await send('help:tours');
+    expect(root.querySelector('.help-shade')).not.toBeNull();
+    root.querySelector<HTMLButtonElement>('[data-action="save"]')!.disabled = true;
+    await send('action:save');
+    expect(root.querySelector('.editor-status')!.textContent).toBe('「저장」: 문서를 먼저 여세요.');
+  });
+
+  test('메뉴 막대(Rust)의 이름 · 할 일이 화면과 맞다', async () => {
+    const source = (await import('../src-tauri/src/menu.rs?raw')).default;
+    const root = await open();
+    const actions = [...source.matchAll(/action\("([a-z-]+)"/g), ...source.matchAll(/"action:([a-z-]+)"/g)].map((m) => m[1]);
+    expect(actions.length).toBeGreaterThan(15);
+    for (const action of actions) expect(root.querySelector(`[data-action="${action}"]`), action).not.toBeNull();
+    const tools = [...source.slice(source.indexOf('pub const TOOLS'), source.indexOf('];')).matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    q(root, '[data-action="tools"]').click();
+    await settle(10);
+    const menu = (menus[menus.length - 1] as unknown as { text: string }[]).map((item) => item.text);
+    expect(tools).toEqual(menu);
+  });
+
+  test('도움말: 기능 투어 목록 → 투어(비추기 · 말풍선 · 다음/이전/Esc) · 찾기 투어는 끝나면 찾기 막대를 되돌린다', async () => {
+    const root = await open();
+    q(root, '[data-action="help"]').click();
+    await settle(10);
+    const list = [...root.querySelectorAll<HTMLButtonElement>('.help-tour')];
+    expect(list.length).toBe(16);
+    expect(list[0].querySelector('strong')!.textContent).toBe('전체 둘러보기');
+    expect([...root.querySelectorAll('.help-ask h3')].map((h) => h.textContent)).toEqual(['처음이라면', '파일', '편집', '보기', '도구', '점검', '보정(OA 대응)']);
+    expect(root.querySelector('.tour-invite'), '도움말을 열면 처음 실행 권유는 닫힌다').toBeNull();
+    list.find((button) => button.dataset.tour === 'find')!.click();
+    expect(root.querySelector('.help-shade')).toBeNull();
+    const bar = root.querySelector<HTMLElement>('.find-bar')!;
+    expect(bar.hidden, '찾기 투어가 막대를 연다').toBe(false);
+    const title = () => root.querySelector('.tour-title')!.textContent;
+    const count = () => root.querySelector('.tour-count')!.textContent;
+    expect([title(), count()]).toEqual(['찾을 글', '찾기 옵션(단어 · 정규식) · 1/4']);
+    q(root, '.tour-next').click();
+    expect(title()).toBe('단어');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(title()).toBe('정규식');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    expect(title()).toBe('단어');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(root.querySelector('.tour')).toBeNull();
+    expect(bar.hidden, '열어 둔 찾기 막대를 되돌린다').toBe(true);
+  });
+
+  test('투어: 모든 단계의 대상이 화면에 있다(화면을 바꾸면 투어가 깨지지 않게)', async () => {
+    const { TOURS } = await import('./tour');
+    const root = await open();
+    for (const tour of TOURS) {
+      for (const step of tour.steps) {
+        expect(root.querySelector(step.target), `${tour.title} · ${step.title} · ${step.target}`).not.toBeNull();
+      }
+    }
+  });
+
+  test('처음 실행: 투어 권유 띠 · 닫으면 다음엔 없다', async () => {
+    localStorage.clear();
+    let root = await open();
+    expect(root.querySelector('.tour-invite')).not.toBeNull();
+    q(root, '.tour-invite-close').click();
+    expect(root.querySelector('.tour-invite')).toBeNull();
+    root = await open();
+    expect(root.querySelector('.tour-invite')).toBeNull();
+    localStorage.clear();
+    root = await open();
+    q(root, '.tour-invite-go').click();
+    expect(root.querySelector('.tour-count')!.textContent).toBe('전체 둘러보기 · 1/10');
+    q(root, '.tour-end').click(); // 투어 키 듣기를 풀어 다음 테스트에 새지 않게
+  });
+
   test('find range: 상세설명만 · 청구항만 (replace-all too) · 고른 곳만 frozen at pick time · kept when typing anew', async () => {
     texts = ['【발명의 설명】', '가나가나가', '【청구범위】', '【청구항 1】', '가나', '【요약서】', '가'];
     const root = await open();

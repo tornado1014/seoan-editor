@@ -93,6 +93,7 @@ import {
 } from './contracts';
 import { documentStats, nestClaims, outlineTree, repeatedSentences, renderPage, richParagraph, sectionOf, selectOffsets, selectionOffsets } from './editor-view';
 import type { OutlineNode } from './editor-view';
+import { openHelp as openTourList, runTour, TOURS } from './tour';
 import {
   type Caret,
   caretLines,
@@ -135,6 +136,27 @@ export function toCsv(rows: string[][]): string {
   return rows.map((row) => row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(',')).join('\r\n');
 }
 
+/** 단축키 모음(도움말). */
+const SHORTCUTS: [string, string][] = [
+  ['⌘O', '열기'],
+  ['⌘T · ⌘N', '새 탭'],
+  ['⌘S · ⇧⌘S', '저장 · 다른 이름으로 저장'],
+  ['⌘W', '탭 닫기'],
+  ['⌘Z · ⇧⌘Z', '되돌리기 · 다시 하기'],
+  ['⌘F', '찾기 · 바꾸기'],
+  ['⌘G', '식별번호 · 청구항 · 도면 · 표제로 가기'],
+  ['⌘K', '명령 찾기(이름을 쳐서 실행)'],
+  ['⌘] · ⌘[', '다음 · 앞 고친 곳'],
+  ['⌘B · ⌘I · ⌘U', '굵게 · 기울임 · 밑줄'],
+  ['⌘Enter', '강제 쪽나눔'],
+  ['Tab · ⇧Tab', '표 칸 이동'],
+  ['⌘A · ⌘C · ⌘X · ⌘V', '모두 선택 · 복사 · 잘라내기 · 붙여넣기'],
+  ['Esc', '창 · 찾기 막대 · 투어 닫기'],
+];
+
+/** 처음 실행 안내를 본 적이 있는지(브라우저 저장 — 못 쓰면 매번 묻지 않고 넘어간다). */
+const TOUR_SEEN = 'seoan.tour.seen';
+
 /** 자동 저장: 마지막 고침 뒤 이만큼 손을 멈추면 복구본을 둔다. */
 export const AUTOSAVE_MS = 120_000;
 
@@ -162,6 +184,14 @@ const ICONS: Record<string, string[]> = {
   print: ['M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2', 'M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6', 'M6 14h12v8H6z'],
   send: ['m22 2-7 20-4-9-9-4Z', 'M22 2 11 13'],
   amend: ['M12.5 22H18a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v9.5', 'M14 2v4a2 2 0 0 0 2 2h4', 'M13.378 15.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z'],
+  fileNew: ['M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z', 'M14 2v4a2 2 0 0 0 2 2h4', 'M9 15h6', 'M12 18v-6'],
+  columns: ['M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z', 'M12 3v18'],
+  wrench: ['M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z'],
+  layers: ['m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z', 'm22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65', 'm22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65'],
+  diff: ['M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z', 'M9 10h6', 'M12 13V7', 'M9 17h6'],
+  evidence: ['M14 2v4a2 2 0 0 0 2 2h4', 'M4.27 21a2 2 0 0 0 1.73 1H18a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v3', 'm9 18-1.5-1.5', 'M5 17a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'],
+  word: ['M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z', 'M14 2v4a2 2 0 0 0 2 2h4', 'M16 13H8', 'M16 17H8', 'M10 9H8'],
+  help: ['M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z', 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3', 'M12 17h.01'],
 };
 const icon = (name: string) =>
   `<svg class="tb-icon" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name].map((d) => `<path d="${d}"/>`).join('')}</svg>`;
@@ -171,30 +201,30 @@ export function mountEditor(root: HTMLElement): void {
     <div class="editor">
       <div class="editor-toolbar" role="toolbar">
         <div class="tb-group" role="group" aria-label="파일">
-          <button type="button" data-action="open" title="HLT · 제출파일(.fin · .hlz) 열기">${icon('open')}<span>열기</span></button>
-          <button type="button" data-action="new-opinion" title="빈 의견서(【의견내용】)를 새로 만든다">${icon('opinion')}<span>새 의견서</span></button>
-          <button type="button" data-action="import" title="워드 · KIPO XML · HML 을 불러와 새 HLT 로 만든다">${icon('import')}<span>불러와 HLT 만들기</span></button>
-          <button type="button" data-action="source" disabled title="원문과 나란히 보기 — 영문 원문(.docx)을 오른쪽에 두고 식별번호 · 청구항 번호로 따라 움직인다(다시 누르면 닫기)">${icon('find')}<span>원문</span></button>
-          <button type="button" data-action="tools" disabled title="도구 — 번호 다시 매기기 · 부호 목록 · 문서 통계 · 되풀이 문장 · 고친 곳 이동(⌘K 명령 찾기)">${icon('find')}<span>도구</span></button>
-          <button type="button" data-action="batch" title="폴더 일괄 처리 — 폴더 안 워드 · XML 을 HLT 로 · HLT 마다 제출 전 점검">${icon('import')}<span>일괄</span></button>
-          <button type="button" data-action="new-tab" title="새 탭 (⌘T)">${icon('tab')}</button>
+          <button type="button" data-action="open" title="열기 (⌘O) — HLT · 제출파일(.fin · .hlz)을 연다 · 최근 문서는 메뉴 「파일」">${icon('open')}<span>열기</span></button>
+          <button type="button" data-action="new-menu" title="새로 만들기 — 새 의견서 · 워드/XML/HML로 HLT 만들기 · 새 탭(⌘T)">${icon('fileNew')}<span>새로 만들기 ▾</span></button>
           <button type="button" data-action="save" disabled title="저장 — 연 HLT 에 덮어쓰기 (⌘S)">${icon('save')}<span>저장</span></button>
           <button type="button" data-action="save-as" disabled title="다른 이름으로 저장 (⇧⌘S)">${icon('saveAs')}</button>
-          <button type="button" data-action="close-document" disabled title="문서 닫기">${icon('close')}<span>닫기</span></button>
+          <button type="button" data-action="close-document" disabled title="문서 닫기 — 저장하지 않은 고침이 있으면 묻는다">${icon('close')}<span>닫기</span></button>
+        </div>
+        <div class="tb-hidden" hidden>
+          <button type="button" data-action="new-opinion" title="새 의견서 — 빈 의견서(【의견내용】)를 새로 만든다">${icon('opinion')}<span>새 의견서</span></button>
+          <button type="button" data-action="import" title="워드/XML로 HLT 만들기 — 워드 · KIPO XML · HML 을 불러와 새 HLT 로 만든다">${icon('import')}<span>워드/XML로 HLT 만들기</span></button>
+          <button type="button" data-action="new-tab" title="새 탭 (⌘T · ⌘N)">${icon('tab')}<span>새 탭</span></button>
         </div>
         <div class="tb-group" role="group" aria-label="편집">
           <button type="button" data-action="undo" disabled title="되돌리기 (⌘Z)">${icon('undo')}</button>
           <button type="button" data-action="redo" disabled title="다시 하기 (⇧⌘Z)">${icon('redo')}</button>
-          <button type="button" data-action="find" disabled title="찾기·바꾸기 (⌘F) · 식별번호·청구항으로 가기 (⌘G)">${icon('find')}<span>찾기</span></button>
+          <button type="button" data-action="find" disabled title="찾기 · 바꾸기 (⌘F) — 대소문자 · 낱말 · 정규식 옵션 · 식별번호 · 청구항으로 가기는 ⌘G">${icon('find')}<span>찾기</span></button>
         </div>
-        <div class="tb-group panel-formats" role="group" aria-label="글자모양">
+        <div class="tb-group panel-formats" role="group" aria-label="글자">
           <button type="button" data-format="bold" title="굵게 (⌘B)"><b>가</b></button>
           <button type="button" data-format="italic" title="기울임 (⌘I)"><i>가</i></button>
           <button type="button" data-format="underline" title="밑줄 (⌘U)"><u>가</u></button>
           <button type="button" data-format="superscript" title="위첨자">x<sup>2</sup></button>
           <button type="button" data-format="subscript" title="아래첨자">x<sub>2</sub></button>
         </div>
-        <div class="tb-group panel-aligns" role="group" aria-label="문단 정렬">
+        <div class="tb-group panel-aligns" role="group" aria-label="문단">
           <button type="button" data-action="align-justified" disabled title="양쪽 정렬 (커서가 있는 문단)">${icon('justify')}</button>
           <button type="button" data-action="align-center" disabled title="가운데 정렬 (커서가 있는 문단)">${icon('center')}</button>
           <button type="button" data-action="align-left" disabled title="왼쪽 정렬 (커서가 있는 문단)">${icon('left')}</button>
@@ -204,22 +234,34 @@ export function mountEditor(root: HTMLElement): void {
         <div class="tb-group" role="group" aria-label="넣기">
           <button type="button" data-action="math" disabled title="수식 넣기(LaTeX)">${icon('math')}<span>수식</span></button>
           <button type="button" data-action="chem" disabled title="화학식 넣기(구조식)">${icon('chem')}<span>화학식</span></button>
-          <button type="button" data-action="table" disabled title="표 넣기(커서 문단 아래 · 고치기는 표 칸 위 우클릭)">${icon('table')}<span>표</span></button>
-          <button type="button" data-action="marks" aria-pressed="true" title="문단부호 보기">${icon('marks')}</button>
+          <button type="button" data-action="table" disabled title="표 넣기(커서 문단 아래 · 고치기는 표 칸 위 우클릭) · 쪽나눔은 ⌘Enter">${icon('table')}<span>표</span></button>
         </div>
-        <div class="tb-group" role="group" aria-label="내보내기">
-          <button type="button" data-action="pdf" disabled title="인쇄 PDF">${icon('print')}<span>PDF</span></button>
-          <button type="button" data-action="docx" disabled title="Word 파일로 저장(표제 포함 · 식별번호 없음)">${icon('save')}<span>Word</span></button>
-          <button type="button" data-action="fin" disabled title="제출파일(.hlz · .fin) 만들기">${icon('send')}<span>제출파일</span></button>
-          <button type="button" data-action="review" disabled title="OA 검토보고서의 보정안을 불러와 편집기에 건다">${icon('amend')}<span>보정안</span></button>
-          <button type="button" data-action="amend-marks" aria-pressed="false" disabled title="보정 표시 — 최종본(.fin)에 견준 바뀐 글(넣은 글 · 지운 자리 · 바뀐 문단)">${icon('marks')}<span>보정 표시</span></button>
-          <select class="amend-base" aria-label="보정 표시 · 보정 근거의 기준" title="견줄 기준 — 연 뒤 고친 것 · 원출원(최종본 안 보정서까지)">
+        <div class="tb-group" role="group" aria-label="보기">
+          <button type="button" data-action="marks" aria-pressed="true" title="문단부호 보기 — 문단 끝 ↵ 를 보이거나 숨긴다(화면에만)">${icon('marks')}<span>문단부호</span></button>
+          <button type="button" data-action="source" disabled title="원문 나란히 — 영문 원문(.docx)을 오른쪽에 두고 식별번호 · 청구항 번호로 함께 움직인다(다시 누르면 닫기)">${icon('columns')}<span>원문 나란히</span></button>
+        </div>
+        <div class="tb-group" role="group" aria-label="도구">
+          <button type="button" data-action="tools" disabled title="도구 — 번호 다시 매기기 · 부호 목록 · 문서 통계 · 되풀이 문장 · 고친 곳 이동(⌘[ ⌘]) · 모든 명령은 ⌘K">${icon('wrench')}<span>도구 ▾</span></button>
+          <button type="button" data-action="batch" title="일괄 처리 — 폴더 안 워드 · XML 을 HLT 로 · 폴더 안 문서마다 제출 전 점검">${icon('layers')}<span>일괄 처리 ▾</span></button>
+        </div>
+        <div class="tb-group" role="group" aria-label="보정(OA 대응)">
+          <button type="button" data-action="review" disabled title="검토보고서 불러오기 — OA 검토보고서(워드)의 보정안 · 오기 정정을 골라 편집기에 건다">${icon('import')}<span>검토보고서</span></button>
+          <button type="button" data-action="amend-marks" aria-pressed="false" disabled title="보정 표시 — 옆에서 고른 기준에 견준 바뀐 글(넣은 글 · 지운 자리 · 바뀐 문단)을 쪽 위에 보인다">${icon('diff')}<span>보정 표시</span></button>
+          <select class="amend-base" aria-label="보정 표시 · 보정 근거의 기준" title="견줄 기준 — 연 뒤 고친 것 · 원출원(최종본 안 보정서까지) · 다른 파일">
             <option value="">연 뒤 고친 것</option>
             <option value="original">원출원</option>
             <option value="file">다른 파일…</option>
           </select>
-          <button type="button" data-action="basis" disabled title="보정 근거 — 바뀐 청구항의 새 말이 있는 원출원 명세서 단락 · 인용 문장 초안">${icon('find')}<span>보정 근거</span></button>
-          <button type="button" data-action="amend" disabled title="보정서 만들기(청구항 인용을 먼저 점검)">${icon('amend')}<span>보정서</span></button>
+          <button type="button" data-action="basis" disabled title="보정 근거 — 바뀐 청구항의 새 말이 있는 원출원 명세서 단락 · 의견서 인용 문장 초안">${icon('evidence')}<span>보정 근거</span></button>
+          <button type="button" data-action="amend" disabled title="보정서 만들기 — 청구항 인용을 먼저 점검하고 보정서(.dta) · 대비표(워드)를 만든다">${icon('amend')}<span>보정서</span></button>
+        </div>
+        <div class="tb-group" role="group" aria-label="내보내기">
+          <button type="button" data-action="pdf" disabled title="PDF로 인쇄">${icon('print')}<span>PDF</span></button>
+          <button type="button" data-action="docx" disabled title="Word로 저장(표제 포함 · 식별번호 없음)">${icon('word')}<span>Word</span></button>
+          <button type="button" data-action="fin" disabled title="제출파일 만들기(.hlz · .fin) — 만들기 전에 제출 전 점검을 보여 준다">${icon('send')}<span>제출파일</span></button>
+        </div>
+        <div class="tb-group" role="group" aria-label="도움말">
+          <button type="button" data-action="help" title="도움말 — 기능별 투어(화면 위에서 차례로 짚어 준다) · 단축키 모음">${icon('help')}<span>도움말</span></button>
         </div>
         <span class="editor-status" aria-live="polite"></span>
         <button type="button" class="review-left" hidden title="걸지 않은 오기 정정 — 누를 때마다 다음 정정을 찾기 막대로"></button>
@@ -2531,7 +2573,8 @@ export function mountEditor(root: HTMLElement): void {
     root.querySelector('.palette-shade')?.remove();
     const commands = [
       ...[...root.querySelectorAll<HTMLButtonElement>('.editor-toolbar [data-action]')].map((button) => ({
-        label: (button.querySelector('span')?.textContent ?? button.textContent ?? '').trim(),
+        // 메뉴가 열리는 단추의 「▾」는 이름이 아니다.
+        label: (button.querySelector('span')?.textContent ?? button.textContent ?? '').replace(/\s*▾$/, '').trim(),
         hint: button.title,
         enabled: !button.disabled,
         run: () => button.click(),
@@ -2835,6 +2878,15 @@ export function mountEditor(root: HTMLElement): void {
     );
   }
 
+  /** 도움말: 기능 투어 목록 · 단축키 모음. */
+  function openHelp() {
+    // 도움말을 열었으면 처음 실행 권유는 할 일을 다 했다.
+    root.querySelector<HTMLButtonElement>('.tour-invite-close')?.click();
+    openTourList(root, () =>
+      showTable('단축키 모음', ['단축키', '하는 일'], SHORTCUTS.map((cells) => ({ cells })), 'shortcut-shade'),
+    );
+  }
+
   /** 「도구」 메뉴 · ⌘K 명령 찾기가 함께 쓰는 목록. */
   const TOOLS: { label: string; run: () => void }[] = [
     { label: '청구항 번호 다시 매기기…', run: () => void renumber(false) },
@@ -2878,6 +2930,57 @@ export function mountEditor(root: HTMLElement): void {
     } finally {
       batchBar.hidden = true;
     }
+  }
+
+  // 메뉴 막대(한국어): 항목 id 가 할 일 — 툴바 단추 · 도구 · 일괄 · 도움말 · 가기 · 명령 찾기.
+  void listen<string>('menu-action', (event) => {
+    const id = event.payload;
+    const needDocument = (name: string) => say(`「${name}」: 문서를 먼저 여세요.`);
+    if (id.startsWith('action:')) {
+      const button = root.querySelector<HTMLButtonElement>(`[data-action="${id.slice(7)}"]`);
+      if (!button) return;
+      if (button.disabled) needDocument(button.title.split(' — ')[0]);
+      else button.click();
+    } else if (id.startsWith('tool:')) {
+      const tool = TOOLS.find((each) => each.label === id.slice(5));
+      if (!view) needDocument(id.slice(5));
+      else tool?.run();
+    } else if (id === 'batch:generate' || id === 'batch:check') void runBatch(id === 'batch:generate' ? 'generate' : 'check');
+    else if (id === 'help:tours') openHelp();
+    else if (id === 'help:shortcuts') showTable('단축키 모음', ['단축키', '하는 일'], SHORTCUTS.map((cells) => ({ cells })), 'shortcut-shade');
+    else if (id === 'palette') openPalette();
+    else if (id === 'go') {
+      if (view) void askGo();
+      else needDocument('가기');
+    }
+  });
+
+  // 처음 실행: 기능 투어를 한 번 권한다(보거나 닫으면 다시 안 묻는다).
+  const toured = (() => {
+    try {
+      return localStorage.getItem(TOUR_SEEN) === '1';
+    } catch {
+      return true;
+    }
+  })();
+  if (!toured) {
+    const invite = document.createElement('div');
+    invite.className = 'tour-invite';
+    invite.innerHTML = '<span>처음이세요? 화면을 차례로 짚어 주는 기능 투어를 볼 수 있습니다.</span><button type="button" class="tour-invite-go">투어 보기</button><button type="button" class="tour-invite-close">닫기</button>';
+    const done = () => {
+      invite.remove();
+      try {
+        localStorage.setItem(TOUR_SEEN, '1');
+      } catch {
+        // 저장 못 해도 이번엔 닫는다.
+      }
+    };
+    invite.querySelector('.tour-invite-go')!.addEventListener('click', () => {
+      done();
+      runTour(root, TOURS[0]);
+    });
+    invite.querySelector('.tour-invite-close')!.addEventListener('click', done);
+    root.append(invite);
   }
 
   void listen<string>('close-requested', async (event) => {
@@ -2991,6 +3094,21 @@ export function mountEditor(root: HTMLElement): void {
         } catch (error) {
           fail('원문 열기', error);
         }
+        break;
+      }
+      case 'new-menu': {
+        const menu = await Menu.new({
+          items: [
+            { text: '새 의견서', action: () => q<HTMLButtonElement>('[data-action="new-opinion"]').click() },
+            { text: '워드/XML로 HLT 만들기…', action: () => q<HTMLButtonElement>('[data-action="import"]').click() },
+            { text: '새 탭', accelerator: 'CmdOrCtrl+T', action: () => q<HTMLButtonElement>('[data-action="new-tab"]').click() },
+          ],
+        });
+        await menu.popup();
+        break;
+      }
+      case 'help': {
+        openHelp();
         break;
       }
       case 'tools': {

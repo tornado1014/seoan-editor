@@ -4,6 +4,7 @@
 mod capabilities;
 mod commands;
 mod editor;
+mod menu;
 mod recent;
 mod recovery;
 mod update;
@@ -304,55 +305,11 @@ fn main() {
             Ok(())
         })
         // ⌘Q: macOS 기본 「종료」는 앱을 바로 끝낸다(이 판의 tao 는 끼어들 틈을 안 준다) — 저장을 묻는 종료로 바꾼다.
-        .menu(|app| {
-            let menu = tauri::menu::Menu::default(app)?;
-            // 첫 메뉴(맥 = 앱 메뉴 · 윈도 = 파일)에 「업데이트 확인…」.
-            if let Some(tauri::menu::MenuItemKind::Submenu(first)) = menu.items()?.first() {
-                first.insert(
-                    &tauri::menu::MenuItem::with_id(
-                        app,
-                        "check-update",
-                        "업데이트 확인…",
-                        true,
-                        None::<&str>,
-                    )?,
-                    1,
-                )?;
-                first.insert(
-                    &tauri::menu::MenuItem::with_id(
-                        app,
-                        "report-bug",
-                        "버그 신고…",
-                        true,
-                        None::<&str>,
-                    )?,
-                    2,
-                )?;
-            }
-            // 파일 메뉴(맥 = 둘째 · 윈도 = 첫째) 맨 앞에 「최근 문서」.
-            let file_menu = if cfg!(target_os = "macos") { 1 } else { 0 };
-            if let Some(tauri::menu::MenuItemKind::Submenu(file)) = menu.items()?.get(file_menu) {
-                file.insert(
-                    &tauri::menu::Submenu::with_id(app, "recent", "최근 문서", true)?,
-                    0,
-                )?;
-            }
-            #[cfg(target_os = "macos")]
-            if let Some(tauri::menu::MenuItemKind::Submenu(app_menu)) = menu.items()?.first() {
-                if let Some(native_quit) = app_menu.items()?.last() {
-                    app_menu.remove(native_quit)?;
-                }
-                app_menu.append(&tauri::menu::MenuItem::with_id(
-                    app,
-                    "quit",
-                    "서안 통특기 종료",
-                    true,
-                    Some("CmdOrCtrl+Q"),
-                )?)?;
-            }
-            Ok(menu)
-        })
+        .menu(menu::build)
         .on_menu_event(|app, event| {
+            if menu::forward(app, event.id().as_ref()) {
+                return;
+            }
             if event.id() == "quit" {
                 quit(app);
             } else if event.id() == "check-update" {
