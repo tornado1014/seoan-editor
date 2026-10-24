@@ -39,7 +39,7 @@ export const TOURS: Tour[] = [
       { target: '.tb-group[aria-label="편집"]', title: '편집', text: '되돌리기(⌘Z) · 다시 하기(⇧⌘Z) · 찾기 · 바꾸기(⌘F). 식별번호 · 청구항으로 가기는 ⌘G 입니다.' },
       { target: '.tb-group[aria-label="글자"]', title: '글자 · 문단', text: '굵게 · 기울임 · 밑줄 · 위/아래첨자, 그리고 문단 정렬과 들여쓰기. 커서가 있는 문단에 걸립니다.' },
       { target: '.tb-group[aria-label="넣기"]', title: '넣기', text: '수식(LaTeX) · 화학식(구조식) · 표를 커서 문단 아래에 넣습니다.' },
-      { target: '.tb-group[aria-label="보기"]', title: '보기', text: '문단부호(↵) 보이기와, 영문 원문을 오른쪽에 나란히 두는 「원문 나란히」.' },
+      { target: '.tb-group[aria-label="보기"]', title: '보기', text: '문단부호(↵) 보이기, 영문 원문을 오른쪽에 나란히 두는 「원문 나란히」' },
       { target: '.tb-group[aria-label="도구"]', title: '도구 · 일괄 처리', text: '번호 다시 매기기 · 부호 목록 · 문서 통계 · 되풀이 문장, 그리고 폴더를 통째로 처리하는 일괄 처리.' },
       { target: '.tb-group[aria-label="보정(OA 대응)"]', title: '보정(OA 대응)', text: '「검토보고서」로 보정안을 불러오고 → 「보정 표시」로 확인 → 「보정 근거」 → 「보정서」로 보정서를 만드는 차례로 씁니다.' },
       { target: '.tb-group[aria-label="내보내기"]', title: '내보내기', text: 'PDF · Word · 제출파일(.hlz · .fin). 제출파일을 만들기 전에 제출 전 점검을 보여 줍니다.' },
@@ -192,6 +192,47 @@ export const TOURS: Tour[] = [
     steps: [
       { target: '.editor-status', title: '자동 저장', text: '고친 뒤 2분 동안 손을 멈추면 복구본을 따로 둡니다(원래 파일은 그대로). 저장하거나 닫으면 지웁니다.' },
       { target: '[data-action="save"]', title: '다음 실행에 복구', text: '앱이 비정상으로 끝났다면 다음에 켤 때 「복구할까요?」를 묻습니다. 복구한 문서는 저장할 때 이름을 묻습니다.' },
+    ],
+  },
+  {
+    id: 'history',
+    group: '파일',
+    title: '이전 판 · 바뀐 파일 알림',
+    summary: '저장이 덮은 판을 다시 열고, 다른 곳에서 고친 파일을 말없이 덮지 않는다',
+    steps: [
+      { target: '[data-action="save"]', title: '덮기 전 판을 남김', text: '저장할 때마다 덮이기 직전의 파일을 따로 남깁니다(파일마다 최근 10개 · 30일 — 「설정」에서 바꿈). 저장한 뒤에는 쓴 파일을 다시 읽어 화면과 같은지 확인합니다.' },
+      { target: '[data-action="open"]', title: '이전 판 열기', text: '메뉴 「파일 › 이전 판…」에서 때를 골라 「열기」를 누르면 새 탭에 이름 없는 문서로 열립니다. 원본은 그대로이고, 저장하면 이름을 묻습니다.' },
+      { target: '[data-action="save"]', title: '다른 곳에서 바뀐 파일', text: '연 뒤에 통특기 같은 다른 프로그램이 같은 파일을 고쳤으면, 저장하기 전에 「덮어쓰기 · 다른 이름으로 · 취소」를 묻습니다. 같은 파일은 한 탭에서만 열립니다(이미 연 탭으로 옮겨 갑니다).' },
+    ],
+  },
+  {
+    id: 'read-only',
+    group: '파일',
+    title: '읽기 전용으로 열기',
+    summary: '원출원 · 최종본을 실수로 고치지 않게',
+    steps: [
+      { target: '[data-action="open"]', title: '원본 보호', text: '메뉴 「파일 › 읽기 전용으로 열기…」로 열면 글을 고칠 수 없고 ⌘S 도 막힙니다. 탭 제목에 「(읽기 전용)」이 붙습니다.' },
+      { target: '[data-action="save-as"]', title: '사본으로 고치기', text: '고치려면 「다른 이름으로 저장」으로 사본을 만드세요. 그 뒤로는 사본을 고치는 문서가 되고 원본은 그대로 남습니다.' },
+    ],
+  },
+  {
+    id: 'snippets',
+    group: '편집',
+    title: '상용구',
+    summary: '자주 쓰는 문구를 골라 넣기',
+    steps: [
+      { target: '[data-action="snippets"]', title: '상용구 창', text: '넣을 자리를 누른 뒤 「상용구」에서 「넣기」. 「새 상용구」 · 「고치기」 · 「지우기」로 목록을 다듬으면 모든 탭이 같은 목록을 씁니다.' },
+      { target: '[data-action="help"]', title: '이름으로 넣기', text: '⌘K 명령 찾기에 상용구 이름을 쳐도 바로 넣을 수 있습니다(「상용구: 이름」).' },
+    ],
+  },
+  {
+    id: 'settings',
+    group: '보기',
+    title: '문서 배율 · 설정',
+    summary: '글자 크기 · 자동 저장 간격 · 이전 판 보관',
+    steps: [
+      { target: '.zoom-box', title: '문서 배율', text: '문서 칸 오른쪽 아래 − · 100% · + (또는 ⌘+ 확대 · ⌘− 축소 · ⌘0 실제 크기 · 50~200%). 문서 쪽만 커지고 툴바 · 개요는 그대로입니다. 모든 탭이 같은 배율이 되고 다음 실행에도 남습니다.' },
+      { target: '.editor-toolbar', title: '설정', text: '⌘,(메뉴 「서안 통특기 › 설정…」)에서 자동 저장 간격 · 이전 판 보관 개수와 날수 · 문서 배율 · 문단부호 기본 보이기를 바꿉니다.' },
     ],
   },
   {

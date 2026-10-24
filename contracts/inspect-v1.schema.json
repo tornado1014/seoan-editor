@@ -47,7 +47,7 @@
         "document_title": {"type": "string"},
         "document_type_raw": {"type": "integer", "minimum": 0, "maximum": 4294967295},
         "document_tree_kind": {
-          "enum": ["pct_patent", "patent_specification_ko", "unknown"]
+          "enum": ["pct_patent", "patent_specification_ko", "opinion", "unknown"]
         },
         "document_tree_label": {
           "enum": ["PCT특허", "특허 명세서등(국어)", "unknown"]

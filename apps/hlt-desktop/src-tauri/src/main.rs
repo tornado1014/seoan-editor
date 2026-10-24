@@ -4,9 +4,11 @@
 mod capabilities;
 mod commands;
 mod editor;
+mod history;
 mod menu;
 mod recent;
 mod recovery;
+mod settings;
 mod update;
 
 use commands::{AppState, cancel_verify, select_hlt, verify_file};
@@ -16,12 +18,13 @@ use editor::{
     editor_cell_position, editor_cell_text, editor_claim_issues, editor_claim_parents,
     editor_close, editor_close_document, editor_compare_pick, editor_cp949_scan,
     editor_delete_range, editor_delete_table, editor_export_amendment, editor_export_docx,
-    editor_export_fin, editor_find, editor_image, editor_import, editor_import_finish,
-    editor_insert_figure, editor_insert_item, editor_insert_picture, editor_insert_table,
-    editor_log, editor_merge_paragraph, editor_new_opinion, editor_new_tab,
-    editor_number_paragraphs, editor_open, editor_open_pending, editor_page, editor_paragraph_keys,
-    editor_print_pdf, editor_read_review, editor_redo, editor_remove_items, editor_renumber_plan,
-    editor_replace, editor_replace_cell_text, editor_replace_picture, editor_replace_text,
+    editor_export_fin, editor_find, editor_history_list, editor_history_open, editor_image,
+    editor_import, editor_import_finish, editor_insert_figure, editor_insert_item,
+    editor_insert_picture, editor_insert_table, editor_log, editor_merge_paragraph,
+    editor_new_opinion, editor_new_tab, editor_number_paragraphs, editor_open, editor_open_pending,
+    editor_open_read_only, editor_page, editor_paragraph_keys, editor_print_pdf,
+    editor_read_review, editor_redo, editor_remove_items, editor_renumber_plan, editor_replace,
+    editor_replace_cell_text, editor_replace_picture, editor_replace_text,
     editor_replace_text_page_break, editor_replace_texts, editor_resize_image, editor_save,
     editor_save_as, editor_save_csv, editor_set_alignment, editor_set_indent, editor_set_size,
     editor_sign_table, editor_source_open, editor_submission_checks, editor_table_edit,
@@ -37,6 +40,9 @@ fn ask_close(app: &tauri::AppHandle, label: &str) {
 /// 파일 하나를 앱에서 연다(Finder · 최근 문서 · 복원): 문서 없는 첫 창이면 거기 · 아니면 포커스 창 옆 새 탭.
 fn open_in_app(app: &tauri::AppHandle, path: std::path::PathBuf) {
     use tauri::Manager;
+    if editor::focus_if_open(app, &path) {
+        return;
+    }
     let state = app.state::<EditorState>();
     // 실행 직후엔 첫 창이 아직 없을 수 있다(파일이 창보다 먼저 온다) — 그때도 첫 창 몫이다.
     let main_ready = app.get_webview_window("main").is_some()
@@ -80,10 +86,17 @@ fn restore_tabs(app: &tauri::AppHandle) {
     if state.has_document("main") {
         return; // Finder · 실행 인자로 연 파일이 있다 — 그 파일을 원했다.
     }
+    let mut seen: Vec<std::path::PathBuf> = Vec::new();
     let mut tabs = recent::read(app)
         .tabs
         .into_iter()
-        .filter(|path| path.is_file());
+        .filter(|path| path.is_file())
+        // 같은 파일은 한 탭에만(옛 판이 같은 파일을 두 탭에 열어 두었을 수 있다).
+        .filter(|path| {
+            let fresh = !seen.iter().any(|other| editor::same_file(other, path));
+            seen.push(path.clone());
+            fresh
+        });
     let Some(first) = tabs.next() else {
         return;
     };
@@ -314,6 +327,8 @@ fn main() {
                 quit(app);
             } else if event.id() == "check-update" {
                 tauri::async_runtime::spawn(update::check(app.clone(), true));
+            } else if event.id() == "rollback" {
+                tauri::async_runtime::spawn(update::rollback(app.clone()));
             } else if event.id() == "report-bug" {
                 report_bug(app);
             } else if event.id() == "recent-clear" {
@@ -393,7 +408,12 @@ fn main() {
             editor_set_size,
             editor_find,
             editor_view,
-            editor_replace
+            editor_replace,
+            editor_open_read_only,
+            editor_history_list,
+            editor_history_open,
+            settings::settings_get,
+            settings::settings_set
         ])
         .build(tauri::generate_context!())
         .expect("failed to build Seoan editor")
@@ -447,6 +467,18 @@ fn main() {
                 tauri::RunEvent::Ready => {
                     state.ready.store(true, std::sync::atomic::Ordering::SeqCst);
                     recent::fill_menu(app, &recent::read(app).recent);
+                    // 판 기록(「이전 판으로 되돌리기」의 대상) · 오래된 이전 판 치우기.
+                    let version = app.package_info().version.to_string();
+                    let _ = settings::update(app, |settings| {
+                        settings.record_version(&version);
+                    });
+                    if let Some(root) = history::root(app) {
+                        history::prune_older_than(
+                            &root,
+                            settings::read(app).history_days,
+                            chrono::Local::now().naive_local(),
+                        );
+                    }
                     restore_tabs(app);
                     offer_recovery(app);
                     #[cfg(target_os = "macos")]

@@ -139,6 +139,8 @@ export interface EditorParagraphDto {
 export interface EditorViewDto {
   title: string;
   editable: boolean;
+  /** 읽기 전용으로 열었다(원본 보호 · `editable` 도 거짓). */
+  read_only?: boolean;
   page_count: number;
   page_width: number;
   page_height: number;
@@ -390,3 +392,27 @@ export const editorReplace = (
   pattern: { text: string; format: FindFormatDto | null } & FindOptionsDto | null = null,
 ) => invoke<EditorViewDto>('editor_replace', { matches, replacement, format, pattern });
 export const editorView = () => invoke<EditorViewDto>('editor_view');
+
+/** 이전 판(저장이 덮기 전에 남긴 판) — 목록 차례로 연다. */
+export interface KeptVersionDto {
+  saved: string;
+  size: number;
+}
+export const editorOpenReadOnly = () => invoke<EditorViewDto | null>('editor_open_read_only');
+export const editorHistoryList = () => invoke<KeptVersionDto[]>('editor_history_list');
+export const editorHistoryOpen = (index: number) => invoke<EditorViewDto | null>('editor_history_open', { index });
+
+export interface SnippetDto {
+  name: string;
+  text: string;
+}
+export interface SettingsDto {
+  autosave_minutes: number;
+  history_keep: number;
+  history_days: number;
+  zoom: number;
+  marks_default: boolean;
+  snippets: SnippetDto[];
+}
+export const settingsGet = () => invoke<SettingsDto>('settings_get');
+export const settingsSet = (settings: SettingsDto) => invoke<SettingsDto>('settings_set', { settings });

@@ -42,6 +42,20 @@ fn the_same_pct_title_with_type_140_is_the_korean_specification_tree() {
     assert_eq!(summary.document_tree_label, "특허 명세서등(국어)");
 }
 
+/// 의견서(서식 7)의 구조창 뿌리는 「의견서」다(전엔 「unknown」).
+#[test]
+fn a_new_opinion_is_an_opinion_tree() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("의견서.HLT");
+    hlt_core::save_new_opinion_as_new(&path, hlt_core::WriteOptions::default()).unwrap();
+    let summary = inspect_path(&path, InspectOptions::default())
+        .unwrap()
+        .summary;
+    assert_eq!(summary.document_type_raw & 0x7fff, 7);
+    assert_eq!(summary.document_tree_kind, DocumentTreeKind::Opinion);
+    assert_eq!(summary.document_tree_label, "의견서");
+}
+
 #[test]
 fn an_unknown_header_type_is_retained_without_guessing_a_tree() {
     let source = support::pct_table_fixture();

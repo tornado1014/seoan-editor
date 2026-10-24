@@ -24,6 +24,48 @@ pub struct Slot {
     pub session: Option<EditorSession>,
     /// 연 원본 파일(제출파일 기본 이름 · 폴더).
     pub source: Option<PathBuf>,
+    /// `source` 를 열거나 저장한 때의 표지 — 저장 전에 다른 곳에서 바뀌었는지 견준다.
+    pub stamp: Option<Stamp>,
+}
+
+/// 파일 표지: 수정 시각 · 크기.
+pub type Stamp = (std::time::SystemTime, u64);
+
+pub fn stamp_of(path: &std::path::Path) -> Option<Stamp> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
+
+/// 적어 둔 표지와 지금 파일이 다른가. 적어 둔 것이 없거나 파일이 없으면 묻지 않는다(없는 파일은 덮어도 잃을 것이 없다).
+pub fn changed_since(stamp: Option<Stamp>, path: &std::path::Path) -> bool {
+    match (stamp, stamp_of(path)) {
+        (Some(before), Some(now)) => before != now,
+        _ => false,
+    }
+}
+
+/// 같은 파일인가 — 유닉스는 장치 · 아이노드(대소문자 · NFD/NFC · 심링크가 달라도), 그 밖은 정규 경로를 소문자로.
+pub fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let (Ok(a), Ok(b)) = (std::fs::metadata(a), std::fs::metadata(b)) {
+            return a.dev() == b.dev() && a.ino() == b.ino();
+        }
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase(),
+        _ => a == b,
+    }
+}
+
+/// 여는 방식(창에 맡겨 두면 `open_path` 가 가져간다).
+#[derive(Clone, Debug)]
+pub enum OpenMode {
+    /// 원본 보호: 화면이 고침을 막고 ⌘S 를 거절한다.
+    ReadOnly,
+    /// 이전 판 · 사본: 이름 없는 문서로(저장하면 이름을 묻는다) · 탭 제목.
+    Copy(String),
 }
 
 /// 창(탭)마다 문서 하나. 문서마다 따로 잠근다 — 큰 문서를 다시 굽는 동안 다른 탭이 멈추지 않게.
@@ -41,6 +83,8 @@ pub struct EditorState {
     pending_import: Mutex<HashMap<String, PendingImport>>,
     /// 일괄 처리 「멈춤」(다음 파일부터 멈춘다).
     batch_stop: std::sync::atomic::AtomicBool,
+    /// 창 → 여는 방식(읽기 전용 · 이전 판).
+    modes: Mutex<HashMap<String, OpenMode>>,
 }
 
 /// 불러온 원본(CP949 바꾸기 전) · 굽을 자리.
@@ -124,6 +168,41 @@ impl EditorState {
             .unwrap_or(false)
     }
 
+    /// 그 파일을 든 창(열린 문서 · 열려고 맡긴 파일). 다른 일로 잠긴 탭(긴 다시 굽기)은 건너뛴다 —
+    /// ponytail: 그 탭이 같은 파일이면 놓친다. 잦아지면 창 → 파일 색인을 따로 둔다.
+    pub fn window_of(&self, path: &std::path::Path) -> Option<String> {
+        let slots: Vec<(String, Arc<Mutex<Slot>>)> = self
+            .windows
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .iter()
+            .map(|(label, slot)| (label.clone(), slot.clone()))
+            .collect();
+        slots
+            .into_iter()
+            .find(|(_, slot)| {
+                slot.try_lock()
+                    .ok()
+                    .and_then(|slot| slot.source.clone())
+                    .is_some_and(|source| same_file(&source, path))
+            })
+            .map(|(label, _)| label)
+            .or_else(|| {
+                self.pending
+                    .lock()
+                    .ok()?
+                    .iter()
+                    .find(|(_, pending)| same_file(pending, path))
+                    .map(|(label, _)| label.clone())
+            })
+    }
+
+    fn set_mode(&self, label: &str, mode: OpenMode) {
+        if let Ok(mut modes) = self.modes.lock() {
+            modes.insert(label.to_string(), mode);
+        }
+    }
+
     pub fn set_pending(&self, label: &str, path: PathBuf) {
         if let Ok(mut pending) = self.pending.lock() {
             pending.insert(label.to_string(), path);
@@ -147,6 +226,74 @@ impl EditorState {
         if let Ok(mut pending) = self.pending.lock() {
             pending.remove(label);
         }
+        if let Ok(mut modes) = self.modes.lock() {
+            modes.remove(label);
+        }
+    }
+}
+
+/// 이미 다른 탭에 열린 파일이면 그 탭을 앞으로 가져온다(같은 파일을 두 탭에서 고치면 나중 저장이 앞 저장을 덮는다).
+/// 옮겼으면 `true`.
+pub fn focus_if_open(app: &AppHandle, path: &std::path::Path) -> bool {
+    use tauri::Emitter;
+    let Some(label) = app.state::<EditorState>().window_of(path) else {
+        return false;
+    };
+    if let Some(window) = app.get_webview_window(&label) {
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+    let _ = app.emit_to(
+        label.as_str(),
+        "notice",
+        "이미 이 탭에 열려 있는 파일입니다 — 같은 파일을 두 탭에서 고치지 않게 이 탭으로 옮겼습니다.",
+    );
+    true
+}
+
+/// 사유가 붙은 거절(화면이 사유로 알린다).
+fn refused(reason: &str) -> CoreError {
+    let mut error = CoreError::new(ErrorCode::PathNotAllowed, "editor", false);
+    error.details.insert("reason".into(), reason.into());
+    error
+}
+
+/// 다른 탭에 열린 파일에는 쓰지 않는다(그 탭의 문서와 디스크 파일이 어긋난다).
+fn refuse_if_open_elsewhere(
+    state: &State<'_, EditorState>,
+    window: &Window,
+    path: &std::path::Path,
+) -> Result<(), CoreError> {
+    match state.window_of(path) {
+        Some(label) if label != window.label() => Err(refused("open_elsewhere")),
+        _ => Ok(()),
+    }
+}
+
+/// 있는 파일을 덮기 직전에 그 파일을 이전 판으로 남긴다. 못 남겨도 저장은 잇는다(알린다).
+fn keep_history(app: &AppHandle, path: &std::path::Path) {
+    let settings = crate::settings::read(app);
+    let kept = crate::history::root(app).map(|root| {
+        crate::history::prune_older_than(
+            &root,
+            settings.history_days,
+            chrono::Local::now().naive_local(),
+        );
+        crate::history::keep(
+            &root,
+            path,
+            settings.history_keep,
+            &crate::history::stamp_now(),
+        )
+    });
+    if !matches!(kept, Some(Ok(()))) {
+        app.dialog()
+            .message(format!(
+                "「{}」의 이전 판을 남기지 못했습니다. 저장은 그대로 합니다.",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            ))
+            .title("서안 통특기")
+            .show(|_| {});
     }
 }
 
@@ -156,10 +303,22 @@ pub fn new_tab(
     parent: Option<&str>,
     path: Option<PathBuf>,
 ) -> Result<(), CoreError> {
+    new_tab_with(app, parent, path, None)
+}
+
+fn new_tab_with(
+    app: &AppHandle,
+    parent: Option<&str>,
+    path: Option<PathBuf>,
+    mode: Option<OpenMode>,
+) -> Result<(), CoreError> {
     let state = app.state::<EditorState>();
     let label = format!("doc-{}", state.tabs.fetch_add(1, Ordering::SeqCst) + 1);
     if let Some(path) = path {
         state.set_pending(&label, path);
+    }
+    if let Some(mode) = mode {
+        state.set_mode(&label, mode);
     }
     let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
         .title("서안 통특기")
@@ -200,6 +359,8 @@ fn attach_tab(parent: &tauri::WebviewWindow, child: &tauri::WebviewWindow) {
 pub struct EditorViewDto {
     pub title: String,
     pub editable: bool,
+    /// 읽기 전용으로 열었다(`editable` 도 거짓) — 화면이 「보기 전용」과 다른 까닭을 알린다.
+    pub read_only: bool,
     pub page_count: usize,
     pub page_width: f64,
     pub page_height: f64,
@@ -219,7 +380,8 @@ fn view(session: &mut EditorSession, title: String) -> EditorViewDto {
     EditorViewDto {
         preparing: session.preparing(),
         title,
-        editable: session.editable(),
+        editable: session.editable() && !session.read_only,
+        read_only: session.read_only,
         page_count: session.plan.pages.len(),
         page_width: session.plan.width,
         page_height: session.plan.height,
@@ -279,12 +441,103 @@ pub async fn editor_open(
     let path = picked
         .into_path()
         .map_err(|_| CoreError::new(ErrorCode::PathNotAllowed, "select", false))?;
-    // 이 탭에 문서가 있으면 새 탭에서 연다(`None` = 이 탭은 그대로).
-    if state.has_document(window.label()) {
-        new_tab(&app, Some(window.label()), Some(path))?;
+    if focus_if_open(&app, &path) {
         return Ok(None);
     }
-    open_path(&state, &window, path).await.map(Some)
+    open_here(&app, &state, &window, path, None).await
+}
+
+/// 읽기 전용으로 열기(원본 보호): 고칠 수 없고 ⌘S 를 거절한다 — 사본은 「다른 이름으로 저장」.
+#[tauri::command]
+pub async fn editor_open_read_only(
+    window: Window,
+    app: AppHandle,
+    state: State<'_, EditorState>,
+) -> Result<Option<EditorViewDto>, CoreError> {
+    let Some(path) = app
+        .dialog()
+        .file()
+        .add_filter("명세서 · 제출파일", &["HLT", "hlt", "fin", "hlz"])
+        .blocking_pick_file()
+        .and_then(|picked| picked.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    if focus_if_open(&app, &path) {
+        return Ok(None);
+    }
+    open_here(&app, &state, &window, path, Some(OpenMode::ReadOnly)).await
+}
+
+/// 이 탭에 문서가 있으면 새 탭에서(`None` = 이 탭은 그대로), 없으면 여기서 연다.
+async fn open_here(
+    app: &AppHandle,
+    state: &State<'_, EditorState>,
+    window: &Window,
+    path: PathBuf,
+    mode: Option<OpenMode>,
+) -> Result<Option<EditorViewDto>, CoreError> {
+    if state.has_document(window.label()) {
+        new_tab_with(app, Some(window.label()), Some(path), mode)?;
+        return Ok(None);
+    }
+    if let Some(mode) = mode {
+        state.set_mode(window.label(), mode);
+    }
+    open_path(state, window, path).await.map(Some)
+}
+
+/// 지금 문서의 이전 판(새것부터 · 저장할 때 덮인 판).
+#[tauri::command]
+pub async fn editor_history_list(
+    window: Window,
+    app: AppHandle,
+    state: State<'_, EditorState>,
+) -> Result<Vec<crate::history::Kept>, CoreError> {
+    let source = state
+        .slot(window.label())
+        .lock()
+        .ok()
+        .and_then(|slot| slot.source.clone());
+    Ok(match (crate::history::root(&app), source) {
+        (Some(root), Some(source)) => crate::history::list(&root, &source),
+        _ => Vec::new(),
+    })
+}
+
+/// 이전 판 하나(목록 차례)를 새 탭에 이름 없는 문서로 연다 — 원본에 덮지 않는다(저장하면 이름을 묻는다).
+/// 경로는 화면에서 받지 않는다(목록을 다시 만들어 차례로 고른다).
+#[tauri::command]
+pub async fn editor_history_open(
+    window: Window,
+    app: AppHandle,
+    state: State<'_, EditorState>,
+    index: usize,
+) -> Result<Option<EditorViewDto>, CoreError> {
+    let source = state
+        .slot(window.label())
+        .lock()
+        .ok()
+        .and_then(|slot| slot.source.clone())
+        .ok_or_else(|| refused("history_none"))?;
+    let root = crate::history::root(&app).ok_or_else(|| refused("history_none"))?;
+    let kept = crate::history::list(&root, &source)
+        .into_iter()
+        .nth(index)
+        .ok_or_else(|| refused("history_none"))?;
+    let name = source
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let title = format!("이전 판: {name} ({})", kept.saved);
+    open_here(
+        &app,
+        &state,
+        &window,
+        kept.path,
+        Some(OpenMode::Copy(title)),
+    )
+    .await
 }
 
 /// 불러와 HLT 만들기: 워드 · KIPO XML · HML → 새 `.HLT`(CLI `generate-hlt` 와 같은 길) → 연다.
@@ -321,6 +574,7 @@ pub async fn editor_import(
     else {
         return Ok(ImportDto::cancelled());
     };
+    refuse_if_open_elsewhere(&state, &window, &output)?;
     let source = input.clone();
     let (document, payloads, review) = tauri::async_runtime::spawn_blocking(move || {
         let (document, payloads) = hlt_core::load_generation_source(&source)?;
@@ -649,6 +903,7 @@ pub async fn editor_new_opinion(
     let Some(output) = pick_save(&app, "의견서.HLT", "HLT") else {
         return Ok(None);
     };
+    refuse_if_open_elsewhere(&state, &window, &output)?;
     let target = output.clone();
     tauri::async_runtime::spawn_blocking(move || {
         bake_replacing(&target, |staged| match body {
@@ -746,29 +1001,69 @@ fn save_current(
     window: &Window,
     state: &State<'_, EditorState>,
 ) -> Result<Option<PathBuf>, CoreError> {
-    let source = state
+    use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogResult};
+    if with_session(state, window, |session| Ok(session.read_only))? {
+        return Err(refused("read_only_save"));
+    }
+    let (source, stamp) = state
         .slot(window.label())
         .lock()
-        .ok()
-        .and_then(|slot| slot.source.clone())
-        .filter(|path| {
-            path.extension()
-                .and_then(|value| value.to_str())
-                .is_some_and(|value| value.eq_ignore_ascii_case("hlt"))
-        });
+        .map(|slot| (slot.source.clone(), slot.stamp))
+        .unwrap_or_default();
+    let source = source.filter(|path| {
+        path.extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("hlt"))
+    });
+    let name = stem(&window.title().unwrap_or_default());
+    let ask_name = || pick_save(app, &format!("{name}.HLT"), "HLT");
     let path = match source {
+        // 연 뒤 다른 곳(통특기 · 다른 앱 · 동기화)에서 바뀐 파일이면 덮기 전에 묻는다 — 말없이 덮으면 그쪽 고침이 사라진다.
+        Some(path) if changed_since(stamp, &path) => {
+            let answer = app
+                .dialog()
+                .message(format!(
+                    "「{}」이(가) 연 뒤에 다른 곳에서 바뀌었습니다.\n덮어쓰면 그쪽에서 고친 것은 이 파일에서 사라집니다(이전 판으로는 남습니다).",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                ))
+                .title("서안 통특기")
+                .parent(window)
+                .buttons(MessageDialogButtons::YesNoCancelCustom(
+                    "덮어쓰기".into(),
+                    "다른 이름으로".into(),
+                    "취소".into(),
+                ))
+                .blocking_show_with_result();
+            match answer {
+                MessageDialogResult::Yes => path,
+                MessageDialogResult::Custom(label) if label == "덮어쓰기" => path,
+                MessageDialogResult::No => match ask_name() {
+                    Some(path) => path,
+                    None => return Ok(None),
+                },
+                MessageDialogResult::Custom(label) if label == "다른 이름으로" => {
+                    match ask_name() {
+                        Some(path) => path,
+                        None => return Ok(None),
+                    }
+                }
+                _ => return Ok(None),
+            }
+        }
         Some(path) => path,
         None => {
-            let name = stem(&window.title().unwrap_or_default());
-            let Some(path) = pick_save(app, &format!("{name}.HLT"), "HLT") else {
+            let Some(path) = ask_name() else {
                 return Ok(None);
             };
             path
         }
     };
+    refuse_if_open_elsewhere(state, window, &path)?;
+    keep_history(app, &path);
     with_session(state, window, |session| session.save_over(&path))?;
     if let Ok(mut slot) = state.slot(window.label()).lock() {
         slot.source = Some(path.clone());
+        slot.stamp = stamp_of(&path);
     }
     crate::recovery::discard(app, window.label());
     crate::recent::changed(window.app_handle(), Some(&path));
@@ -877,11 +1172,26 @@ async fn open_path(
         .await
         .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "worker", false))??;
     let mut session = session;
+    let mode = state
+        .modes
+        .lock()
+        .ok()
+        .and_then(|mut modes| modes.remove(window.label()));
     // 복구본: 원래 파일에 덮지 않게 「새 문서」로 둔다(저장하면 이름을 묻는다) · 고친 문서로 친다 · 복구본은 지운다.
     let recovered = crate::recovery::entry_of(window.app_handle(), &path);
     if recovered.is_some() {
         session.mark_unsaved();
     }
+    // 이전 판: 복구본과 같게 이름 없는 문서로(원본에 덮지 않는다).
+    let copy = match &mode {
+        Some(OpenMode::Copy(title)) => {
+            session.mark_unsaved();
+            Some(title.clone())
+        }
+        _ => None,
+    };
+    session.read_only = matches!(mode, Some(OpenMode::ReadOnly));
+    let read_only = session.read_only;
     let label = title(&session);
     let dto = view(&mut session, label);
     let slot = state.slot(window.label());
@@ -889,8 +1199,13 @@ async fn open_path(
         .lock()
         .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "editor_lock", false))?;
     slot.session = Some(session);
-    slot.source = recovered.is_none().then(|| path.clone());
+    slot.source = (recovered.is_none() && copy.is_none()).then(|| path.clone());
+    slot.stamp = slot.source.as_deref().and_then(stamp_of);
     drop(slot);
+    if let Some(title) = copy {
+        let _ = window.set_title(&title);
+        return Ok(dto);
+    }
     if let Some(entry) = recovered {
         if let Some(dir) = crate::recovery::dir(window.app_handle()) {
             crate::recovery::remove(
@@ -903,7 +1218,11 @@ async fn open_path(
     }
     crate::recent::changed(window.app_handle(), Some(&path));
     // 탭 제목 = 파일 이름.
-    let _ = window.set_title(&name);
+    let _ = window.set_title(&if read_only {
+        format!("{name} (읽기 전용)")
+    } else {
+        name
+    });
     Ok(dto)
 }
 
@@ -1593,7 +1912,23 @@ pub async fn editor_save_as(
     let Some(path) = pick_save(&app, "편집본.HLT", "HLT") else {
         return Ok(None);
     };
-    with_session(&state, &window, |session| session.save_over(&path))?;
+    refuse_if_open_elsewhere(&state, &window, &path)?;
+    keep_history(&app, &path);
+    // 읽기 전용 문서는 사본을 만들면 그 사본을 고치는 문서가 된다(원본은 그대로).
+    let unlocked = with_session(&state, &window, |session| {
+        session.save_over(&path)?;
+        Ok(std::mem::take(&mut session.read_only))
+    })?;
+    if unlocked {
+        if let Ok(mut slot) = state.slot(window.label()).lock() {
+            slot.source = Some(path.clone());
+            slot.stamp = stamp_of(&path);
+        }
+        crate::recent::changed(&app, Some(&path));
+        if let Some(name) = path.file_name() {
+            let _ = window.set_title(&name.to_string_lossy());
+        }
+    }
     Ok(Some(path.display().to_string()))
 }
 
@@ -2038,6 +2373,48 @@ mod tests {
         assert!(state.has_document("doc-1") && !state.has_document("main"));
         state.forget("doc-1");
         assert!(!state.has_document("doc-1"));
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("seoan-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn notices_a_file_changed_after_it_was_opened() {
+        let dir = scratch("stamp");
+        let path = dir.join("a.HLT");
+        std::fs::write(&path, "열 때").unwrap();
+        let stamp = stamp_of(&path);
+        assert!(!changed_since(stamp, &path));
+        // 다른 앱이 고쳤다(크기가 바뀐다 — 시각만 보면 같은 초 안의 고침을 놓칠 수 있다).
+        std::fs::write(&path, "다른 앱이 고친 글").unwrap();
+        assert!(changed_since(stamp, &path));
+        // 표지가 없거나(새 문서) 파일이 없으면 묻지 않는다.
+        assert!(!changed_since(None, &path));
+        std::fs::remove_file(&path).unwrap();
+        assert!(!changed_since(stamp, &path));
+    }
+
+    #[test]
+    fn finds_the_tab_holding_the_same_file_by_any_spelling() {
+        let dir = scratch("same");
+        let (a, b) = (dir.join("a.HLT"), dir.join("b.HLT"));
+        std::fs::write(&a, "a").unwrap();
+        std::fs::write(&b, "b").unwrap();
+        let other_spelling = dir.join("sub/../a.HLT");
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        assert!(same_file(&a, &other_spelling));
+        assert!(!same_file(&a, &b));
+
+        let state = EditorState::default();
+        state.slot("doc-2").lock().unwrap().source = Some(a.clone());
+        state.set_pending("doc-3", b.clone());
+        assert_eq!(state.window_of(&other_spelling).as_deref(), Some("doc-2"));
+        assert_eq!(state.window_of(&b).as_deref(), Some("doc-3"));
+        assert_eq!(state.window_of(&dir.join("c.HLT")), None);
     }
 }
 

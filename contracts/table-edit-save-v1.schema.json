@@ -286,6 +286,7 @@
           "enum": [
             "pct_patent",
             "patent_specification_ko",
+            "opinion",
             "unknown"
           ]
         },

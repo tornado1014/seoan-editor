@@ -45,6 +45,8 @@ pub struct EditorSession {
     original: Option<(Vec<EditorParagraph>, crate::FigureSignatures)>,
     /// 「다른 파일」 기준(고른 파일을 열어 담아 둔 문단 · 그림 서명).
     compared: Option<(Vec<EditorParagraph>, crate::FigureSignatures)>,
+    /// 읽기 전용으로 열었다(원본 보호) — 화면이 고침을 막는다. 고칠 수 있는 서식인가(`editable`)와는 따로다.
+    pub read_only: bool,
 }
 
 /// 판 하나: 파일 · 그 판의 의미 모델(있으면 다시 해석하지 않는다) · 다시 구운 판인가(저장 때 전체 검증).
@@ -276,6 +278,7 @@ impl EditorSession {
             source: package.then(|| source.to_path_buf()),
             original: None,
             compared: None,
+            read_only: false,
         }
         .with_spans()
         .centered_items()
@@ -2171,13 +2174,46 @@ impl EditorSession {
             .map(|n| parent.join(format!(".seoan-save-{}-{n}.HLT", std::process::id())))
             .find(|path| !path.exists())
             .expect("unbounded");
+        let before = self.saved;
         let written = self.save_as(&staged).and_then(|()| {
-            std::fs::rename(&staged, target).map_err(|_| editor_error("save_replace"))
+            let expected = file_digest(&staged)?;
+            std::fs::rename(&staged, target).map_err(|_| editor_error("save_replace"))?;
+            self.check_saved(target, &expected)
         });
         if written.is_err() {
             let _ = std::fs::remove_file(&staged);
+            // 저장했다고 치지 않는다 — 고친 것이 남아 있게(닫을 때 다시 묻고 복구본도 지우지 않는다).
+            self.saved = before;
         }
         written
+    }
+
+    /// 저장 뒤 되읽기: 제자리의 파일이 (1) 방금 쓴 바이트 그대로이고 (2) 구조 검증을 통과하고 (3) 문단 글이 지금 판과 같은가.
+    /// 임시 파일 검증만으로는 바꿔 끼운 뒤(동기화 폴더 · 백신 · 네트워크 드라이브)의 파일을 보증하지 못한다.
+    fn check_saved(&self, target: &Path, expected: &[u8; 32]) -> Result<(), CoreError> {
+        let failed = |reason: &str| {
+            let mut error = CoreError::new(ErrorCode::VerificationFailed, "save_verify", false);
+            error
+                .details
+                .insert("reason".into(), format!("save_verify:{reason}"));
+            error
+        };
+        if file_digest(target)? != *expected {
+            return Err(failed("bytes"));
+        }
+        crate::verify_path(target, crate::VerifyOptions::default())
+            .map_err(|_| failed("structure"))?;
+        let saved = inspect_path(target, InspectOptions::default()).map_err(|_| failed("read"))?;
+        let texts = |paragraphs: &[crate::ParagraphRecord]| -> Vec<String> {
+            paragraphs
+                .iter()
+                .map(|paragraph| paragraph.text.trim_start_matches('\x0c').to_string())
+                .collect()
+        };
+        if texts(&saved.paragraphs) != texts(&self.document.paragraphs) {
+            return Err(failed("text"));
+        }
+        Ok(())
     }
 
     /// 그림 하나를 PNG 로(화면 그리기용). 배치본(다시 구운 판)의 그림은 1×1 이라 모델의 진짜 본문에서 그린다
@@ -2956,6 +2992,12 @@ fn load(path: &Path, print: PrintOptions) -> Result<(InspectDocument, PagePlan),
     Ok((document, plan))
 }
 
+fn file_digest(path: &Path) -> Result<[u8; 32], CoreError> {
+    use sha2::{Digest, Sha256};
+    let bytes = std::fs::read(path).map_err(|_| editor_error("save_read_back"))?;
+    Ok(Sha256::digest(&bytes).into())
+}
+
 pub(crate) fn editor_error(reason: &str) -> CoreError {
     let mut error = CoreError::new(ErrorCode::StructureInvalid, "editor", false);
     error.details.insert("reason".into(), reason.into());
@@ -2965,6 +3007,60 @@ pub(crate) fn editor_error(reason: &str) -> CoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 저장 뒤 되읽기: 고친 판을 덮어쓰면 통과하고 저장한 판이 된다. 제자리 파일이 다른 바이트 · 다른 글이면 거절한다.
+    #[test]
+    fn save_over_reads_the_saved_file_back() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("의견서.HLT");
+        crate::save_new_opinion_as_new(&path, crate::WriteOptions::default()).unwrap();
+        let mut session = EditorSession::open(&path).unwrap();
+        let body = session.paragraphs()[1].id.clone();
+        session.replace_text(&body, "되읽기").unwrap();
+        session.save_over(&path).unwrap();
+        assert!(!session.is_dirty());
+        let expected = file_digest(&path).unwrap();
+        session.check_saved(&path, &expected).unwrap();
+
+        // 같은 바이트라 믿었는데 제자리 파일이 바뀌었다(동기화 폴더가 옛 판을 되돌려 놓은 꼴).
+        let other = temp.path().join("다른.HLT");
+        crate::save_new_opinion_as_new(&other, crate::WriteOptions::default()).unwrap();
+        let error = session.check_saved(&other, &expected).unwrap_err();
+        assert_eq!(
+            error.details.get("reason").map(String::as_str),
+            Some("save_verify:bytes")
+        );
+        // 바이트는 맞게 기록돼도 글이 다르면(지금 판과 다른 파일) 거절한다.
+        let error = session
+            .check_saved(&other, &file_digest(&other).unwrap())
+            .unwrap_err();
+        assert_eq!(
+            error.details.get("reason").map(String::as_str),
+            Some("save_verify:text")
+        );
+    }
+
+    /// 저장이 끝에서 실패하면(바꿔 끼우기 · 되읽기) 저장한 판으로 치지 않는다 — 고친 것이 남아 닫을 때 다시 묻는다.
+    #[test]
+    fn a_failed_save_leaves_the_document_dirty() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("의견서.HLT");
+        crate::save_new_opinion_as_new(&path, crate::WriteOptions::default()).unwrap();
+        let mut session = EditorSession::open(&path).unwrap();
+        let body = session.paragraphs()[1].id.clone();
+        session.replace_text(&body, "남는 고침").unwrap();
+        // 그 이름이 비지 않은 폴더라 바꿔 끼우지 못한다.
+        let blocked = temp.path().join("막힘.HLT");
+        std::fs::create_dir(&blocked).unwrap();
+        std::fs::write(blocked.join("x"), b"x").unwrap();
+        assert!(session.save_over(&blocked).is_err());
+        assert!(session.is_dirty());
+        assert_eq!(
+            std::fs::read_dir(temp.path()).unwrap().count(),
+            2,
+            "임시 파일이 남지 않는다"
+        );
+    }
 
     /// 크기 바꾸기: 표 칸 안 그림은 칸 폭에서 멈추고, 본문 그림은 쪽 본문 폭(174mm)까지 큰다.
     #[test]

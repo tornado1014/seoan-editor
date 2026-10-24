@@ -80,9 +80,99 @@ pub fn install_on_exit(app: &AppHandle) {
     }
 }
 
+/// 그 판 릴리스에 붙은 `latest.json`(판마다 남는다 — 「최신」 주소와 달리 되돌릴 판을 고를 수 있다).
+pub fn release_manifest(version: &str) -> String {
+    format!("https://github.com/tornado1014/seoan-editor/releases/download/v{version}/latest.json")
+}
+
+/// 「이전 판으로 되돌리기」: 지난번에 쓰던 판(설정 `previous_version`)을 받아 두고, 끝낼 때 까는 것은 업데이트와 같다.
+/// 서명 확인도 같은 플러그인이 한다(되돌린 판도 우리 키로 서명된 것만 깔린다).
+pub async fn rollback(app: AppHandle) {
+    if app.state::<PendingUpdate>().0.lock().unwrap().is_some() {
+        tell(
+            &app,
+            "받아 둔 판이 이미 있습니다. 서안을 끝내면 설치됩니다.",
+        );
+        return;
+    }
+    let current = app.package_info().version.to_string();
+    let Some(target) = crate::settings::read(&app)
+        .previous_version
+        .filter(|version| *version != current)
+    else {
+        tell(
+            &app,
+            "되돌릴 이전 판을 모릅니다. 이 기능은 서안이 판을 한 번 바꾼 뒤부터 쓸 수 있습니다.",
+        );
+        return;
+    };
+    let asked = app
+        .dialog()
+        .message(format!(
+            "서안 {target}(으)로 되돌릴까요? (지금 {current})\n받아 두었다가 서안을 끝내면 깔립니다. 끝내기 전에 열린 문서를 저장할지 먼저 묻습니다."
+        ))
+        .title("이전 판으로 되돌리기")
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "되돌리기".into(),
+            "취소".into(),
+        ))
+        .blocking_show_with_result();
+    if !matches!(asked, MessageDialogResult::Ok)
+        && !matches!(&asked, MessageDialogResult::Custom(label) if label == "되돌리기")
+    {
+        return;
+    }
+    let wanted = target.clone();
+    let found = match release_manifest(&target).parse::<tauri::Url>() {
+        Ok(url) => match app.updater_builder().endpoints(vec![url]) {
+            Ok(builder) => match builder
+                .version_comparator(move |_, remote| remote.version.to_string() == wanted)
+                .build()
+            {
+                Ok(updater) => updater.check().await,
+                Err(error) => Err(error),
+            },
+            Err(error) => Err(error),
+        },
+        Err(error) => {
+            tell(&app, &format!("되돌릴 판을 찾지 못했습니다.\n{error}"));
+            return;
+        }
+    };
+    let update = match found {
+        Ok(Some(update)) => update,
+        Ok(None) => {
+            tell(&app, &format!("서안 {target} 설치 파일을 찾지 못했습니다."));
+            return;
+        }
+        Err(error) => {
+            tell(&app, &format!("되돌릴 판을 찾지 못했습니다.\n{error}"));
+            return;
+        }
+    };
+    match update.download(|_, _| {}, || {}).await {
+        Ok(bytes) => {
+            *app.state::<PendingUpdate>().0.lock().unwrap() = Some((update, bytes));
+            super::quit(&app);
+        }
+        Err(error) => tell(&app, &format!("이전 판을 받지 못했습니다.\n{error}")),
+    }
+}
+
 fn tell(app: &AppHandle, text: &str) {
     app.dialog()
         .message(text)
         .title("서안 업데이트")
         .blocking_show();
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn release_manifest_points_at_that_version() {
+        assert_eq!(
+            super::release_manifest("0.6.30"),
+            "https://github.com/tornado1014/seoan-editor/releases/download/v0.6.30/latest.json"
+        );
+    }
 }

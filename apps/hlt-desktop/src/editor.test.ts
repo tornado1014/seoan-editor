@@ -83,6 +83,9 @@ let signAnswer: unknown[] = [];
 let keysAnswer: (string | null)[] = [];
 let basisAnswer: unknown = null;
 let submitAnswer: unknown[] = [];
+let settingsAnswer: unknown = null;
+let historyAnswer: unknown[] = [];
+let saveError: unknown = null;
 const calls: [string, unknown][] = [];
 
 beforeEach(() => {
@@ -104,6 +107,9 @@ beforeEach(() => {
   keysAnswer = [];
   basisAnswer = null;
   submitAnswer = [];
+  settingsAnswer = null;
+  historyAnswer = [];
+  saveError = null;
   calls.length = 0;
   // 쪽이 보이면 바로 그린다.
   globalThis.IntersectionObserver = class {
@@ -225,6 +231,7 @@ beforeEach(() => {
         return view(texts);
       }
       case 'editor_set_alignment':
+      case 'editor_set_indent':
       case 'editor_toggle_format':
         return view(texts);
       case 'editor_new_opinion':
@@ -232,7 +239,18 @@ beforeEach(() => {
         return view(texts);
       case 'editor_save':
       case 'editor_save_as':
+        if (saveError) throw saveError;
         return '/tmp/x.HLT';
+      case 'settings_get':
+        return settingsAnswer;
+      case 'settings_set':
+        return args!.settings;
+      case 'editor_history_list':
+        return historyAnswer;
+      case 'editor_history_open':
+        return null;
+      case 'editor_open_read_only':
+        return { ...view(texts), editable: false, read_only: true };
       case 'editor_close_document':
         return closeAnswer;
       case 'editor_new_tab':
@@ -1161,6 +1179,170 @@ describe('page editing', () => {
     expect(last('editor_replace_text')).toEqual(['editor_replace_text', expect.objectContaining({ paragraphId: 'paragraph:2' })]);
   });
 
+  test('들여쓰기 · 들여쓰기 취소: 커서 문단에 본문 들여쓰기 · 0 (툴바 단추 · 우클릭과 같은 길)', async () => {
+    const root = await open();
+    clickAt(root, 63, 104);
+    q(root, '[data-action="outdent"]').click();
+    await settle(10);
+    expect(last('editor_set_indent')).toEqual(['editor_set_indent', { paragraphId: 'paragraph:0', indent: 0 }]);
+    q(root, '[data-action="indent"]').click();
+    await settle(10);
+    expect((last('editor_set_indent')![1] as { indent: number }).indent).toBeGreaterThan(0);
+    // ⇧Tab 도 들여쓰기 취소다 — 탭 문자를 넣지 않는다.
+    calls.length = 0;
+    root.querySelector('.caret-input')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }));
+    await settle(10);
+    expect(last('editor_set_indent')).toEqual(['editor_set_indent', { paragraphId: 'paragraph:0', indent: 0 }]);
+    await settle(500);
+    expect(glyphs(root)).not.toContain('\t');
+    expect(calls.some(([c]) => c === 'editor_replace_text'), '탭 문자를 넣지 않는다').toBe(false);
+  });
+
+  const SETTINGS = {
+    autosave_minutes: 5,
+    history_keep: 10,
+    history_days: 30,
+    zoom: 1.2,
+    marks_default: false,
+    snippets: [{ name: '첫머리', text: '의견' }],
+  };
+  const keyDown = (key: string) => document.dispatchEvent(new KeyboardEvent('keydown', { key, metaKey: true, bubbles: true }));
+
+  test('설정: 배율 · 문단부호 기본 · 자동 저장 간격을 시작할 때 걸고 · ⌘+ ⌘− ⌘0 은 배율을 저장 · 다른 탭이 바꾸면 따른다', async () => {
+    settingsAnswer = SETTINGS;
+    const root = await open();
+    await settle(10);
+    const pageWidth = () => Math.round(parseFloat(root.querySelector<HTMLElement>('.nk-page')!.style.width) * 10) / 10;
+    // 배율은 문서 쪽만(툴바 · 창 전체는 그대로) — 쪽 상자 폭이 배율만큼.
+    expect(pageWidth()).toBe(Math.round(595 * SCALE * 1.2 * 10) / 10);
+    expect(calls.some(([c]) => c === 'editor_set_zoom'), '창 전체 확대는 쓰지 않는다').toBe(false);
+    expect(q(root, '[data-action="marks"]').getAttribute('aria-pressed')).toBe('false');
+    vi.useFakeTimers();
+    try {
+      const saves = () => calls.filter(([c]) => c === 'editor_autosave').length;
+      clickAt(root, 63, 104);
+      type(root, 'X');
+      await vi.advanceTimersByTimeAsync(500);
+      vi.advanceTimersByTime(AUTOSAVE_MS);
+      expect(saves(), '기본 2분이 아니라 설정의 5분').toBe(0);
+      vi.advanceTimersByTime(5 * 60_000 - AUTOSAVE_MS);
+      expect(saves()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+    // 앞 테스트들이 띄운 편집기도 document 키를 듣는다 — 키는 「이 값이 저장됐다」만, 걸음은 이 편집기 단추로 잰다.
+    const zooms = () => calls.filter(([c]) => c === 'settings_set').map(([, a]) => (a as { settings: { zoom: number } }).settings.zoom);
+    keyDown('=');
+    await settle(10);
+    expect(zooms()).toContain(1.3);
+    expect(pageWidth()).toBe(Math.round(595 * SCALE * 1.3 * 10) / 10);
+    calls.length = 0;
+    q(root, '[data-action="zoom-out"]').click();
+    q(root, '[data-action="zoom-out"]').click();
+    await settle(10);
+    expect(zooms(), '연달아 눌러도 한 걸음씩').toEqual([1.2, 1.1]);
+    q(root, '[data-action="zoom-reset"]').click();
+    await settle(10);
+    expect(zooms().at(-1)).toBe(1);
+    expect(pageWidth()).toBe(Math.round(595 * SCALE * 10) / 10);
+    expect(q(root, '.zoom-level').textContent).toBe('100%');
+    // 다른 탭이 문단부호 기본을 켰다.
+    handlers.get('settings-changed')!({ payload: { ...SETTINGS, marks_default: true } });
+    expect(q(root, '[data-action="marks"]').getAttribute('aria-pressed')).toBe('true');
+    await settle(500);
+  });
+
+  test('설정 창(⌘,): 값을 고쳐 저장하면 한 번에 저장 · 잘못된 칸은 앞 값', async () => {
+    settingsAnswer = SETTINGS;
+    const root = await open();
+    await settle(10);
+    keyDown(',');
+    const form = root.querySelector<HTMLFormElement>('.settings-ask')!;
+    form.querySelector<HTMLInputElement>('[name="days"]')!.value = '7';
+    form.querySelector<HTMLInputElement>('[name="keep"]')!.value = '';
+    form.querySelector<HTMLInputElement>('[name="zoom"]')!.value = '150';
+    form.querySelector<HTMLInputElement>('[name="marks"]')!.checked = true;
+    form.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
+    await settle(10);
+    expect(root.querySelector('.settings-shade')).toBeNull();
+    expect((last('settings_set')![1] as { settings: unknown }).settings).toEqual({
+      ...SETTINGS,
+      history_days: 7,
+      history_keep: 10,
+      zoom: 1.5,
+      marks_default: true,
+    });
+  });
+
+  test('상용구: 창에서 넣기 → 커서 자리에(붙여넣기와 같은 길) · 새 상용구는 설정에 · ⌘K 에 「상용구: 이름」', async () => {
+    settingsAnswer = { ...SETTINGS, zoom: 1 }; // 누를 자리(clickAt)가 배율 1 기준
+    const root = await open();
+    await settle(10);
+    q(root, '[data-action="snippets"]').click();
+    await settle(10);
+    root.querySelector<HTMLButtonElement>('.snippet-insert')!.click();
+    await settle(10);
+    expect(root.querySelector('.editor-status')!.textContent).toBe('상용구를 넣을 자리를 먼저 누르세요.');
+    clickAt(root, 63, 104);
+    q(root, '[data-action="snippets"]').click();
+    await settle(10);
+    root.querySelector<HTMLButtonElement>('.snippet-insert')!.click();
+    await settle(10);
+    expect(glyphs(root)).toBe('가의견나다라마');
+    q(root, '[data-action="snippets"]').click();
+    await settle(10);
+    root.querySelector<HTMLButtonElement>('.snippet-new')!.click();
+    const form = root.querySelector<HTMLFormElement>('.snippet-form')!;
+    form.querySelector<HTMLInputElement>('[name="name"]')!.value = '맺음';
+    form.querySelector<HTMLTextAreaElement>('[name="text"]')!.value = '끝\r\n둘째 줄';
+    form.querySelector<HTMLButtonElement>('button[type="submit"]')!.click();
+    await settle(10);
+    expect((last('settings_set')![1] as { settings: { snippets: unknown } }).settings.snippets).toEqual([
+      { name: '첫머리', text: '의견' },
+      { name: '맺음', text: '끝\n둘째 줄' },
+    ]);
+    root.querySelector<HTMLButtonElement>('.snippet-shade .batch-close')!.click();
+    keyDown('k');
+    const items = [...root.querySelectorAll('.palette-list li')].map((li) => li.textContent);
+    expect(items).toContain('상용구: 맺음');
+    await settle(500);
+  });
+
+  test('읽기 전용으로 열기: 고칠 수 없고 까닭을 알린다 · 이전 판 목록 → 열기는 목록 차례로', async () => {
+    const root = await open();
+    q(root, '[data-action="open-read-only"]').click();
+    await settle(10);
+    expect(root.querySelector('.editor-status')!.textContent).toContain('읽기 전용(원본 보호)');
+    clickAt(root, 63, 104);
+    type(root, 'X');
+    await settle(10);
+    expect(glyphs(root)).toBe('가나다라마');
+    expect(root.querySelector('.editor-status')!.textContent).toContain('읽기 전용으로 연 문서입니다');
+
+    q(root, '[data-action="history"]').click();
+    await settle(10);
+    expect(root.querySelector('.editor-status')!.textContent).toContain('이전 판이 없습니다');
+    historyAnswer = [
+      { saved: '2026-10-24 13:00:00', size: 4096 },
+      { saved: '2026-10-24 11:00:00', size: 2048 },
+    ];
+    q(root, '[data-action="history"]').click();
+    await settle(10);
+    const rows = [...root.querySelectorAll('.history-shade tbody tr')].map((tr) => tr.textContent);
+    expect(rows).toEqual(['2026-10-24 13:00:004 KB열기', '2026-10-24 11:00:002 KB열기']);
+    root.querySelectorAll<HTMLButtonElement>('.history-open')[1].click();
+    await settle(10);
+    expect(last('editor_history_open')).toEqual(['editor_history_open', { index: 1 }]);
+  });
+
+  test('저장 뒤 되읽기가 어긋나면 까닭을 사람 말로 알린다', async () => {
+    const root = await open();
+    saveError = { code: 'verification_failed', phase: 'save_verify', details: { reason: 'save_verify:text' } };
+    q(root, '[data-action="save"]').click();
+    await settle(10);
+    expect(root.querySelector('.editor-error')!.textContent).toContain('저장한 파일의 글이 화면과 다릅니다');
+  });
+
   test('⌘K 명령 찾기: 툴바 · 도구를 이름으로 거르고 ↑↓ Enter 로 실행 · Esc 로 닫기', async () => {
     texts = ['【청구범위】', '【청구항 1】', '장치.'];
     const root = await open();
@@ -1247,7 +1429,7 @@ describe('page editing', () => {
     q(root, '[data-action="help"]').click();
     await settle(10);
     const list = [...root.querySelectorAll<HTMLButtonElement>('.help-tour')];
-    expect(list.length).toBe(16);
+    expect(list.length).toBe(20);
     expect(list[0].querySelector('strong')!.textContent).toBe('전체 둘러보기');
     expect([...root.querySelectorAll('.help-ask h3')].map((h) => h.textContent)).toEqual(['처음이라면', '파일', '편집', '보기', '도구', '점검', '보정(OA 대응)']);
     expect(root.querySelector('.tour-invite'), '도움말을 열면 처음 실행 권유는 닫힌다').toBeNull();

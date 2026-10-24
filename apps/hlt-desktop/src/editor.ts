@@ -5,6 +5,12 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Menu } from '@tauri-apps/api/menu';
 import {
   editorImage,
+  editorHistoryList,
+  editorHistoryOpen,
+  editorOpenReadOnly,
+  settingsGet,
+  settingsSet,
+  type SettingsDto,
   editorInsertFigure,
   editorLog,
   editorMergeParagraph,
@@ -147,9 +153,11 @@ const SHORTCUTS: [string, string][] = [
   ['⌘G', '식별번호 · 청구항 · 도면 · 표제로 가기'],
   ['⌘K', '명령 찾기(이름을 쳐서 실행)'],
   ['⌘] · ⌘[', '다음 · 앞 고친 곳'],
+  ['⌘+ · ⌘− · ⌘0', '문서 확대 · 축소 · 실제 크기(툴바는 그대로)'],
+  ['⌘,', '설정'],
   ['⌘B · ⌘I · ⌘U', '굵게 · 기울임 · 밑줄'],
   ['⌘Enter', '강제 쪽나눔'],
-  ['Tab · ⇧Tab', '표 칸 이동'],
+  ['Tab · ⇧Tab', '표 칸 이동 · 본문은 탭 넣기 · 들여쓰기 취소'],
   ['⌘A · ⌘C · ⌘X · ⌘V', '모두 선택 · 복사 · 잘라내기 · 붙여넣기'],
   ['Esc', '창 · 찾기 막대 · 투어 닫기'],
 ];
@@ -157,8 +165,14 @@ const SHORTCUTS: [string, string][] = [
 /** 처음 실행 안내를 본 적이 있는지(브라우저 저장 — 못 쓰면 매번 묻지 않고 넘어간다). */
 const TOUR_SEEN = 'seoan.tour.seen';
 
-/** 자동 저장: 마지막 고침 뒤 이만큼 손을 멈추면 복구본을 둔다. */
+/** 자동 저장: 마지막 고침 뒤 이만큼 손을 멈추면 복구본을 둔다(설정 「자동 저장 간격」의 기본값). */
 export const AUTOSAVE_MS = 120_000;
+
+/** 문서 배율 한 걸음 · 범위(50~200%). */
+export function nextZoom(zoom: number, step: -1 | 0 | 1): number {
+  if (step === 0) return 1;
+  return Math.min(2, Math.max(0.5, Math.round((zoom + step * 0.1) * 10) / 10));
+}
 
 /** 도구 막대 아이콘(Lucide 모양 · MIT). 선 굵기 2 · 24 격자 · 글자색을 따른다. */
 const ICONS: Record<string, string[]> = {
@@ -192,11 +206,16 @@ const ICONS: Record<string, string[]> = {
   evidence: ['M14 2v4a2 2 0 0 0 2 2h4', 'M4.27 21a2 2 0 0 0 1.73 1H18a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v3', 'm9 18-1.5-1.5', 'M5 17a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'],
   word: ['M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z', 'M14 2v4a2 2 0 0 0 2 2h4', 'M16 13H8', 'M16 17H8', 'M10 9H8'],
   help: ['M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z', 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3', 'M12 17h.01'],
+  snippet: ['M17 6H3', 'M21 12H8', 'M21 18H8', 'M3 12v6'],
+  zoomIn: ['M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z', 'm21 21-4.3-4.3', 'M11 8v6', 'M8 11h6'],
+  zoomOut: ['M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z', 'm21 21-4.3-4.3', 'M8 11h6'],
 };
 const icon = (name: string) =>
   `<svg class="tb-icon" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name].map((d) => `<path d="${d}"/>`).join('')}</svg>`;
 
 export function mountEditor(root: HTMLElement): void {
+  /** 쪽 그리기 배율(pt → 화면 px) — 문서 배율(설정 · ⌘+ ⌘− ⌘0)이 곱해진다. 툴바 · 개요는 그대로. */
+  let scale = SCALE;
   root.innerHTML = `
     <div class="editor">
       <div class="editor-toolbar" role="toolbar">
@@ -211,6 +230,9 @@ export function mountEditor(root: HTMLElement): void {
           <button type="button" data-action="new-opinion" title="새 의견서 — 빈 의견서(【의견내용】)를 새로 만든다">${icon('opinion')}<span>새 의견서</span></button>
           <button type="button" data-action="import" title="워드/XML로 HLT 만들기 — 워드 · KIPO XML · HML 을 불러와 새 HLT 로 만든다">${icon('import')}<span>워드/XML로 HLT 만들기</span></button>
           <button type="button" data-action="new-tab" title="새 탭 (⌘T · ⌘N)">${icon('tab')}<span>새 탭</span></button>
+          <button type="button" data-action="open-read-only" title="읽기 전용으로 열기 — 원본을 실수로 고치지 않게(사본은 「다른 이름으로 저장」)"><span>읽기 전용으로 열기</span></button>
+          <button type="button" data-action="history" disabled title="이전 판 — 저장할 때 덮인 판을 골라 새 탭에서 연다(최근 판 · 지난 날수는 설정)"><span>이전 판</span></button>
+          <button type="button" data-action="settings" title="설정 (⌘,) — 자동 저장 간격 · 이전 판 보관 · 문서 배율 · 문단부호 기본"><span>설정</span></button>
         </div>
         <div class="tb-group" role="group" aria-label="편집">
           <button type="button" data-action="undo" disabled title="되돌리기 (⌘Z)">${icon('undo')}</button>
@@ -229,12 +251,13 @@ export function mountEditor(root: HTMLElement): void {
           <button type="button" data-action="align-center" disabled title="가운데 정렬 (커서가 있는 문단)">${icon('center')}</button>
           <button type="button" data-action="align-left" disabled title="왼쪽 정렬 (커서가 있는 문단)">${icon('left')}</button>
           <button type="button" data-action="indent" disabled title="들여쓰기 — 첫 줄 들여쓰기 (커서가 있는 문단)">${icon('indent')}</button>
-          <button type="button" data-action="outdent" disabled title="들여쓰기 취소 (커서가 있는 문단)">${icon('outdent')}</button>
+          <button type="button" data-action="outdent" disabled title="들여쓰기 취소 (커서가 있는 문단 · ⇧Tab)">${icon('outdent')}</button>
         </div>
         <div class="tb-group" role="group" aria-label="넣기">
           <button type="button" data-action="math" disabled title="수식 넣기(LaTeX)">${icon('math')}<span>수식</span></button>
           <button type="button" data-action="chem" disabled title="화학식 넣기(구조식)">${icon('chem')}<span>화학식</span></button>
           <button type="button" data-action="table" disabled title="표 넣기(커서 문단 아래 · 고치기는 표 칸 위 우클릭) · 쪽나눔은 ⌘Enter">${icon('table')}<span>표</span></button>
+          <button type="button" data-action="snippets" disabled title="상용구 — 자주 쓰는 문구를 골라 커서 자리에 넣는다 · 만들기 · 고치기 · 지우기 · ⌘K 로 이름을 쳐서 넣기">${icon('snippet')}<span>상용구</span></button>
         </div>
         <div class="tb-group" role="group" aria-label="보기">
           <button type="button" data-action="marks" aria-pressed="true" title="문단부호 보기 — 문단 끝 ↵ 를 보이거나 숨긴다(화면에만)">${icon('marks')}<span>문단부호</span></button>
@@ -310,6 +333,11 @@ export function mountEditor(root: HTMLElement): void {
       <div class="editor-body">
         <nav class="editor-outline" aria-label="구조"></nav>
         <div class="editor-pages" tabindex="0"></div>
+        <div class="zoom-box" role="group" aria-label="문서 배율">
+          <button type="button" data-action="zoom-out" title="문서 축소 (⌘−) " aria-label="문서 축소">${icon('zoomOut')}</button>
+          <button type="button" data-action="zoom-reset" class="zoom-level" title="문서 실제 크기 (⌘0) — 지금 문서 배율" aria-label="문서 실제 크기">100%</button>
+          <button type="button" data-action="zoom-in" title="문서 확대 (⌘+) " aria-label="문서 확대">${icon('zoomIn')}</button>
+        </div>
         <aside class="editor-source" hidden aria-label="원문"></aside>
         <aside class="editor-panel" hidden>
           <p class="panel-title"></p>
@@ -445,7 +473,7 @@ export function mountEditor(root: HTMLElement): void {
     void editorLog(`${label} 실패 ${JSON.stringify(error)}`).catch(() => {});
   };
   const enable = () => {
-    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'docx', 'fin', 'review', 'amend-marks', 'basis', 'amend', 'math', 'chem', 'table', 'align-justified', 'align-center', 'align-left', 'indent', 'outdent', 'source', 'tools']) {
+    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'docx', 'fin', 'review', 'amend-marks', 'basis', 'amend', 'math', 'chem', 'table', 'snippets', 'history', 'align-justified', 'align-center', 'align-left', 'indent', 'outdent', 'source', 'tools']) {
       q<HTMLButtonElement>(`[data-action="${action}"]`).disabled = !view;
     }
   };
@@ -465,7 +493,7 @@ export function mountEditor(root: HTMLElement): void {
         images.set(image.object_code, URL.createObjectURL(new Blob([bytes], { type: 'image/png' })));
       }
     }
-    host.replaceChildren(renderPage(page, SCALE, (code) => images.get(code) ?? null, panel.hidden ? null : selected));
+    host.replaceChildren(renderPage(page, scale, (code) => images.get(code) ?? null, panel.hidden ? null : selected));
     drawNumbers(host, page);
     drawMarks(host, page);
     drawAmendMarks(host, page);
@@ -487,16 +515,16 @@ export function mountEditor(root: HTMLElement): void {
       mark.className = own ? 'nk-pnum' : 'nk-pnum planned';
       if (!own) mark.title = '제출파일을 만들 때 매겨질 식별번호';
       mark.textContent = `[${number}]`;
-      mark.style.right = `${(pageWidth() - margin + 3) * SCALE}px`;
-      mark.style.top = `${(line.top + 2) * SCALE}px`;
-      mark.style.fontSize = `${8 * SCALE}px`;
+      mark.style.right = `${(pageWidth() - margin + 3) * scale}px`;
+      mark.style.top = `${(line.top + 2) * scale}px`;
+      mark.style.fontSize = `${8 * scale}px`;
       host.append(mark);
     }
   }
   const pageWidth = () => view?.page_width ?? 595;
 
   /** 문단부호 보기: 문단이 끝나는 줄 끝에 ↵(빈 문단 포함 · 화면에만 — 인쇄 · 저장엔 없다). */
-  let showMarks = true; // 기본으로 켠다(사용자 요청)
+  let showMarks = true; // 기본으로 켠다(사용자 요청) · 설정 「문단부호 기본」이 바꾼다
   function drawMarks(host: HTMLElement, page: PlannedPageDto) {
     if (!showMarks) return;
     for (const line of page.lines) {
@@ -506,10 +534,10 @@ export function mountEditor(root: HTMLElement): void {
       const mark = document.createElement('span');
       mark.className = 'nk-pmark';
       mark.innerHTML = PARAGRAPH_MARK;
-      mark.style.left = `${(line.stops.at(-1)! + 1) * SCALE}px`;
-      mark.style.top = `${(line.top + BASELINE - MARK_HEIGHT) * SCALE}px`;
-      mark.style.width = `${MARK_WIDTH * SCALE}px`;
-      mark.style.height = `${MARK_HEIGHT * SCALE}px`;
+      mark.style.left = `${(line.stops.at(-1)! + 1) * scale}px`;
+      mark.style.top = `${(line.top + BASELINE - MARK_HEIGHT) * scale}px`;
+      mark.style.width = `${MARK_WIDTH * scale}px`;
+      mark.style.height = `${MARK_HEIGHT * scale}px`;
       host.append(mark);
     }
   }
@@ -636,8 +664,8 @@ export function mountEditor(root: HTMLElement): void {
         const page = document.createElement('div');
         page.className = 'nk-page';
         page.dataset.index = String(index);
-        page.style.width = `${next.page_width * SCALE}px`;
-        page.style.height = `${next.page_height * SCALE}px`;
+        page.style.width = `${next.page_width * scale}px`;
+        page.style.height = `${next.page_height * scale}px`;
         pagesRoot.append(page);
         observer.observe(page);
       }
@@ -648,8 +676,12 @@ export function mountEditor(root: HTMLElement): void {
     void refreshKeys(next);
     // 자동 저장: 판이 바뀔 때마다(고침 · 되돌리기) 2분을 다시 센다 — 손을 멈추면 복구본을 둔다(고친 것이 없으면 지운다).
     window.clearTimeout(autosaveTimer);
-    if (next.editable) autosaveTimer = window.setTimeout(() => void editorAutosave().catch(() => {}), AUTOSAVE_MS);
-    say(`${next.title} · ${next.page_count}쪽${next.editable ? '' : ' · 보기 전용(이 서식은 고칠 수 없다)'}`);
+    if (next.editable) autosaveTimer = window.setTimeout(() => void editorAutosave().catch(() => {}), autosaveMs);
+    say(
+      `${next.title} · ${next.page_count}쪽${
+        next.read_only ? ' · 읽기 전용(원본 보호) — 고치려면 「다른 이름으로 저장」으로 사본을 만드세요' : next.editable ? '' : ' · 보기 전용(이 서식은 고칠 수 없다)'
+      }`,
+    );
     enable();
     watchPreparing(next);
     void refreshAmend(false);
@@ -744,6 +776,8 @@ export function mountEditor(root: HTMLElement): void {
   /** 청구항 나무(항 → 인용하는 앞 항) — 판이 바뀔 때마다 받아, 달라졌으면 개요를 다시 그린다. */
   let claimParents: Record<string, number[]> = {};
   let autosaveTimer = 0;
+  let autosaveMs = AUTOSAVE_MS;
+  let settings: SettingsDto | null = null;
   async function refreshClaims(next: EditorViewDto) {
     const parents = await editorClaimParents().catch(() => ({}));
     if (view !== next || JSON.stringify(parents) === JSON.stringify(claimParents)) return;
@@ -976,7 +1010,7 @@ export function mountEditor(root: HTMLElement): void {
       const box = host.getBoundingClientRect();
       if (box.bottom <= top) continue;
       const lines = pages.get(Number(host.dataset.index))?.lines.filter((line) => line.paragraph) ?? [];
-      const line = lines.find((each) => box.top + each.top * SCALE >= top) ?? lines[lines.length - 1];
+      const line = lines.find((each) => box.top + each.top * scale >= top) ?? lines[lines.length - 1];
       return line?.paragraph ?? null;
     }
     return null;
@@ -986,10 +1020,10 @@ export function mountEditor(root: HTMLElement): void {
   function overlay(host: HTMLElement, className: string, x: number, top: number, width: number) {
     const element = document.createElement('div');
     element.className = className;
-    element.style.left = `${x * SCALE}px`;
-    element.style.top = `${(top - 1) * SCALE}px`;
-    element.style.height = `${14 * SCALE}px`;
-    if (width) element.style.width = `${width * SCALE}px`;
+    element.style.left = `${x * scale}px`;
+    element.style.top = `${(top - 1) * scale}px`;
+    element.style.height = `${14 * scale}px`;
+    if (width) element.style.width = `${width * scale}px`;
     host.append(element);
     return element;
   }
@@ -1013,7 +1047,7 @@ export function mountEditor(root: HTMLElement): void {
     if (composing && input.value) {
       const compose = overlay(host, 'nk-compose', point.x, point.top, 0);
       compose.textContent = input.value;
-      compose.style.fontSize = `${12 * SCALE}px`;
+      compose.style.fontSize = `${12 * scale}px`;
     }
     const rect = mark.getBoundingClientRect();
     input.style.left = `${rect.left}px`;
@@ -1029,7 +1063,7 @@ export function mountEditor(root: HTMLElement): void {
     const host = pageHost(index);
     const page = pages.get(index);
     if (host && page && host.dataset.drawn === '1') {
-      host.replaceChildren(renderPage(page, SCALE, (code) => images.get(code) ?? null, null));
+      host.replaceChildren(renderPage(page, scale, (code) => images.get(code) ?? null, null));
       drawNumbers(host, page);
       drawMarks(host, page);
       drawAmendMarks(host, page);
@@ -1050,7 +1084,7 @@ export function mountEditor(root: HTMLElement): void {
 
   function canEdit(): boolean {
     if (!view?.editable) {
-      say('이 서식은 보기 전용입니다.');
+      say(view?.read_only ? '읽기 전용으로 연 문서입니다 — 고치려면 「다른 이름으로 저장」으로 사본을 만드세요.' : '이 서식은 보기 전용입니다.');
       return false;
     }
     return true;
@@ -1331,7 +1365,7 @@ export function mountEditor(root: HTMLElement): void {
     const host = (event.target as HTMLElement).closest<HTMLElement>('.nk-page');
     if (!host) return null;
     const box = host.getBoundingClientRect();
-    return hit(caretLines(pages), Number(host.dataset.index), (event.clientX - box.left) / SCALE, (event.clientY - box.top) / SCALE);
+    return hit(caretLines(pages), Number(host.dataset.index), (event.clientX - box.left) / scale, (event.clientY - box.top) / scale);
   };
   let dragging = false;
   pagesRoot.addEventListener('mousedown', (event) => {
@@ -1476,6 +1510,11 @@ export function mountEditor(root: HTMLElement): void {
       if (isCell(caret.paragraph)) {
         const shift = event.shiftKey;
         act(() => nextCell(shift ? -1 : 1));
+        return;
+      }
+      // ⇧Tab = 들여쓰기 취소(워드 · 한글과 같게). 전엔 탭 문자를 넣어 글이 도리어 오른쪽으로 밀렸다.
+      if (event.shiftKey) {
+        q<HTMLButtonElement>('[data-action="outdent"]').click();
         return;
       }
       act(() => insertText('\t'));
@@ -2566,20 +2605,234 @@ export function mountEditor(root: HTMLElement): void {
       event.preventDefault();
       void jumpEdit(event.key === ']');
     }
+    // 문서 배율: ⌘+(⌘=) · ⌘− · ⌘0.
+    if ((event.metaKey || event.ctrlKey) && ['=', '+', '-', '0'].includes(event.key)) {
+      event.preventDefault();
+      void zoomBy(event.key === '0' ? 0 : event.key === '-' ? -1 : 1);
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key === ',' && !root.querySelector('.settings-shade')) {
+      event.preventDefault();
+      openSettings();
+    }
   });
+
+  /** 설정: 시작할 때 읽고 · 어느 탭에서든 바꾸면(`settings-changed`) 모든 탭이 같은 값을 쓴다. */
+  function applySettings(next: SettingsDto | null | undefined) {
+    if (!next) return;
+    const marksChanged = settings !== null && settings.marks_default !== next.marks_default;
+    const first = settings === null;
+    settings = next;
+    autosaveMs = Math.max(1, next.autosave_minutes) * 60_000;
+    setPageZoom(next.zoom);
+    if (first || marksChanged) {
+      showMarks = next.marks_default;
+      q<HTMLButtonElement>('[data-action="marks"]').setAttribute('aria-pressed', String(showMarks));
+      for (const index of pages.keys()) redraw(index);
+    }
+  }
+  void settingsGet()
+    .then(applySettings)
+    .catch(() => {});
+  void listen<SettingsDto>('settings-changed', (event) => applySettings(event.payload)).catch(() => {});
+  // 바탕이 알리는 한 줄(이미 연 파일이라 이 탭으로 옮겼다 등).
+  void listen<string>('notice', (event) => say(event.payload)).catch(() => {});
+
+  async function saveSettings(change: Partial<SettingsDto>) {
+    if (!settings) settings = await settingsGet().catch(() => null);
+    if (!settings) return say('설정을 읽지 못했습니다.');
+    // 바로 걸고 나서 저장한다 — 저장이 끝나기 전에 또 누른 키(⌘− 연타)가 옛 값에서 세지 않게.
+    const next = { ...settings, ...change };
+    applySettings(next);
+    try {
+      applySettings(await settingsSet(next));
+    } catch (error) {
+      fail('설정 저장', error);
+    }
+  }
+
+  /** 문서 배율: 쪽만 다시 그린다(같은 자리를 보도록 스크롤도 같은 비율로). */
+  function setPageZoom(zoom: number) {
+    q<HTMLButtonElement>('.zoom-level').textContent = `${Math.round(zoom * 100)}%`;
+    const next = SCALE * zoom;
+    if (next === scale) return;
+    const ratio = next / scale;
+    scale = next;
+    if (!view) return;
+    const top = pagesRoot.scrollTop;
+    layout(view, false);
+    pagesRoot.scrollTop = top * ratio;
+    paint();
+  }
+
+  async function zoomBy(step: -1 | 0 | 1) {
+    const zoom = nextZoom(settings?.zoom ?? 1, step);
+    await saveSettings({ zoom });
+    say(`문서 배율 ${Math.round(zoom * 100)}%`);
+  }
+
+  /** 설정 창: 숫자 칸 · 켬/끔 → 저장(모든 탭에 바로). */
+  function openSettings() {
+    root.querySelector('.settings-shade')?.remove();
+    const current = settings;
+    if (!current) return say('설정을 읽는 중입니다 — 잠시 뒤 다시 여세요.');
+    const shade = document.createElement('div');
+    shade.className = 'basis-shade settings-shade';
+    shade.innerHTML = `<form class="basis-ask settings-ask"><header><strong>설정</strong></header>
+      <label>자동 저장 간격 <input name="autosave" type="number" min="1" max="60" value="${current.autosave_minutes}"> 분 — 고친 뒤 손을 멈추면 복구본을 둔다</label>
+      <label>이전 판 보관 <input name="keep" type="number" min="1" max="100" value="${current.history_keep}"> 개 — 파일마다 최근 판만</label>
+      <label>이전 판 보관 기간 <input name="days" type="number" min="1" max="365" value="${current.history_days}"> 일 — 지난 판은 지운다</label>
+      <label>문서 배율 <input name="zoom" type="number" min="50" max="200" step="10" value="${Math.round(current.zoom * 100)}"> % — ⌘+ · ⌘− · ⌘0</label>
+      <label><input name="marks" type="checkbox"${current.marks_default ? ' checked' : ''}> 문단부호(↵)를 기본으로 보이기</label>
+      <div class="settings-buttons"><button type="submit">저장</button><button type="button" class="settings-cancel">취소</button></div></form>`;
+    const form = shade.querySelector<HTMLFormElement>('form')!;
+    const close = () => {
+      shade.remove();
+      input.focus({ preventScroll: true });
+    };
+    const number = (name: string, fallback: number) => {
+      const value = Number(form.querySelector<HTMLInputElement>(`[name="${name}"]`)!.value);
+      return Number.isFinite(value) && value > 0 ? value : fallback;
+    };
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      void saveSettings({
+        autosave_minutes: Math.round(number('autosave', current.autosave_minutes)),
+        history_keep: Math.round(number('keep', current.history_keep)),
+        history_days: Math.round(number('days', current.history_days)),
+        zoom: number('zoom', current.zoom * 100) / 100,
+        marks_default: form.querySelector<HTMLInputElement>('[name="marks"]')!.checked,
+      }).then(() => say('설정을 저장했습니다.'));
+      close();
+    });
+    shade.querySelector('.settings-cancel')!.addEventListener('click', close);
+    form.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') close();
+    });
+    root.append(shade);
+    form.querySelector<HTMLInputElement>('input')!.focus();
+  }
+
+  /** 상용구를 커서 자리에 — 붙여넣기와 같은 길(CP949 밖 글자 확인 · 여러 줄 = 문단 나누기). */
+  function insertSnippet(text: string) {
+    if (!view) return say('「상용구」: 문서를 먼저 여세요.');
+    if (!caret) return say('상용구를 넣을 자리를 먼저 누르세요.');
+    if (!canEdit()) return;
+    act(() => insertReviewed(text));
+  }
+
+  /** 상용구 창: 넣기 · 고치기 · 지우기 · 새로(설정에 저장 — 모든 탭이 같은 목록). */
+  function openSnippets() {
+    root.querySelector('.snippet-shade')?.remove();
+    const list = settings?.snippets ?? [];
+    const escape = (text: string) => escapeHtml(text);
+    const shade = document.createElement('div');
+    shade.className = 'basis-shade snippet-shade';
+    shade.innerHTML = `<div class="basis-ask batch-ask"><header><strong>상용구</strong><button type="button" class="snippet-new">새 상용구</button><button type="button" class="batch-close">닫기</button></header><div class="batch-body"><table><tbody>${list
+      .map(
+        (snippet, index) =>
+          `<tr><td><strong>${escape(snippet.name)}</strong></td><td class="snippet-text">${escape(snippet.text)}</td><td><button type="button" class="snippet-insert" data-index="${index}">넣기</button><button type="button" class="snippet-edit" data-index="${index}">고치기</button><button type="button" class="snippet-delete" data-index="${index}">지우기</button></td></tr>`,
+      )
+      .join('')}</tbody></table>${list.length ? '' : '<p>상용구가 없습니다 — 「새 상용구」로 만드세요.</p>'}</div></div>`;
+    const close = () => {
+      shade.remove();
+      input.focus({ preventScroll: true });
+    };
+    const at = (button: Element) => Number((button as HTMLElement).dataset.index);
+    shade.querySelector('.batch-close')!.addEventListener('click', close);
+    for (const button of shade.querySelectorAll('.snippet-insert')) {
+      button.addEventListener('click', () => {
+        close();
+        insertSnippet(list[at(button)].text);
+      });
+    }
+    for (const button of shade.querySelectorAll('.snippet-delete')) {
+      button.addEventListener('click', () => {
+        void saveSettings({ snippets: list.filter((_, index) => index !== at(button)) }).then(openSnippets);
+      });
+    }
+    const edit = (index: number | null) => {
+      const old = index === null ? { name: '', text: '' } : list[index];
+      const form = document.createElement('form');
+      form.className = 'snippet-form';
+      form.innerHTML = `<label>이름 <input name="name" value="${escape(old.name)}" required></label><label>문구 <textarea name="text" rows="5" required>${escape(old.text)}</textarea></label><div class="settings-buttons"><button type="submit">저장</button><button type="button" class="snippet-cancel">취소</button></div>`;
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const name = form.querySelector<HTMLInputElement>('[name="name"]')!.value.trim();
+        const text = form.querySelector<HTMLTextAreaElement>('[name="text"]')!.value;
+        if (!name || !text) return;
+        const next = index === null ? [...list, { name, text }] : list.map((snippet, k) => (k === index ? { name, text } : snippet));
+        void saveSettings({ snippets: next }).then(openSnippets);
+      });
+      form.querySelector('.snippet-cancel')!.addEventListener('click', () => form.remove());
+      shade.querySelector('.batch-body')!.prepend(form);
+      form.querySelector<HTMLInputElement>('input')!.focus();
+    };
+    shade.querySelector('.snippet-new')!.addEventListener('click', () => edit(null));
+    for (const button of shade.querySelectorAll('.snippet-edit')) button.addEventListener('click', () => edit(at(button)));
+    shade.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') close();
+    });
+    root.append(shade);
+  }
+
+  /** 이전 판 창: 저장이 덮기 전에 남긴 판(새것부터) → 고른 판을 새 탭에서 이름 없는 문서로. */
+  async function openHistory() {
+    let kept;
+    try {
+      kept = await editorHistoryList();
+    } catch (error) {
+      return fail('이전 판', error);
+    }
+    if (!kept.length) {
+      return say(`이전 판이 없습니다 — 저장할 때마다 덮기 전 판을 남깁니다(파일마다 최근 ${settings?.history_keep ?? 10}개 · ${settings?.history_days ?? 30}일).`);
+    }
+    root.querySelector('.history-shade')?.remove();
+    const shade = document.createElement('div');
+    shade.className = 'basis-shade history-shade';
+    shade.innerHTML = `<div class="basis-ask batch-ask"><header><strong>이전 판</strong><button type="button" class="batch-close">닫기</button></header><div class="batch-body"><p>저장할 때 덮인 판입니다. 「열기」는 새 탭에 이름 없는 문서로 엽니다 — 원본은 그대로이고, 저장하면 이름을 묻습니다.</p><table><thead><tr><th>저장한 때</th><th>크기</th><th></th></tr></thead><tbody>${kept
+      .map(
+        (item, index) =>
+          `<tr><td>${escapeHtml(item.saved)}</td><td>${Math.max(1, Math.round(item.size / 1024)).toLocaleString()} KB</td><td><button type="button" class="history-open" data-index="${index}">열기</button></td></tr>`,
+      )
+      .join('')}</tbody></table></div></div>`;
+    shade.querySelector('.batch-close')!.addEventListener('click', () => shade.remove());
+    for (const button of shade.querySelectorAll<HTMLButtonElement>('.history-open')) {
+      button.addEventListener('click', async () => {
+        shade.remove();
+        try {
+          const opened = await editorHistoryOpen(Number(button.dataset.index));
+          if (opened) {
+            images.clear();
+            panel.hidden = true;
+            layout(opened, false);
+          }
+        } catch (error) {
+          fail('이전 판 열기', error);
+        }
+      });
+    }
+    root.append(shade);
+  }
 
   /** 명령 찾기(⌘K): 툴바 단추 · 「도구」 메뉴를 이름 · 설명으로 거르고 ↑↓ · Enter 로 실행(꺼진 것은 흐리게 · 실행 안 함). */
   function openPalette() {
     root.querySelector('.palette-shade')?.remove();
     const commands = [
-      ...[...root.querySelectorAll<HTMLButtonElement>('.editor-toolbar [data-action]')].map((button) => ({
-        // 메뉴가 열리는 단추의 「▾」는 이름이 아니다.
-        label: (button.querySelector('span')?.textContent ?? button.textContent ?? '').replace(/\s*▾$/, '').trim(),
+      ...[...root.querySelectorAll<HTMLButtonElement>('.editor-toolbar [data-action], .zoom-box [data-action]')].map((button) => ({
+        // 메뉴가 열리는 단추의 「▾」는 이름이 아니다 · 아이콘뿐인 단추(문서 배율)는 aria-label.
+        label: (button.querySelector('span')?.textContent ?? button.getAttribute('aria-label') ?? button.textContent ?? '').replace(/\s*▾$/, '').trim(),
         hint: button.title,
         enabled: !button.disabled,
         run: () => button.click(),
       })),
       ...TOOLS.map((tool) => ({ label: tool.label, hint: '도구', enabled: Boolean(view), run: tool.run })),
+      ...(settings?.snippets ?? []).map((snippet) => ({
+        label: `상용구: ${snippet.name}`,
+        hint: snippet.text,
+        enabled: Boolean(view),
+        run: () => insertSnippet(snippet.text),
+      })),
     ].filter((command) => command.label);
     const shade = document.createElement('div');
     shade.className = 'basis-shade palette-shade';
@@ -3051,6 +3304,33 @@ export function mountEditor(root: HTMLElement): void {
       case 'new-tab':
         await editorNewTab().catch((error) => fail('새 탭', error));
         break;
+      case 'open-read-only': {
+        try {
+          const opened = await editorOpenReadOnly();
+          if (opened) {
+            images.clear();
+            panel.hidden = true;
+            layout(opened, false);
+          }
+        } catch (error) {
+          fail('읽기 전용으로 열기', error);
+        }
+        break;
+      }
+      case 'history':
+        await openHistory();
+        break;
+      case 'settings':
+        openSettings();
+        break;
+      case 'snippets':
+        openSnippets();
+        break;
+      case 'zoom-in':
+      case 'zoom-out':
+      case 'zoom-reset':
+        await zoomBy(action === 'zoom-reset' ? 0 : action === 'zoom-out' ? -1 : 1);
+        break;
       case 'open': {
         say('여는 중…');
         try {
@@ -3151,6 +3431,8 @@ export function mountEditor(root: HTMLElement): void {
       case 'save-as': {
         try {
           const path = await (action === 'save' ? editorSave() : editorSaveAs());
+          // 읽기 전용 문서의 사본을 만들었으면 그 사본을 고치는 문서가 됐다 — 고칠 수 있게 화면을 다시 받는다.
+          if (path && action === 'save-as' && view?.read_only) layout(await editorView(), true);
           if (path) say(`저장함: ${path}`);
         } catch (error) {
           fail(`저장`, error);
@@ -3522,6 +3804,13 @@ function describe(error: unknown): string {
       amendment_empty: '변경된 내용이 없습니다',
       amendment_needs_final: '최종본(.fin)으로 연 문서에서만 보정서를 만듭니다(열기에서 .fin 을 고르세요)',
       item_missing: '그 번호의 식별항목이 없습니다',
+      open_elsewhere: '그 파일은 다른 탭에 열려 있습니다 — 그 탭에서 저장하거나 닫은 뒤 하세요',
+      read_only_save: '읽기 전용으로 연 문서입니다 — 「다른 이름으로 저장」으로 사본을 만드세요',
+      history_none: '이전 판이 없습니다',
+      'save_verify:bytes': '저장한 파일을 다시 읽어 보니 쓴 것과 다릅니다(동기화 폴더 · 백신이 바꿨을 수 있습니다). 고친 것은 그대로 있으니 다른 자리에 다시 저장하세요 — 덮인 판은 「이전 판」에 있습니다',
+      'save_verify:structure': '저장한 파일이 검증을 통과하지 못했습니다. 고친 것은 그대로 있으니 다시 저장하세요 — 덮인 판은 「이전 판」에 있습니다',
+      'save_verify:read': '저장한 파일을 다시 읽지 못했습니다. 고친 것은 그대로 있으니 다시 저장하세요 — 덮인 판은 「이전 판」에 있습니다',
+      'save_verify:text': '저장한 파일의 글이 화면과 다릅니다. 고친 것은 그대로 있으니 다시 저장하세요 — 덮인 판은 「이전 판」에 있습니다',
     };
     if (reason && plain[reason]) return plain[reason];
     if (value.code === 'cp949_invalid' && value.details?.char) {

@@ -1,6 +1,6 @@
 //! 한국어 메뉴 막대: 툴바 · ⌘K 와 같은 이름. 항목 id 가 화면이 할 일을 말한다 —
 //! `action:<툴바 data-action>` · `tool:<도구 메뉴 이름>` · `batch:generate|check` · `help:tours|shortcuts` ·
-//! `go` · `palette`. 그 밖(업데이트 · 버그 신고 · 최근 문서 · 끝내기)은 `main.rs` 가 직접 한다.
+//! `go` · `palette`. 그 밖(업데이트 · 되돌리기 · 버그 신고 · 최근 문서 · 끝내기)은 `main.rs` 가 직접 한다.
 //!
 //! ⛔ 바로 가기 키는 붙이지 않는다(⌘O · ⌘Q 말고) — 맥 메뉴 바로 가기는 화면보다 먼저 키를 가져가, 화면이 이미 하는
 //! ⌘S · ⌘F · ⌘K … 가 화면 칸(찾기 칸 등)에서 안 먹게 된다. 이름 끝에 키를 적어 보인다.
@@ -34,10 +34,12 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             true,
             Some("CmdOrCtrl+O"),
         )?)
+        .item(&action("open-read-only", "읽기 전용으로 열기…")?)
         .item(&Submenu::with_id(app, "recent", "최근 문서", true)?)
         .separator()
         .item(&action("save", "저장 (⌘S)")?)
         .item(&action("save-as", "다른 이름으로 저장… (⇧⌘S)")?)
+        .item(&action("history", "이전 판…")?)
         .separator()
         .item(&action("pdf", "PDF로 인쇄…")?)
         .item(&action("docx", "Word로 저장…")?)
@@ -63,11 +65,17 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .separator()
         .item(&action("find", "찾기 · 바꾸기 (⌘F)")?)
         .item(&item("go", "가기 — 식별번호 · 청구항 (⌘G)…")?)
-        .item(&item("palette", "명령 찾기 (⌘K)…")?);
+        .item(&item("palette", "명령 찾기 (⌘K)…")?)
+        .separator()
+        .item(&action("snippets", "상용구…")?);
     let view = SubmenuBuilder::new(app, "보기")
         .item(&action("marks", "문단부호 보기")?)
         .item(&action("source", "원문 나란히 보기…")?)
         .item(&action("amend-marks", "보정 표시")?)
+        .separator()
+        .item(&action("zoom-in", "문서 확대 (⌘+)")?)
+        .item(&action("zoom-out", "문서 축소 (⌘−)")?)
+        .item(&action("zoom-reset", "문서 실제 크기 (⌘0)")?)
         .separator()
         .fullscreen_with_text("전체 화면");
     let mut tools = SubmenuBuilder::new(app, "도구");
@@ -78,6 +86,11 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .separator()
         .item(&item("batch:generate", "일괄 처리 — 폴더 HLT 만들기…")?)
         .item(&item("batch:check", "일괄 처리 — 폴더 제출 전 점검…")?);
+    // 설정: 맥은 앱 메뉴(관례) · 그 밖은 「도구」 끝.
+    #[cfg(not(target_os = "macos"))]
+    let tools = tools
+        .separator()
+        .item(&action("settings", "설정… (Ctrl+,)")?);
     let amend = SubmenuBuilder::new(app, "보정")
         .item(&action("review", "검토보고서 불러오기…")?)
         .item(&action("amend-marks", "보정 표시")?)
@@ -93,6 +106,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .item(&item("help:shortcuts", "단축키 모음")?)
         .separator()
         .item(&item("check-update", "업데이트 확인…")?)
+        .item(&item("rollback", "이전 판으로 되돌리기…")?)
         .item(&item("report-bug", "버그 신고…")?);
     let mut menu = MenuBuilder::new(app);
     #[cfg(target_os = "macos")]
@@ -100,6 +114,8 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         menu = menu.item(
             &SubmenuBuilder::new(app, "서안 통특기")
                 .about_with_text("서안 통특기 정보", None)
+                .separator()
+                .item(&action("settings", "설정… (⌘,)")?)
                 .separator()
                 .services_with_text("서비스")
                 .separator()

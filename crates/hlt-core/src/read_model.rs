@@ -168,6 +168,8 @@ pub struct ShapeRecord {
 pub enum DocumentTreeKind {
     PctPatent,
     PatentSpecificationKo,
+    /// 의견서(서식 7 · 실물 74건 — `0x8000` 표시가 안 붙는다).
+    Opinion,
     Unknown,
 }
 
@@ -185,6 +187,7 @@ impl DocumentTreeKind {
         match value & 0x7fff {
             113 => Self::PctPatent,
             140 => Self::PatentSpecificationKo,
+            7 => Self::Opinion,
             _ => Self::Unknown,
         }
     }
@@ -193,6 +196,7 @@ impl DocumentTreeKind {
         match self {
             Self::PctPatent => "PCT특허",
             Self::PatentSpecificationKo => "특허 명세서등(국어)",
+            Self::Opinion => "의견서",
             Self::Unknown => "unknown",
         }
     }
