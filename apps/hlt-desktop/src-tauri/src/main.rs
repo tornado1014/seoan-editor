@@ -384,6 +384,7 @@ fn main() {
             editor_paragraph_keys,
             editor_renumber_plan,
             editor_replace_texts,
+            editor::editor_fix_double_spaces,
             editor_sign_table,
             editor_submission_checks,
             editor_resize_image,

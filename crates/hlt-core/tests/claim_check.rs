@@ -224,12 +224,24 @@ fn submission_checks_on_submitted_finals() {
     let mut by_kind = std::collections::BTreeMap::new();
     let mut files_hit = std::collections::BTreeMap::new();
     for path in &entries {
-        let Ok(session) = hlt_core::EditorSession::open(path) else {
+        let Ok(mut session) = hlt_core::EditorSession::open(path) else {
             failed += 1;
             continue;
         };
         files += 1;
         let issues = session.submission_checks();
+        // 「한 칸으로 모두 고치기」 뒤에는 공백 두 칸이 안 남고 문단 수도 그대로다.
+        let before = session.paragraphs().len();
+        session.fix_double_spaces().unwrap();
+        assert_eq!(session.paragraphs().len(), before);
+        let left = session
+            .submission_checks()
+            .iter()
+            .filter(|issue| issue.detail.starts_with("공백 두 칸"))
+            .count();
+        *by_kind
+            .entry("고친 뒤 남은 공백 두 칸(표 칸)".into())
+            .or_insert(0usize) += left;
         let mut kinds = std::collections::BTreeSet::new();
         for issue in &issues {
             *by_kind.entry(format!("{:?}", issue.kind)).or_insert(0usize) += 1;

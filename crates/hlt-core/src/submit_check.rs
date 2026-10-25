@@ -32,6 +32,8 @@ pub enum SubmitKind {
     DuplicateHeading,
     /// 청구항 글이 「.」로 끝나지 않는다.
     ClaimEnding,
+    /// 띄어쓰기: 공백 두 칸 · 문장부호 앞 공백 · 글자 뒤 문단 끝 공백 · 전각 공백(확인용).
+    Spacing,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -91,6 +93,7 @@ pub fn submission_checks(
     out.extend(unused_signs(&description));
     out.extend(sign_names(&description));
     out.extend(structure_issues(paragraphs));
+    out.extend(spacing(paragraphs));
     out.extend(citations.iter().map(|issue| {
         let id = paragraphs
             .iter()
@@ -224,6 +227,137 @@ fn structure_issues(paragraphs: &[EditorParagraph]) -> Vec<SubmitIssue> {
                     ));
                 }
             }
+        }
+    }
+    out
+}
+
+/// 글 사이 공백 두 칸 이상(자리 · 칸 수). 앞 들여쓰기 · 끝 공백 · 서지 줄 「(특허문헌 1)  KR…」의 괄호 뒤는 뺀다.
+fn double_space_runs(chars: &[char]) -> Vec<(usize, usize)> {
+    let start = chars
+        .iter()
+        .position(|&ch| !matches!(ch, ' ' | '\u{3000}' | '\u{c}'))
+        .unwrap_or(chars.len());
+    let end = chars
+        .iter()
+        .rposition(|&ch| ch != ' ')
+        .map_or(start, |at| at + 1);
+    let text: String = chars[start..].iter().collect();
+    let bibliography = ["(특허문헌", "(비특허문헌"]
+        .iter()
+        .any(|prefix| text.starts_with(prefix))
+        .then(|| chars.iter().position(|&ch| ch == ')'))
+        .flatten();
+    let mut runs = Vec::new();
+    let mut at = start;
+    while at < end {
+        let run = chars[at..].iter().take_while(|&&ch| ch == ' ').count();
+        if run >= 2 && bibliography != Some(at.wrapping_sub(1)) {
+            runs.push((at, run));
+        }
+        at += run.max(1);
+    }
+    runs
+}
+
+/// 「한 칸으로 모두 고치기」: 공백 두 칸 이상이 있는 문단 → 한 칸으로 줄인 글(점검과 같은 규칙 · 그림 · 표 문단은 뺀다).
+pub fn double_space_fixes(paragraphs: &[EditorParagraph]) -> Vec<(String, String)> {
+    paragraphs
+        .iter()
+        .filter(|p| !p.has_objects)
+        .filter_map(|paragraph| {
+            let chars: Vec<char> = paragraph.text.chars().collect();
+            let runs = double_space_runs(&chars);
+            if runs.is_empty() {
+                return None;
+            }
+            let mut drop = vec![false; chars.len()];
+            for (at, run) in runs {
+                drop[at + 1..at + run].iter_mut().for_each(|d| *d = true);
+            }
+            let text = chars
+                .iter()
+                .zip(drop)
+                .filter(|(_, d)| !d)
+                .map(|(&ch, _)| ch)
+                .collect();
+            Some((paragraph.id.clone(), text))
+        })
+        .collect()
+}
+
+/// 띄어쓰기: 문단마다 규칙별 한 줄(첫 자리 앞뒤 글 · 공백은 「␣」). 앞 들여쓰기 공백은 보지 않는다.
+/// 서지 줄 「(특허문헌 1)  KR…」의 괄호 뒤 두 칸은 실물 꼴이라 뺀다.
+fn spacing(paragraphs: &[EditorParagraph]) -> Vec<SubmitIssue> {
+    let mut out = Vec::new();
+    for paragraph in paragraphs.iter().filter(|p| !p.has_objects) {
+        let chars: Vec<char> = paragraph.text.chars().collect();
+        let start = chars
+            .iter()
+            .position(|&ch| !matches!(ch, ' ' | '\u{3000}' | '\u{c}'))
+            .unwrap_or(chars.len());
+        let mut found: [(&str, Vec<usize>); 4] = [
+            (
+                "공백 두 칸",
+                double_space_runs(&chars)
+                    .into_iter()
+                    .map(|(at, _)| at)
+                    .collect(),
+            ),
+            ("문장부호 앞 공백", Vec::new()),
+            ("문단 끝 공백", Vec::new()),
+            ("전각 공백", Vec::new()),
+        ];
+        let end = chars
+            .iter()
+            .rposition(|&ch| ch != ' ')
+            .map_or(start, |at| at + 1);
+        let mut at = start;
+        while at < end {
+            if chars[at] == ' ' {
+                let run = chars[at..].iter().take_while(|&&ch| ch == ' ').count();
+                let after = chars.get(at + run).copied();
+                // 「있다 .」 · 「A ,B」 — 소수 「 .5」 · 줄임표 「 ..」는 뺀다.
+                let next = chars.get(at + run + 1).copied();
+                if matches!(after, Some('.' | ','))
+                    && !next.is_some_and(|ch| ch.is_ascii_digit() || ch == '.')
+                {
+                    found[1].1.push(at);
+                }
+                at += run;
+                continue;
+            }
+            if chars[at] == '\u{3000}' {
+                found[3].1.push(at);
+            }
+            at += 1;
+        }
+        // 「있다. 」처럼 문장부호 뒤 끝 공백은 통특기가 늘 쓰는 꼴(실물 최종본 4,905곳)이라 글자 뒤만 건다.
+        if end < chars.len() && end > start && chars[end - 1].is_alphanumeric() {
+            found[2].1.push(end);
+        }
+        for (label, places) in found {
+            let Some(&first) = places.first() else {
+                continue;
+            };
+            let context: String = chars[first.saturating_sub(8)..(first + 10).min(chars.len())]
+                .iter()
+                .map(|&ch| match ch {
+                    ' ' => '␣',
+                    '\u{3000}' => '□',
+                    ch => ch,
+                })
+                .collect();
+            let more = if places.len() > 1 {
+                format!(" 외 {}곳", places.len() - 1)
+            } else {
+                String::new()
+            };
+            out.push(SubmitIssue {
+                kind: SubmitKind::Spacing,
+                paragraph_id: Some(paragraph.id.clone()),
+                detail: format!("{label}: 「{context}」{more}"),
+            });
         }
     }
     out
@@ -1266,6 +1400,66 @@ mod tests {
                 ("p3", "부호 60: 제1 스프링(1) · 제2 스프링(1)")
             ]
         );
+    }
+
+    #[test]
+    fn spacing_issues() {
+        let spacing = |text: &str| -> Vec<String> {
+            submission_checks(&doc(&[(text, None)]), &[])
+                .into_iter()
+                .filter(|i| i.kind == SubmitKind::Spacing)
+                .map(|i| i.detail)
+                .collect()
+        };
+        assert_eq!(spacing("가나  다라"), ["공백 두 칸: 「가나␣␣다라」"]);
+        assert_eq!(
+            spacing("있다 . 없다  ,  끝 "),
+            [
+                "공백 두 칸: 「있다␣.␣없다␣␣,␣␣끝␣」 외 1곳",
+                "문장부호 앞 공백: 「있다␣.␣없다␣␣,␣␣」 외 1곳",
+                "문단 끝 공백: 「없다␣␣,␣␣끝␣」"
+            ]
+        );
+        assert_eq!(spacing("가\u{3000}나"), ["전각 공백: 「가□나」"]);
+        // 앞 들여쓰기 · 서지 줄 괄호 뒤 두 칸 · 소수 · 줄임표 · 빈 문단은 걸지 않는다.
+        for clean in [
+            "  \u{3000}들여 쓴 문단.",
+            "\u{c}쪽 나눔 뒤.",
+            "(특허문헌 1)  KR10-2099-0000001 A",
+            "값은 약 .5 이고 그 밖 ...",
+            "   ",
+            "있다. ",
+        ] {
+            assert!(spacing(clean).is_empty(), "{clean}");
+        }
+        // 서지 줄이어도 괄호 뒤가 아닌 두 칸은 건다.
+        assert_eq!(spacing("(특허문헌 1)  KR  A").len(), 1);
+    }
+
+    #[test]
+    fn double_spaces_become_one() {
+        let paragraphs = doc(&[
+            ("  가나  다라   마. ", None),
+            ("(특허문헌 1)  KR  A", None),
+            ("고칠 것 없음.", None),
+        ]);
+        assert_eq!(
+            double_space_fixes(&paragraphs),
+            [
+                ("p0".to_string(), "  가나 다라 마. ".to_string()),
+                ("p1".into(), "(특허문헌 1)  KR A".into())
+            ]
+        );
+        // 고친 글에는 공백 두 칸이 더 안 걸린다.
+        let fixed: Vec<EditorParagraph> = double_space_fixes(&paragraphs)
+            .into_iter()
+            .map(|(id, text)| EditorParagraph {
+                id,
+                text,
+                ..paragraphs[0].clone()
+            })
+            .collect();
+        assert!(double_space_fixes(&fixed).is_empty());
     }
 
     #[test]

@@ -162,6 +162,7 @@ beforeEach(() => {
       case 'editor_renumber_plan':
         return renumberAnswer;
       case 'editor_replace_texts':
+      case 'editor_fix_double_spaces':
         return view(texts);
       case 'editor_save_csv':
         return '/d/표.csv';
@@ -965,13 +966,13 @@ describe('page editing', () => {
     expect(head[0]).toBe('파일');
     expect(head.slice(-2)).toEqual(['합계', '열지 못함']);
     const first = [...root.querySelectorAll('.batch-body tbody tr')][0];
-    expect([...first.querySelectorAll('td')].map((td) => td.textContent)).toEqual(['a.HLT', '0', '0', '0', '0', '0', '2', '1', '0', '0', '0', '0', '0', '3', '']);
+    expect([...first.querySelectorAll('td')].map((td) => td.textContent)).toEqual(['a.HLT', '0', '0', '0', '0', '0', '2', '1', '0', '0', '0', '0', '0', '0', '3', '']);
     expect(root.querySelector('.editor-status')!.textContent).toBe('폴더 제출 전 점검 — 2개 파일 · 걸린 파일 1');
     q(root, '.batch-csv').click();
     await settle(10);
     const [, args] = last('editor_save_csv')!;
     expect((args as { name: string }).name).toBe('제출 전 점검.csv');
-    expect((args as { text: string }).text.split('\r\n')[1]).toBe('"a.HLT","0","0","0","0","0","2","1","0","0","0","0","0","3",""');
+    expect((args as { text: string }).text.split('\r\n')[1]).toBe('"a.HLT","0","0","0","0","0","2","1","0","0","0","0","0","0","3",""');
   });
 
   test('toCsv: 따옴표 · 쉼표 · 줄바꿈이 든 칸', () => {
@@ -1595,6 +1596,44 @@ describe('page editing', () => {
     box.requestSubmit();
     await settle(10);
     expect(calls.filter(([c]) => c === 'editor_export_fin').length).toBe(2);
+  });
+
+  test('제출 전 점검: 띄어쓰기 · 「한 칸으로 모두 고치기」 fixes once and drops only the double-space rows', async () => {
+    const root = await open();
+    submitAnswer = [
+      { kind: 'spacing', paragraph_id: 'paragraph:0', detail: '공백 두 칸: 「있다.␣␣다음」' },
+      { kind: 'spacing', paragraph_id: 'paragraph:1', detail: '전각 공백: 「가□나」' },
+    ];
+    q(root, '[data-action="fin"]').click();
+    await settle(10);
+    const box = root.querySelector<HTMLFormElement>('.submit-ask')!;
+    expect(box.querySelector('legend')!.textContent).toContain('띄어쓰기');
+    submitAnswer = [submitAnswer[1]]; // 고친 뒤 다시 점검한 답
+    q(box, '.submit-fix-spaces').click();
+    await settle(10);
+    expect(calls.filter(([c]) => c === 'editor_fix_double_spaces').length).toBe(1);
+    expect([...box.querySelectorAll('li')].map((li) => li.textContent)).toEqual(['가기 전각 공백: 「가□나」']);
+    expect(box.querySelector('.submit-fix-spaces')).toBeNull();
+    expect(box.textContent).toContain('한 칸으로 고쳤습니다');
+    q(box, '.item-cancel').click();
+    await settle(10);
+    // 표 칸은 고치지 않는다 — 다시 점검해도 남은 줄은 두고 알린다.
+    const cell = { kind: 'spacing', paragraph_id: 'paragraph:2', detail: '공백 두 칸: 「칸␣␣글」' };
+    submitAnswer = [cell];
+    q(root, '[data-action="fin"]').click();
+    await settle(10);
+    const again = root.querySelector<HTMLFormElement>('.submit-ask')!;
+    q(again, '.submit-fix-spaces').click();
+    await settle(10);
+    expect(again.querySelectorAll('li').length).toBe(1);
+    expect(again.textContent).toContain('표 칸 1곳은 직접 고치세요');
+    q(again, '.item-cancel').click();
+    await settle(10);
+    // 공백 두 칸이 없으면 단추도 없다.
+    submitAnswer = [{ kind: 'spacing', paragraph_id: 'paragraph:1', detail: '전각 공백: 「가□나」' }];
+    q(root, '[data-action="fin"]').click();
+    await settle(10);
+    expect(root.querySelector('.submit-ask .submit-fix-spaces')).toBeNull();
   });
 
   test('amendment base: 연 뒤 고친 것 by default · 원출원 re-asks with original (marks and basis) · messages name the base', async () => {

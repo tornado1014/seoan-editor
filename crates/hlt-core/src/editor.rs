@@ -439,13 +439,7 @@ impl EditorSession {
                 if paragraph.table_id.is_some() {
                     return Err(editor_error("table_paragraph"));
                 }
-                let new: Vec<char> = text.chars().collect();
-                let edited = splice(&cells(&paragraph.inlines), &new);
-                set_cells(paragraph, &edited);
-                if paragraph.marker.is_some() {
-                    paragraph.marker = Some(text.trim().to_string());
-                }
-                paragraph.source_line_bytes.clear();
+                set_text_keeping_formats(paragraph, text);
             }
             Ok(())
         })
@@ -1641,6 +1635,29 @@ impl EditorSession {
     /// 제출 전 점검(빈 식별번호 · 도면 대응 · 안 쓰인 부호 · 청구항 인용).
     pub fn submission_checks(&self) -> Vec<crate::SubmitIssue> {
         crate::submission_checks(&self.paragraphs(), &self.claim_citation_issues())
+    }
+
+    /// 공백 두 칸 → 한 칸(제출 전 점검 「한 칸으로 모두 고치기」 · 되돌리기 한 번). 표 칸 글은 건드리지 않는다. 고친 문단 수.
+    pub fn fix_double_spaces(&mut self) -> Result<usize, CoreError> {
+        let fixes = crate::double_space_fixes(&self.paragraphs());
+        if fixes.is_empty() {
+            return Ok(0);
+        }
+        let mut fixed = 0;
+        self.edit_model(|model| {
+            for (id, text) in &fixes {
+                if let Some(paragraph) = model
+                    .paragraphs
+                    .iter_mut()
+                    .find(|paragraph| &paragraph.id == id && paragraph.table_id.is_none())
+                {
+                    set_text_keeping_formats(paragraph, text);
+                    fixed += 1;
+                }
+            }
+            Ok(())
+        })?;
+        Ok(fixed)
     }
 
     /// 오기 후보가 걸릴 곳 수(그 번호 문단들에서 틀린 말이 나오는 수) — 걸기 전에 보여 준다.
@@ -2996,6 +3013,17 @@ fn file_digest(path: &Path) -> Result<[u8; 32], CoreError> {
     use sha2::{Digest, Sha256};
     let bytes = std::fs::read(path).map_err(|_| editor_error("save_read_back"))?;
     Ok(Sha256::digest(&bytes).into())
+}
+
+/// 바뀐 글자만 바꾸고 나머지 글자의 서식 · 그림 자리(`_`)는 그대로 둔다. 표제(【…】)는 표제 표시도 새 글로.
+fn set_text_keeping_formats(paragraph: &mut crate::HmlParagraph, text: &str) {
+    let new: Vec<char> = text.chars().collect();
+    let edited = splice(&cells(&paragraph.inlines), &new);
+    set_cells(paragraph, &edited);
+    if paragraph.marker.is_some() {
+        paragraph.marker = Some(text.trim().to_string());
+    }
+    paragraph.source_line_bytes.clear();
 }
 
 pub(crate) fn editor_error(reason: &str) -> CoreError {

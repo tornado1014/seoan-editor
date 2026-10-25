@@ -178,7 +178,9 @@ pub use save::{
 };
 pub use schema::{PackageReport, SchemaReport, validate_kipo_package, validate_kipo_xml};
 pub use source_view::{SourceParagraph, paragraph_keys, source_keys, source_paragraphs};
-pub use submit_check::{SignRow, SubmitIssue, SubmitKind, sign_table, submission_checks};
+pub use submit_check::{
+    SignRow, SubmitIssue, SubmitKind, double_space_fixes, sign_table, submission_checks,
+};
 pub use table_edit::{
     CellPosition, NEW_TABLE_TOTAL_WIDTH, TableEditDecision, TableEditDecisionStatus, TableEditPlan,
     TableEditRequest, TableEditSaveResult, TableEditSkipReason, TableOperation, apply_table_edits,

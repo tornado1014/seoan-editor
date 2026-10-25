@@ -33,6 +33,7 @@ import {
   editorSaveCsv,
   editorRenumberPlan,
   editorSignTable,
+  editorFixDoubleSpaces,
   editorReplaceTexts,
   editorSourceOpen,
   editorParagraphKeys,
@@ -135,6 +136,7 @@ const SUBMIT_GROUPS: [SubmitIssueDto['kind'], string][] = [
   ['empty_heading', '본문이 없는 표제'],
   ['representative', '대표도'],
   ['abstract_long', '요약 길이(권장 400자)'],
+  ['spacing', '띄어쓰기(공백 두 칸 · 문장부호 앞 · 문단 끝 · 전각 공백)'],
 ];
 
 /** 표 → CSV(칸마다 따옴표 · 안의 따옴표는 둘로). */
@@ -2059,7 +2061,11 @@ export function mountEditor(root: HTMLElement): void {
                 `<li>${issue.paragraph_id ? `<button type="button" class="submit-go" data-index="${index}">가기</button> ` : ''}${escape(issue.detail)}</li>`,
             )
             .join('');
-          return rows ? `<fieldset><legend>${title}</legend><ul>${rows}</ul></fieldset>` : '';
+          const fix =
+            kind === 'spacing' && issues.some((issue) => issue.kind === kind && issue.detail.startsWith('공백 두 칸'))
+              ? '<button type="button" class="submit-fix-spaces">공백 두 칸 → 한 칸으로 모두 고치기</button>'
+              : '';
+          return rows ? `<fieldset><legend>${title}</legend>${fix}<ul>${rows}</ul></fieldset>` : '';
         })
         .join('')}
         <button type="submit">그래도 만들기</button><button type="button" class="item-cancel">멈추기</button>`;
@@ -2084,6 +2090,24 @@ export function mountEditor(root: HTMLElement): void {
       box.querySelector('.item-cancel')!.addEventListener('click', () => done(false));
       box.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') done(false);
+      });
+      box.querySelector<HTMLButtonElement>('.submit-fix-spaces')?.addEventListener('click', async (event) => {
+        const button = event.currentTarget as HTMLButtonElement;
+        if (!canEdit()) return;
+        button.disabled = true;
+        await run('공백 두 칸 고치기', editorFixDoubleSpaces);
+        // 표 칸 글은 고치지 않는다 — 다시 점검해 남은 곳만 둔다.
+        const double = (issue: SubmitIssueDto) => issue.kind === 'spacing' && issue.detail.startsWith('공백 두 칸');
+        const left = new Set((await editorSubmissionChecks().catch(() => issues)).filter(double).map((issue) => issue.paragraph_id));
+        for (const go of button.parentElement!.querySelectorAll<HTMLButtonElement>('.submit-go')) {
+          const issue = issues[Number(go.dataset.index)];
+          if (double(issue) && !left.has(issue.paragraph_id)) go.closest('li')!.remove();
+        }
+        button.replaceWith(
+          Object.assign(document.createElement('p'), {
+            textContent: `공백 두 칸을 한 칸으로 고쳤습니다(⌘Z로 되돌리기).${left.size ? ` 표 칸 ${left.size}곳은 직접 고치세요.` : ''}`,
+          }),
+        );
       });
       for (const button of box.querySelectorAll<HTMLButtonElement>('.submit-go')) {
         button.addEventListener('click', () => {

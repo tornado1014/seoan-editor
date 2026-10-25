@@ -676,6 +676,19 @@ pub async fn editor_replace_texts(
     })
 }
 
+/// 제출 전 점검 「한 칸으로 모두 고치기」.
+#[tauri::command]
+pub async fn editor_fix_double_spaces(
+    window: Window,
+    state: State<'_, EditorState>,
+) -> Result<EditorViewDto, CoreError> {
+    with_session(&state, &window, |session| {
+        session.fix_double_spaces()?;
+        let title = title(session);
+        Ok(view(session, title))
+    })
+}
+
 /// 부호 목록(상세설명 「이름(부호)」 · 【부호의 설명】 — 부호 숫자 차례).
 #[tauri::command]
 pub async fn editor_sign_table(

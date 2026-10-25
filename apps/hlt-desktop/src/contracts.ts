@@ -329,6 +329,7 @@ export const editorParagraphKeys = () => invoke<(string | null)[]>('editor_parag
 export type RenumberEditDto = { id: string; before: string; after: string };
 export const editorRenumberPlan = (figures: boolean) => invoke<RenumberEditDto[]>('editor_renumber_plan', { figures });
 /** 여러 문단 글을 한 번에(되돌리기 한 번). */
+export const editorFixDoubleSpaces = () => invoke<EditorViewDto>('editor_fix_double_spaces');
 export const editorReplaceTexts = (edits: [string, string][]) => invoke<EditorViewDto>('editor_replace_texts', { edits });
 /** 부호 목록 한 줄. */
 export type SignRowDto = { sign: string; names: [string, number][]; listed: string | null; count: number; first: string | null };
@@ -359,7 +360,8 @@ export type SubmitKindDto =
   | 'representative'
   | 'empty_heading'
   | 'duplicate_heading'
-  | 'claim_ending';
+  | 'claim_ending'
+  | 'spacing';
 /** 제출 전 점검 한 줄(가 볼 문단 · 없으면 문서 전체의 일). */
 export type SubmitIssueDto = { kind: SubmitKindDto; paragraph_id: string | null; detail: string };
 export const editorSubmissionChecks = () => invoke<SubmitIssueDto[]>('editor_submission_checks');
