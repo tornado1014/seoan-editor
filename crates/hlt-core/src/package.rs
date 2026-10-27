@@ -100,7 +100,8 @@ fn read_hlz(bytes: &[u8]) -> Result<(String, BTreeMap<String, Vec<u8>>), CoreErr
             .by_index(index)
             .map_err(|_| package_error("hlz_zip"))?;
         let name = entry.name().to_string();
-        if name.to_ascii_lowercase().ends_with(".xml") {
+        if name.to_ascii_lowercase().ends_with(".xml") && name != crate::sequence_listing::HLZ_NAME
+        {
             entry
                 .read_to_string(&mut xml)
                 .map_err(|_| package_error("hlz_read"))?;

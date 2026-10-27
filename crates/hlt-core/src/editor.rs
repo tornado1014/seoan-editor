@@ -36,6 +36,8 @@ pub struct EditorSession {
     pub cp949_substitutions: Vec<crate::Cp949Substitution>,
     /// 최종본(.fin)을 열었나 · 그 첫 판 문단(서식 구간까지 — 모델이 다 되면 찍는다). 보정 표시의 「보정 전」.
     from_final: bool,
+    /// 연 제출파일에 서열목록 파일(st26sdosl.xml)이 들어 있었다 — 판독기는 【서열목록】을 되살리지 않으니 제출 전 점검이 알린다.
+    package_sequence: bool,
     baseline: Option<Vec<EditorParagraph>>,
     /// 첫 판의 그림 서명(도면 교체를 보정 표시에 — 화면 판은 그림을 1×1 로 구워 정체를 모른다).
     baseline_figures: crate::FigureSignatures,
@@ -208,10 +210,12 @@ impl EditorSession {
                 value.eq_ignore_ascii_case("fin") || value.eq_ignore_ascii_case("hlz")
             });
         let mut opened_numbers = Vec::new();
+        let mut package_sequence = false;
         if package {
             let work = dir.path().join("package");
             std::fs::create_dir(&work).map_err(|_| editor_error("workdir"))?;
             opened_numbers = crate::hlt_from_package(source, &work, &first)?;
+            package_sequence = work.join(crate::sequence_listing::HLZ_NAME).exists();
         } else {
             std::fs::copy(source, &first).map_err(|_| editor_error("copy"))?;
         }
@@ -273,6 +277,7 @@ impl EditorSession {
             opened_numbers,
             cp949_substitutions: Vec::new(),
             from_final: package,
+            package_sequence,
             baseline: None,
             baseline_figures: Default::default(),
             source: package.then(|| source.to_path_buf()),
@@ -1825,7 +1830,20 @@ impl EditorSession {
 
     /// 제출 전 점검(빈 식별번호 · 도면 대응 · 안 쓰인 부호 · 청구항 인용).
     pub fn submission_checks(&self) -> Vec<crate::SubmitIssue> {
-        crate::submission_checks(&self.paragraphs(), &self.claim_citation_issues())
+        let paragraphs = self.paragraphs();
+        let mut issues = crate::submission_checks(&paragraphs, &self.claim_citation_issues());
+        if self.package_sequence
+            && !paragraphs.iter().any(|p| {
+                p.text.trim().trim_start_matches('\u{c}') == crate::sequence_listing::HEADING
+            })
+        {
+            issues.push(crate::SubmitIssue {
+                kind: crate::SubmitKind::SequenceFile,
+                paragraph_id: None,
+                detail: "연 제출파일에 서열목록이 있었는데 이 문서에는 【서열목록】이 없다 — 「서열목록 넣기…」로 다시 넣으세요".into(),
+            });
+        }
+        issues
     }
 
     /// 공백 두 칸 → 한 칸(제출 전 점검 「한 칸으로 모두 고치기」 · 되돌리기 한 번). 표 칸 글은 건드리지 않는다. 고친 문단 수.

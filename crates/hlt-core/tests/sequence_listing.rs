@@ -219,7 +219,7 @@ fn submission_carries_the_file_and_the_sequence_list_element() {
         },
     )
     .unwrap();
-    let mut hlz = zip::ZipArchive::new(std::io::Cursor::new(export.hlz)).unwrap();
+    let mut hlz = zip::ZipArchive::new(std::io::Cursor::new(export.hlz.clone())).unwrap();
     let mut bytes = Vec::new();
     hlz.by_name("st26sdosl.xml")
         .unwrap()
@@ -241,6 +241,37 @@ fn submission_carries_the_file_and_the_sequence_list_element() {
         "{xml}"
     );
     assert!(!xml.contains("seq.xml"), "{xml}");
+
+    // 만든 제출파일을 다시 연다 — hlz 의 서열목록 파일을 명세서 XML 로 읽어 열기가 깨졌다(실물 보고).
+    let (fin, hlz) = (temp.path().join("s.fin"), temp.path().join("s.hlz"));
+    std::fs::write(&fin, &export.fin).unwrap();
+    std::fs::write(&hlz, &export.hlz).unwrap();
+    for package in [&fin, &hlz] {
+        let work = tempfile::tempdir().unwrap();
+        let out = temp.path().join(format!(
+            "열기-{}.HLT",
+            package.extension().unwrap().to_str().unwrap()
+        ));
+        hlt_core::hlt_from_package(package, work.path(), &out).unwrap();
+        let reopened = EditorSession::open(&out).unwrap();
+        // 제출파일을 바로 열면 【서열목록】이 되살아나지 않는다 — 제출 전 점검이 알린다.
+        let opened = EditorSession::open(package).unwrap();
+        assert!(
+            opened
+                .submission_checks()
+                .iter()
+                .any(|issue| issue.kind == hlt_core::SubmitKind::SequenceFile
+                    && issue.detail.contains("다시 넣으세요")),
+            "{package:?}"
+        );
+        assert!(
+            reopened
+                .paragraphs()
+                .iter()
+                .any(|p| p.text.contains("서열번호 1의 핵산을 사용한다.")),
+            "{package:?}"
+        );
+    }
 
     // 파일이 없어지면 제출파일을 만들지 않는다.
     std::fs::remove_file(&seq).unwrap();

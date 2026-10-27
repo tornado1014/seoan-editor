@@ -1170,7 +1170,8 @@ fn read_final_fin<R: std::io::Read + std::io::Seek>(
         let mut entry = hlz_archive
             .by_index(index)
             .map_err(|_| fin_error("hlz_zip"))?;
-        if entry.name().ends_with(".xml") {
+        // 서열목록 파일(st26sdosl.xml)은 명세서가 아니다 — 그림처럼 따로 둔다.
+        if entry.name().ends_with(".xml") && entry.name() != crate::sequence_listing::HLZ_NAME {
             entry
                 .read_to_string(&mut before_xml)
                 .map_err(|_| fin_error("hlz_read"))?;
