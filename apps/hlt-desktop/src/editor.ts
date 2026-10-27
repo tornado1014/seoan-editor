@@ -62,6 +62,7 @@ import {
   editorNewOpinion,
   editorNewTab,
   editorInsertItem,
+  editorInsertSequenceListing,
   editorInsertPicture,
   editorResizeImage,
   editorReplacePicture,
@@ -137,6 +138,7 @@ const SUBMIT_GROUPS: [SubmitIssueDto['kind'], string][] = [
   ['representative', '대표도'],
   ['abstract_long', '요약 길이(권장 400자)'],
   ['spacing', '띄어쓰기(공백 두 칸 · 문장부호 앞 · 문단 끝 · 전각 공백)'],
+  ['sequence_file', '서열목록 파일'],
 ];
 
 /** 표 → CSV(칸마다 따옴표 · 안의 따옴표는 둘로). */
@@ -209,6 +211,7 @@ const ICONS: Record<string, string[]> = {
   word: ['M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z', 'M14 2v4a2 2 0 0 0 2 2h4', 'M16 13H8', 'M16 17H8', 'M10 9H8'],
   help: ['M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z', 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3', 'M12 17h.01'],
   snippet: ['M17 6H3', 'M21 12H8', 'M21 18H8', 'M3 12v6'],
+  sequence: ['M7 3c0 6 10 6 10 12s-10 6-10 6', 'M17 3c0 6-10 6-10 12s10 6 10 6', 'M8 7h8', 'M8 17h8'],
   zoomIn: ['M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z', 'm21 21-4.3-4.3', 'M11 8v6', 'M8 11h6'],
   zoomOut: ['M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z', 'm21 21-4.3-4.3', 'M8 11h6'],
 };
@@ -260,6 +263,7 @@ export function mountEditor(root: HTMLElement): void {
           <button type="button" data-action="chem" disabled title="화학식 넣기(구조식)">${icon('chem')}<span>화학식</span></button>
           <button type="button" data-action="table" disabled title="표 넣기(커서 문단 아래 · 고치기는 표 칸 위 우클릭) · 쪽나눔은 ⌘Enter">${icon('table')}<span>표</span></button>
           <button type="button" data-action="snippets" disabled title="상용구 — 자주 쓰는 문구를 골라 커서 자리에 넣는다 · 만들기 · 고치기 · 지우기 · ⌘K 로 이름을 쳐서 넣기">${icon('snippet')}<span>상용구</span></button>
+          <button type="button" data-action="sequence-list" disabled title="서열목록 넣기 — ST.26(XML) 파일을 골라 발명의 설명 끝에 【서열목록】 · 첨부 줄을 넣는다(파일은 제출파일을 만들 때 함께 싣는다)">${icon('sequence')}<span>서열목록</span></button>
         </div>
         <div class="tb-group" role="group" aria-label="보기">
           <button type="button" data-action="marks" aria-pressed="true" title="문단부호 보기 — 문단 끝 ↵ 를 보이거나 숨긴다(화면에만)">${icon('marks')}<span>문단부호</span></button>
@@ -475,7 +479,7 @@ export function mountEditor(root: HTMLElement): void {
     void editorLog(`${label} 실패 ${JSON.stringify(error)}`).catch(() => {});
   };
   const enable = () => {
-    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'docx', 'fin', 'review', 'amend-marks', 'basis', 'amend', 'math', 'chem', 'table', 'snippets', 'history', 'align-justified', 'align-center', 'align-left', 'indent', 'outdent', 'source', 'tools']) {
+    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'docx', 'fin', 'review', 'amend-marks', 'basis', 'amend', 'math', 'chem', 'table', 'snippets', 'sequence-list', 'history', 'align-justified', 'align-center', 'align-left', 'indent', 'outdent', 'source', 'tools']) {
       q<HTMLButtonElement>(`[data-action="${action}"]`).disabled = !view;
     }
   };
@@ -1601,6 +1605,20 @@ export function mountEditor(root: HTMLElement): void {
     if (numbers.includes(number)) {
       warn(`【${kind} ${number}】이 이미 있습니다 — 같은 번호는 보정서 만들 때 통특기가 거절합니다(E-243)`);
     }
+  }
+
+  /** 서열목록 넣기: ST.26 파일을 고르면 【서열목록】 · 첨부 줄을 넣고 커서를 첨부 줄로(취소면 그대로). */
+  async function insertSequenceListing() {
+    if (!canEdit() || !view) return;
+    const current = view;
+    let picked = false;
+    await structural('서열목록 넣기', async () => {
+      const result = await editorInsertSequenceListing();
+      if (!result) return { next: current, caret: null };
+      picked = true;
+      return { next: result.view, caret: { paragraph: result.body, offset: 0 } };
+    });
+    if (picked) say('서열목록을 넣었습니다 — 파일은 HLT 에 들어가지 않고, 제출파일을 만들 때 그 경로에서 읽어 함께 싣습니다');
   }
 
   /** 그림 파일(JPG · TIFF)을 골라 커서 문단 뒤에 그림 문단으로 넣는다 · 커서는 그대로. */
@@ -3350,6 +3368,9 @@ export function mountEditor(root: HTMLElement): void {
       case 'snippets':
         openSnippets();
         break;
+      case 'sequence-list':
+        await insertSequenceListing();
+        break;
       case 'zoom-in':
       case 'zoom-out':
       case 'zoom-reset':
@@ -3490,8 +3511,12 @@ export function mountEditor(root: HTMLElement): void {
         break;
       }
       case 'fin': {
+        let notice = '';
         try {
-          const issues = await editorSubmissionChecks();
+          const all = await editorSubmissionChecks();
+          // 대표도가 없는 출원도 있다 — 막지 않고 다 만든 뒤 알림만.
+          notice = all.some((issue) => issue.kind === 'representative_missing') ? ' · 알림: 【대표도】가 없습니다(없는 출원이면 괜찮습니다)' : '';
+          const issues = all.filter((issue) => issue.kind !== 'representative_missing');
           if (issues.length > 0 && !(await askSubmit(issues))) {
             say('제출파일 만들기를 멈췄습니다 — 고친 뒤 다시 누르세요.');
             break;
@@ -3503,7 +3528,7 @@ export function mountEditor(root: HTMLElement): void {
         say('제출파일 만드는 중…');
         try {
           const path = await editorExportFin();
-          say(path ? `제출파일: ${path}` : '');
+          say(path ? `제출파일: ${path}${notice}` : '');
         } catch (error) {
           fail('제출파일', error);
         }
@@ -3831,6 +3856,9 @@ function describe(error: unknown): string {
       open_elsewhere: '그 파일은 다른 탭에 열려 있습니다 — 그 탭에서 저장하거나 닫은 뒤 하세요',
       read_only_save: '읽기 전용으로 연 문서입니다 — 「다른 이름으로 저장」으로 사본을 만드세요',
       history_none: '이전 판이 없습니다',
+      sequence_not_st26: 'ST.26(XML) 서열목록 파일이 아닙니다 — WIPO Sequence 로 만든 .xml 을 고르세요(ST.25 .app 은 2022.7.1. 이전 출원용)',
+      sequence_file_missing: '서열목록 파일이 없습니다 — 옮겼거나 지웠다면 「서열목록 넣기…」로 다시 고르세요',
+      sequence_path_cp949: '파일 경로에 통특기 문자 집합(CP949)에 없는 글자가 있습니다 — 폴더 · 파일 이름을 바꾼 뒤 고르세요',
       'save_verify:bytes': '저장한 파일을 다시 읽어 보니 쓴 것과 다릅니다(동기화 폴더 · 백신이 바꿨을 수 있습니다). 고친 것은 그대로 있으니 다른 자리에 다시 저장하세요 — 덮인 판은 「이전 판」에 있습니다',
       'save_verify:structure': '저장한 파일이 검증을 통과하지 못했습니다. 고친 것은 그대로 있으니 다시 저장하세요 — 덮인 판은 「이전 판」에 있습니다',
       'save_verify:read': '저장한 파일을 다시 읽지 못했습니다. 고친 것은 그대로 있으니 다시 저장하세요 — 덮인 판은 「이전 판」에 있습니다',

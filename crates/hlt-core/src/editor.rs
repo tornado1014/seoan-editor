@@ -1247,6 +1247,197 @@ impl EditorSession {
             .ok_or_else(|| editor_error("paragraph"))
     }
 
+    /// 서열목록 넣기(통특기 「입력 › 서열목록 삽입」 · ST.26 XML 만): 발명의 설명 끝(【청구범위】 앞 → 없으면 【요약서】 앞 →
+    /// 없으면 문서 끝)에 「【서열목록】」 표제 · 「서열목록 전자파일 첨부(경로)」 줄(밑줄 · 10pt) · 빈 문단을 넣고, 【서열목록】
+    /// 책갈피를 그 첨부 줄에 건다(통특기와 같다 — 표제 문단은 앞 절에 남는다). 파일 내용은 HLT 에 싣지 않는다(제출파일을
+    /// 만들 때 그 경로에서 읽는다). 【서열목록】 표제가 이미 있으면(PCT 서식) 그 아래 빈 줄 · 첨부 줄만 고친다. 되돌리기 한 번.
+    /// ponytail: 통특기는 첨부 줄을 빨강으로 칠한다 — 글자 색은 모델에 없어 밑줄 · 10pt 만 둔다(제출 XML 은 색을 안 쓴다).
+    /// 돌려주는 값 = 첨부 줄 문단 id.
+    pub fn insert_sequence_listing(&mut self, file: &Path) -> Result<String, CoreError> {
+        use crate::sequence_listing::{HEADING, is_link, link_text, read_st26};
+        read_st26(file)?;
+        let link = link_text(file);
+        if encoding_rs::EUC_KR.encode(&link).2 {
+            return Err(crate::sequence_listing::sequence_error(
+                "sequence_path_cp949",
+            ));
+        }
+        let mut link_at = 0;
+        self.edit_model(|model| {
+            let title = |paragraph: &crate::HmlParagraph| {
+                paragraph
+                    .text
+                    .trim()
+                    .trim_start_matches('\u{c}')
+                    .to_string()
+            };
+            let is_heading = |paragraph: &crate::HmlParagraph| {
+                let text = title(paragraph);
+                paragraph.marker.is_some()
+                    || (text.starts_with('【')
+                        && text.ends_with('】')
+                        && text.matches('】').count() == 1)
+            };
+            let fresh = |model: &crate::HmlDocument, suffix: &str| {
+                (0..)
+                    .map(|n| format!("sequence{n}{suffix}"))
+                    .find(|id| model.paragraphs.iter().all(|paragraph| &paragraph.id != id))
+                    .expect("unbounded")
+            };
+            let blank =
+                |shape: &crate::HmlParagraph, section_id: Option<String>| crate::HmlParagraph {
+                    marker: None,
+                    page_break: false,
+                    table_id: None,
+                    image_ids: Vec::new(),
+                    inlines: Vec::new(),
+                    source_line_bytes: Vec::new(),
+                    text: String::new(),
+                    tail_text: String::new(),
+                    number: None,
+                    section_id,
+                    ..shape.clone()
+                };
+            let heading_at = match model.paragraphs.iter().position(|p| title(p) == HEADING) {
+                Some(at) => at,
+                None => {
+                    let before = |names: &[&str]| {
+                        model
+                            .paragraphs
+                            .iter()
+                            .position(|p| is_heading(p) && names.contains(&title(p).as_str()))
+                    };
+                    let at = before(&["【청구범위】", "【청구의 범위】", "【특허청구범위】"])
+                        .or_else(|| before(&["【요약서】"]))
+                        .unwrap_or(model.paragraphs.len());
+                    let shape = model.paragraphs[..at]
+                        .iter()
+                        .rev()
+                        .find(|p| is_heading(p))
+                        .or_else(|| model.paragraphs.first())
+                        .ok_or_else(|| editor_error("paragraph"))?;
+                    let section_id = at
+                        .checked_sub(1)
+                        .and_then(|previous| model.paragraphs[previous].section_id.clone());
+                    let heading = crate::HmlParagraph {
+                        id: fresh(model, "h"),
+                        marker: Some(HEADING.into()),
+                        text: HEADING.into(),
+                        inlines: vec![HmlInline::Text {
+                            text: HEADING.into(),
+                            formats: Vec::new(),
+                            size: None,
+                        }],
+                        indent_raw: 0,
+                        align: "left".into(),
+                        ..blank(shape, section_id)
+                    };
+                    model.paragraphs.insert(at, heading);
+                    at
+                }
+            };
+            let at = heading_at + 1;
+            let section_id = model
+                .sections
+                .iter()
+                .find(|section| section.title == HEADING)
+                .map_or_else(
+                    || {
+                        let top = model.sections.iter().map(|section| section.index).max();
+                        format!("section:{}", top.unwrap_or(0) + 1)
+                    },
+                    |section| section.id.clone(),
+                );
+            let link_inline = HmlInline::Text {
+                text: link.clone(),
+                formats: vec![CharacterFormat::Underline],
+                size: Some(10),
+            };
+            let reuse = model.paragraphs.get(at).is_some_and(|p| {
+                !is_heading(p)
+                    && p.table_id.is_none()
+                    && p.image_ids.is_empty()
+                    && (p.text.trim().is_empty() || is_link(&p.text))
+            });
+            let mut ids = Vec::new();
+            if reuse {
+                let paragraph = &mut model.paragraphs[at];
+                paragraph.text = link.clone();
+                paragraph.inlines = vec![link_inline];
+                paragraph.source_line_bytes.clear();
+                paragraph.section_id = Some(section_id.clone());
+                ids.push(paragraph.id.clone());
+            } else {
+                let shape = model.paragraphs[..at]
+                    .iter()
+                    .rev()
+                    .find(|p| !is_heading(p) && p.table_id.is_none())
+                    .unwrap_or(&model.paragraphs[heading_at])
+                    .clone();
+                let line = crate::HmlParagraph {
+                    id: fresh(model, "l"),
+                    text: link.clone(),
+                    inlines: vec![link_inline],
+                    indent_raw: 800,
+                    align: "left".into(),
+                    ..blank(&shape, Some(section_id.clone()))
+                };
+                let empty = crate::HmlParagraph {
+                    id: fresh(model, "e"),
+                    indent_raw: 800,
+                    align: "left".into(),
+                    ..blank(&shape, Some(section_id.clone()))
+                };
+                ids = vec![line.id.clone(), empty.id.clone()];
+                model.paragraphs.splice(at..at, [line, empty]);
+            }
+            link_at = at;
+            // 책갈피: 첨부 줄이 첫 문단. 새로 만들 땐 표제 자리 차례로 끼운다(통특기: idx = 최댓값 + 1 · 자리 = 문서 차례).
+            if let Some(section) = model.sections.iter_mut().find(|s| s.title == HEADING) {
+                section.paragraph_ids.retain(|id| !ids.contains(id));
+                section.paragraph_ids.splice(0..0, ids);
+            } else {
+                let order: std::collections::BTreeMap<&str, usize> = model
+                    .paragraphs
+                    .iter()
+                    .enumerate()
+                    .map(|(index, paragraph)| (paragraph.id.as_str(), index))
+                    .collect();
+                let position = model
+                    .sections
+                    .iter()
+                    .position(|section| {
+                        section
+                            .paragraph_ids
+                            .first()
+                            .and_then(|id| order.get(id.as_str()))
+                            .is_some_and(|index| *index > at)
+                    })
+                    .unwrap_or(model.sections.len());
+                let index = section_id
+                    .trim_start_matches("section:")
+                    .parse()
+                    .map_err(|_| editor_error("section"))?;
+                model.sections.insert(
+                    position,
+                    crate::HmlSection {
+                        id: section_id,
+                        index,
+                        title: HEADING.into(),
+                        kind: crate::hml::section_kind(HEADING).to_string(),
+                        level: crate::hml::section_level(HEADING, &[]),
+                        paragraph_ids: ids,
+                    },
+                );
+            }
+            Ok(())
+        })?;
+        self.paragraphs()
+            .get(link_at)
+            .map(|paragraph| paragraph.id.clone())
+            .ok_or_else(|| editor_error("paragraph"))
+    }
+
     /// 단락삭제(통특기 「단락삭제」 대화상자): 종류 하나 · 번호 여럿을 한 번의 고침으로 지운다(되돌리기 한 번).
     /// 【청구항 N】은 표제와 내용 문단(다음 표제 앞까지)을 다 지운다(통특기와 같다).
     /// 다른 종류는 표제(+ 넣을 때 생긴 빈 문단)만. 번호는 다시 매기지 않는다(통특기도 4 는 4).

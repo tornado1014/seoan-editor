@@ -385,6 +385,7 @@ fn main() {
             editor_renumber_plan,
             editor_replace_texts,
             editor::editor_fix_double_spaces,
+            editor::editor_insert_sequence_listing,
             editor_sign_table,
             editor_submission_checks,
             editor_resize_image,

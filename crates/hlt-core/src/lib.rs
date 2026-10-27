@@ -43,6 +43,7 @@ mod renumber;
 mod review_report;
 mod save;
 mod schema;
+mod sequence_listing;
 mod serde_u64;
 mod source_view;
 mod submit_check;

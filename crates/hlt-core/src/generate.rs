@@ -120,48 +120,21 @@ fn section_title_indices(
     document: &HmlDocument,
     body: &crate::HltBodyPlan,
 ) -> Result<Vec<u32>, CoreError> {
-    let sections: BTreeMap<_, _> = document
-        .sections
-        .iter()
-        .map(|section| (section.id.as_str(), section.index))
-        .collect();
-    let marker_paragraphs: BTreeMap<_, _> = document
-        .paragraphs
-        .iter()
-        .filter_map(|paragraph| {
-            paragraph.marker.as_ref()?;
-            Some((paragraph.id.as_str(), paragraph.section_id.as_deref()))
-        })
-        .map(|(paragraph, section)| {
-            let section = section
-                .and_then(|id| sections.get(id).copied())
-                .ok_or_else(|| generation_error("marker_section"));
-            section.map(|index| (paragraph, index))
-        })
-        .collect::<Result<_, _>>()?;
-    // ⛔ 줄지도 슬롯은 **절 테이블 레코드와 1:1** 이다. 「절 하나에 슬롯 하나」가 아니다
-    // (실물 71건 전수 71/71: 0 이 아닌 슬롯의 idx 다중집합이 절 테이블의 idx
-    // 다중집합과 정확히 같다).
-    //
-    // 그래서 판정 기준은 「표제가 있나」가 아니라 **「절 테이블에 레코드가 있나」**다.
-    // 두 갈래가 다 실물에 있다.
-    // - 표제를 달았는데 레코드가 없는 문단: 정본 `domestic_출원서` 의 `【도 12】`
-    //   (절 테이블은 `【도 11】` 인 40번에서 끝난다). 앞 절을 한 번 더 찍으면 뒷것이
-    //   앞것을 덮어 그 절이 앵커를 잃고 구조창에서 뒤 절들이 앞 절 밑으로 말려든다.
-    // - 같은 표제, 같은 idx 짜리 레코드가 **여럿**인 문서: `amend_a_의견서` 는
-    //   `【발명의 효과】` 레코드가 열 개고 줄지도도 열 줄에 2 를 싣는다. idx 로 한 번만
-    //   찍으면 아홉을 잃는다.
-    //
-    // 그러니 idx 마다 **그 idx 를 쓰는 레코드 수만큼** 찍는다.
-    //
-    // ⚠️ 위 의견서를 그대로 재현하지는 못한다. 그 열 슬롯은 표제 문단 열 개가 아니라
-    // **여러 줄로 흐른 산문 문단 하나의 줄마다** 붙어 있다(줄 148~157, 본문은 평범한
-    // 문장이고 표제가 아니다). 우리 의미 모델에는 「문단 하나가 절 레코드 여럿을
-    // 거느린다」는 축이 없어서 그 열 줄이 슬롯을 못 받는다. 서식 111 의견서를 국내
-    // 명세서 방언으로 다시 굽는 것은 지원 경로가 아니라 지금은 그대로 둔다.
-    let mut budget: BTreeMap<u32, usize> = BTreeMap::new();
-    for section in &document.sections {
-        *budget.entry(section.index).or_default() += 1;
+    // ⛔ 줄지도 슬롯은 **절 테이블 레코드와 1:1** 이다(실물 71건 전수 71/71). 슬롯 값은 `section_table` 이 쓰는
+    // 레코드 **자리**(i+1)다 — 원본 idx 가 아니다. 통특기는 나중에 넣은 절(【서열목록】)에 max+1 idx 를 주고 표 가운데에
+    // 끼우므로 원본 idx 를 그대로 찍으면 그 뒤 절이 하나씩 밀리고 마지막 절은 앵커를 잃었다.
+    // 앵커 = 그 절의 첫 문단(`generate_body` 의 앵커 규칙과 같다). 표제 문단이 아닐 수 있다 — 【서열목록】 절은
+    // 표제 다음 줄(서열목록 전자파일 첨부)에 걸린다.
+    // 표제를 달았는데 레코드가 없는 문단(정본 `domestic_출원서` 의 `【도 12】`)은 어느 절의 첫 문단도 아니라 슬롯이 없다.
+    // 한 문단이 레코드 여럿의 첫 문단이면 그 문단의 줄에 차례로 하나씩 싣는다.
+    // ⚠️ `amend_a_의견서` 처럼 산문 한 문단의 줄마다 레코드가 붙은 문서는 우리 의미 모델로 재현하지 못한다(그대로 둔다).
+    let mut anchors: BTreeMap<&str, std::collections::VecDeque<u32>> = BTreeMap::new();
+    for (position, section) in document.sections.iter().enumerate() {
+        if let Some(first) = section.paragraph_ids.first() {
+            let slot = u32::try_from(position + 1)
+                .map_err(|_| generation_error("section_count_overflow"))?;
+            anchors.entry(first.as_str()).or_default().push_back(slot);
+        }
     }
     Ok(body
         .lines
@@ -170,16 +143,10 @@ fn section_title_indices(
             if line.ending == GeneratedLineEnding::PageBreak {
                 return 0;
             }
-            let Some(index) = marker_paragraphs.get(line.paragraph_id.as_str()).copied() else {
-                return 0;
-            };
-            match budget.get_mut(&index) {
-                Some(left) if *left > 0 => {
-                    *left -= 1;
-                    index
-                }
-                _ => 0,
-            }
+            anchors
+                .get_mut(line.paragraph_id.as_str())
+                .and_then(|slots| slots.pop_front())
+                .unwrap_or(0)
         })
         .collect())
 }

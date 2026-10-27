@@ -153,6 +153,13 @@ pub fn build_hlz(
                 .map_err(|_| fin_error("zip_start"))?;
             zip.write_all(&bytes).map_err(|_| fin_error("zip_write"))?;
         }
+        // 서열목록: 첨부 줄의 파일을 그대로(통특기는 늘 `st26sdosl.xml` 로 바꿔 싣는다 · 바이트 동일 실측).
+        if let Some(path) = &export.sequence_file {
+            let bytes = crate::sequence_listing::read_st26(Path::new(path))?;
+            zip.start_file(names.name(crate::sequence_listing::HLZ_NAME)?, options)
+                .map_err(|_| fin_error("zip_start"))?;
+            zip.write_all(&bytes).map_err(|_| fin_error("zip_write"))?;
+        }
         zip.finish().map_err(|_| fin_error("zip_finish"))?;
     }
     names.patch(&mut buffer)?;

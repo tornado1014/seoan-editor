@@ -910,7 +910,7 @@ pub fn claim_citation_issues(claims: &[(u32, String)]) -> Vec<CitationIssue> {
             let cited: Vec<u32> = match citation {
                 Citation::AllPrevious => (1..number).collect(),
                 Citation::Range(from, to, ref rest) => {
-                    if to.is_some() && !chooses(rest) {
+                    if to.is_some() && !chooses(&past_joined(rest)) {
                         alternative = true;
                     }
                     (from..=to.unwrap_or(from)).collect()
@@ -1231,6 +1231,26 @@ fn chooses_loosely(rest: &str) -> bool {
     rest.chars().take(15).collect::<String>().contains("어느")
 }
 
+/// 범위 뒤에 이어 붙인 번호(「… 및 제29항」 · 「, 제5항 내지 제7항」)를 건너뛴 글 — 「제25항 내지 제27항 및 제29항 중 어느 한 항」은
+/// 택일적이다(점검 페이지는 「및」을 택일어 자리로 읽어 걸지만 실물에서 틀린 경고였다).
+fn past_joined(rest: &str) -> String {
+    let chars: Vec<char> = rest.chars().collect();
+    let mut at = 0;
+    loop {
+        let mut next = at;
+        while let Some((_, used)) = join_at(&chars, next) {
+            next += used;
+        }
+        match (next > at)
+            .then(|| single_at(&chars[next..]).or_else(|| bare_number_at(&chars, next)))
+            .flatten()
+        {
+            Some((_, used)) => at = next + used,
+            None => return chars[at..].iter().collect(),
+        }
+    }
+}
+
 /// 「내지」 범위 뒤 글이 `/ *(중|중의)? +([^ ]+)/` 의 첫 맞음에서 「어느」인가(점검 페이지 `chkChooseWord`).
 fn chooses(rest: &str) -> bool {
     let chars: Vec<char> = rest.chars().collect();
@@ -1477,6 +1497,17 @@ mod tests {
                 (3, "제1항 내지 제2항에 따른 장치.")
             ]),
             [(3, NoAlternative, vec![1, 2])]
+        );
+        // 범위 뒤에 번호를 더 이어도 「중 어느」면 택일적이다 · 이어 붙인 뒤에도 「어느」가 없으면 건다.
+        let four = |text: &str| issues(&[(1, "장치."), (2, "장치."), (3, "장치."), (4, text)]);
+        assert!(four("제1항 내지 제2항 및 제3항 중 어느 한 항에 있어서, 장치.").is_empty());
+        assert!(four("제1항 내지 제2항, 제3항 중 어느 한 항에 있어서, 장치.").is_empty());
+        assert_eq!(
+            four("제1항 내지 제2항 및 제3항에 따른 장치."),
+            [
+                (4, NoAlternative, vec![1, 2, 3]),
+                (4, AndCitation, vec![1, 2, 3])
+            ]
         );
         // 다중 인용(3)을 다시 다중 인용(4) → 중복 다중참조. 2 는 한 항 범위라 다중이 아니다(3 은 문제없다).
         assert_eq!(

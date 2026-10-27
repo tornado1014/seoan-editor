@@ -226,6 +226,16 @@ export const TOURS: Tour[] = [
     ],
   },
   {
+    id: 'sequence-list',
+    group: '편집',
+    title: '서열목록 넣기',
+    summary: '서열목록(ST.26 XML)이 있는 출원',
+    steps: [
+      { target: '[data-action="sequence-list"]', title: '파일 고르기', text: '「서열목록」에서 WIPO Sequence 로 만든 ST.26(.xml) 파일을 고르면 발명의 설명 끝(【청구범위】 앞)에 【서열목록】과 「서열목록 전자파일 첨부(경로)」 줄이 들어갑니다. 통특기 「서열목록 삽입」과 같은 꼴입니다.' },
+      { target: '[data-action="fin"]', title: '제출파일에 함께', text: 'HLT 에는 파일 경로만 들어갑니다. 제출파일을 만들 때 그 경로의 파일을 함께 싣습니다 — HLT 를 보낼 때는 서열목록 파일도 함께 보내세요. 파일을 옮기면 「제출 전 점검」이 알려 줍니다.' },
+    ],
+  },
+  {
     id: 'settings',
     group: '보기',
     title: '문서 배율 · 설정',

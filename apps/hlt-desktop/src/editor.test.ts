@@ -86,6 +86,8 @@ let submitAnswer: unknown[] = [];
 let settingsAnswer: unknown = null;
 let historyAnswer: unknown[] = [];
 let saveError: unknown = null;
+/** 서열목록 넣기 답: 'insert' = 넣는다 · 'cancel' = 파일 고르기 취소 · 그 밖 = 그 값을 던진다. */
+let sequenceAnswer: unknown = 'insert';
 const calls: [string, unknown][] = [];
 
 beforeEach(() => {
@@ -110,6 +112,7 @@ beforeEach(() => {
   settingsAnswer = null;
   historyAnswer = [];
   saveError = null;
+  sequenceAnswer = 'insert';
   calls.length = 0;
   // 쪽이 보이면 바로 그린다.
   globalThis.IntersectionObserver = class {
@@ -265,6 +268,14 @@ beforeEach(() => {
           texts.splice(index, end - index);
         }
         return view(texts);
+      }
+      case 'editor_insert_sequence_listing': {
+        if (sequenceAnswer === 'cancel') return null;
+        if (sequenceAnswer !== 'insert') throw sequenceAnswer;
+        const claims = texts.findIndex((text) => text.includes('【청구범위】'));
+        const at = claims < 0 ? texts.length : claims;
+        texts.splice(at, 0, '【서열목록】', '서열목록 전자파일 첨부(/d/seq.xml)', '');
+        return { view: view(texts), body: `paragraph:${at + 1}` };
       }
       case 'editor_insert_item': {
         const index = Number(String(args!.paragraphId).split(':')[1]);
@@ -966,13 +977,13 @@ describe('page editing', () => {
     expect(head[0]).toBe('파일');
     expect(head.slice(-2)).toEqual(['합계', '열지 못함']);
     const first = [...root.querySelectorAll('.batch-body tbody tr')][0];
-    expect([...first.querySelectorAll('td')].map((td) => td.textContent)).toEqual(['a.HLT', '0', '0', '0', '0', '0', '2', '1', '0', '0', '0', '0', '0', '0', '3', '']);
+    expect([...first.querySelectorAll('td')].map((td) => td.textContent)).toEqual(['a.HLT', '0', '0', '0', '0', '0', '2', '1', '0', '0', '0', '0', '0', '0', '0', '3', '']);
     expect(root.querySelector('.editor-status')!.textContent).toBe('폴더 제출 전 점검 — 2개 파일 · 걸린 파일 1');
     q(root, '.batch-csv').click();
     await settle(10);
     const [, args] = last('editor_save_csv')!;
     expect((args as { name: string }).name).toBe('제출 전 점검.csv');
-    expect((args as { text: string }).text.split('\r\n')[1]).toBe('"a.HLT","0","0","0","0","0","2","1","0","0","0","0","0","0","3",""');
+    expect((args as { text: string }).text.split('\r\n')[1]).toBe('"a.HLT","0","0","0","0","0","2","1","0","0","0","0","0","0","0","3",""');
   });
 
   test('toCsv: 따옴표 · 쉼표 · 줄바꿈이 든 칸', () => {
@@ -1275,6 +1286,28 @@ describe('page editing', () => {
     });
   });
 
+  test('서열목록 넣기: 단추 → 파일 고르기 · 취소면 그대로 · ST.26 이 아니면 알림', async () => {
+    const root = await open();
+    await settle(10);
+    const button = q(root, '[data-action="sequence-list"]') as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    sequenceAnswer = 'cancel';
+    button.click();
+    await settle(10);
+    expect(calls.filter(([c]) => c === 'editor_insert_sequence_listing').length).toBe(1);
+    expect(root.querySelector('.editor-status')!.textContent).not.toContain('넣었습니다');
+    expect(glyphs(root)).not.toContain('서열목록');
+    sequenceAnswer = { code: 'unsupported_format', phase: 'sequence_listing', details: { reason: 'sequence_not_st26' } };
+    button.click();
+    await settle(10);
+    expect(root.querySelector('.editor-status')!.textContent).toContain('ST.26(XML) 서열목록 파일이 아닙니다');
+    sequenceAnswer = 'insert';
+    button.click();
+    await settle(10);
+    expect(glyphs(root)).toContain('【서열목록】서열목록전자파일첨부(/d/seq.xml)');
+    expect(root.querySelector('.editor-status')!.textContent).toContain('서열목록을 넣었습니다');
+  });
+
   test('상용구: 창에서 넣기 → 커서 자리에(붙여넣기와 같은 길) · 새 상용구는 설정에 · ⌘K 에 「상용구: 이름」', async () => {
     settingsAnswer = { ...SETTINGS, zoom: 1 }; // 누를 자리(clickAt)가 배율 1 기준
     const root = await open();
@@ -1430,7 +1463,7 @@ describe('page editing', () => {
     q(root, '[data-action="help"]').click();
     await settle(10);
     const list = [...root.querySelectorAll<HTMLButtonElement>('.help-tour')];
-    expect(list.length).toBe(20);
+    expect(list.length).toBe(21);
     expect(list[0].querySelector('strong')!.textContent).toBe('전체 둘러보기');
     expect([...root.querySelectorAll('.help-ask h3')].map((h) => h.textContent)).toEqual(['처음이라면', '파일', '편집', '보기', '도구', '점검', '보정(OA 대응)']);
     expect(root.querySelector('.tour-invite'), '도움말을 열면 처음 실행 권유는 닫힌다').toBeNull();
@@ -1596,6 +1629,12 @@ describe('page editing', () => {
     box.requestSubmit();
     await settle(10);
     expect(calls.filter(([c]) => c === 'editor_export_fin').length).toBe(2);
+    // 대표도 없음은 창을 띄우지 않고 만든 뒤 알림만.
+    submitAnswer = [{ kind: 'representative_missing', paragraph_id: null, detail: '【대표도】가 없다' }];
+    await make();
+    expect(root.querySelector('.submit-ask')).toBeNull();
+    expect(calls.filter(([c]) => c === 'editor_export_fin').length).toBe(3);
+    expect(root.querySelector('.editor-status')!.textContent).toContain('알림: 【대표도】가 없습니다');
   });
 
   test('제출 전 점검: 띄어쓰기 · 「한 칸으로 모두 고치기」 fixes once and drops only the double-space rows', async () => {

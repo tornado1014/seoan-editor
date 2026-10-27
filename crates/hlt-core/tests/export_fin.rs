@@ -332,6 +332,7 @@ fn hlz_names_its_korean_xml_in_cp949() {
         claim_count: 0,
         figure_count: 0,
         numbered_by_id: false,
+        sequence_file: None,
     };
     let name = "domestic_e_명세서_최종.xml";
     let hlz = hlt_core::build_hlz(name, &export, &Default::default(), &[], "").unwrap();

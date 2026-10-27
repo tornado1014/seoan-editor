@@ -1416,6 +1416,42 @@ pub async fn editor_insert_item(
     })
 }
 
+/// 서열목록 넣기: ST.26 XML 파일을 고르면(문서 폴더에서 연다) 【서열목록】 · 첨부 줄을 넣는다. 취소면 `None`.
+#[tauri::command]
+pub async fn editor_insert_sequence_listing(
+    window: Window,
+    app: AppHandle,
+    state: State<'_, EditorState>,
+) -> Result<Option<ItemInsertedDto>, CoreError> {
+    let source = state
+        .slot(window.label())
+        .lock()
+        .ok()
+        .and_then(|slot| slot.source.clone());
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_title("서열목록 파일 고르기(ST.26 XML)")
+        .add_filter("서열목록 ST.26(XML)", &["xml", "XML"]);
+    if let Some(folder) = source.as_deref().and_then(|path| path.parent()) {
+        dialog = dialog.set_directory(folder);
+    }
+    let Some(path) = dialog
+        .blocking_pick_file()
+        .and_then(|path| path.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    with_session(&state, &window, |session| {
+        let body = session.insert_sequence_listing(&path)?;
+        let title = title(session);
+        Ok(Some(ItemInsertedDto {
+            view: view(session, title),
+            body,
+        }))
+    })
+}
+
 /// 수식·화학식 넣기: 화면 편집기가 그린 PNG(base64) · 표시 크기 pt.
 #[tauri::command]
 pub async fn editor_insert_figure(

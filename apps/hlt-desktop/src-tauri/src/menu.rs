@@ -67,7 +67,8 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .item(&item("go", "가기 — 식별번호 · 청구항 (⌘G)…")?)
         .item(&item("palette", "명령 찾기 (⌘K)…")?)
         .separator()
-        .item(&action("snippets", "상용구…")?);
+        .item(&action("snippets", "상용구…")?)
+        .item(&action("sequence-list", "서열목록 넣기…")?);
     let view = SubmenuBuilder::new(app, "보기")
         .item(&action("marks", "문단부호 보기")?)
         .item(&action("source", "원문 나란히 보기…")?)

@@ -80,6 +80,8 @@ pub struct KipoExport {
     pub figure_count: u32,
     /// 문단 번호를 HLT 식별번호(`wipo_id`)로 매겼는가(최종본 불러오기로 연 문서). 아니면 차례로 셌다.
     pub numbered_by_id: bool,
+    /// 【서열목록】 첨부 줄의 경로 — hlz 에 `st26sdosl.xml` 로 싣는다(`build_hlz`).
+    pub sequence_file: Option<String>,
 }
 
 /// 최종본 편집에서 새로 생긴 문단의 식별번호(붙여넣기로 쪼갠 문단).
@@ -221,6 +223,8 @@ pub fn export_kipo_xml(
     };
     let import_convention = is_import_convention(&document.images);
     let mut marker = String::new();
+    // 【서열목록】 첨부 줄: (번호, 경로). 앞 절 문단으로 붙이지 않고 `<description>` 끝 `<sequence-list-doc>` 로 낸다.
+    let mut sequence: Option<(u32, String)> = None;
     let mut joined_lines: Vec<String> = Vec::new();
     // 지금 줄을 모으는 절의 요소. 빈 문자열이면 모으지 않는다.
     let mut joined_element: &'static str = "";
@@ -310,6 +314,17 @@ pub fn export_kipo_xml(
             continue;
         }
         sync(&mut counter, paragraph);
+        if marker == crate::sequence_listing::HEADING {
+            // 통특기: 첨부 줄만 번호를 받고(경로는 빼고 「서열목록 전자파일 첨부」) 빈 줄은 안 낸다.
+            if let Some(path) = crate::sequence_listing::link_path(raw) {
+                counter += 1;
+                sequence = Some((counter, path.to_string()));
+                continue;
+            }
+            if raw.is_empty() {
+                continue;
+            }
+        }
 
         let mut markup = inline_markup(paragraph, format_spans.get(paragraph.id.as_str()).copied());
         // 본문 인라인 그림(화학 구조식 등). 판독기는 그림 자리에 `_` 를 둔다. 자리 수가 그림 수와
@@ -600,6 +615,14 @@ pub fn export_kipo_xml(
     if let Some(parent) = open_parent {
         description.push_str(&format!("</{parent}>\n"));
     }
+    // 통특기 실측(합성 국내 명세서 · ST.26): `…</description-of-embodiments>\n<sequence-list-doc>…</sequence-list-doc></description>`.
+    if let Some((number, _)) = &sequence {
+        description.push_str(&format!(
+            "<sequence-list-doc><sequence-list file=\"{}\" seq-file-type=\"ST.26\">\n<p num=\"{number:04}\">{}</p>\n</sequence-list></sequence-list-doc>",
+            crate::sequence_listing::HLZ_NAME,
+            crate::sequence_listing::LINK_PREFIX
+        ));
+    }
 
     let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     let page_count = options
@@ -655,6 +678,7 @@ pub fn export_kipo_xml(
         claim_count,
         figure_count,
         numbered_by_id,
+        sequence_file: sequence.map(|(_, path)| path),
     })
 }
 

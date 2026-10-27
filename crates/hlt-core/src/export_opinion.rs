@@ -160,6 +160,7 @@ pub(crate) fn export_opinion_xml_path(
         figure_count: 0,
         numbered_by_id: false,
         images: Vec::new(),
+        sequence_file: None,
     })
 }
 

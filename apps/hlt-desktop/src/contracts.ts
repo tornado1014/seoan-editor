@@ -235,6 +235,9 @@ export const editorDeleteRange = (fromId: string, fromOffset: number, toId: stri
   invoke<EditorViewDto>('editor_delete_range', { fromId, fromOffset, toId, toOffset });
 export const editorInsertItem = (paragraphId: string, before: boolean, kind: string, number: string) =>
   invoke<{ view: EditorViewDto; body: string }>('editor_insert_item', { paragraphId, before, kind, number });
+/** 서열목록 넣기: 파일 고르기(취소면 null) → 【서열목록】 · 첨부 줄(body = 첨부 줄). */
+export const editorInsertSequenceListing = () =>
+  invoke<{ view: EditorViewDto; body: string } | null>('editor_insert_sequence_listing');
 export const editorRemoveItems = (kind: string, numbers: string[]) =>
   invoke<EditorViewDto>('editor_remove_items', { kind, numbers });
 export const editorCellText = (cellId: string) => invoke<string>('editor_cell_text', { cellId });
@@ -358,10 +361,12 @@ export type SubmitKindDto =
   | 'citation'
   | 'abstract_long'
   | 'representative'
+  | 'representative_missing'
   | 'empty_heading'
   | 'duplicate_heading'
   | 'claim_ending'
-  | 'spacing';
+  | 'spacing'
+  | 'sequence_file';
 /** 제출 전 점검 한 줄(가 볼 문단 · 없으면 문서 전체의 일). */
 export type SubmitIssueDto = { kind: SubmitKindDto; paragraph_id: string | null; detail: string };
 export const editorSubmissionChecks = () => invoke<SubmitIssueDto[]>('editor_submission_checks');

@@ -138,7 +138,12 @@ pub fn batch_submission_checks(
             }
             match EditorSession::open(input) {
                 Ok(session) => {
-                    for issue in session.submission_checks() {
+                    // 대표도 없음은 알림이라 걸린 수에 넣지 않는다.
+                    for issue in session
+                        .submission_checks()
+                        .into_iter()
+                        .filter(|issue| issue.kind != crate::SubmitKind::RepresentativeMissing)
+                    {
                         *row.counts.entry(issue.kind).or_default() += 1;
                     }
                 }

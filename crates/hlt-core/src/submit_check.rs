@@ -24,8 +24,10 @@ pub enum SubmitKind {
     Citation,
     /// 【요약】 글이 권장 400자(공백 빼고)를 넘는다 — 실물 국내 최종본 224건 중 48건이 넘고도 접수됐다(확인용).
     AbstractLong,
-    /// 도면이 있는데 【대표도】가 없거나 「도 N」이 아니거나 없는 도면을 가리킨다.
+    /// 【대표도】가 「도 N」이 아니거나 없는 도면을 가리킨다.
     Representative,
+    /// 도면이 있는데 【대표도】가 없다 — 없는 출원도 있으니 막지 않고 알림만.
+    RepresentativeMissing,
     /// 본문 없이 곧바로 다음 표제가 오는 표제(묶음 표제는 뺀다).
     EmptyHeading,
     /// 같은 【청구항 N】 · 【도 N】이 두 번(같은 표제가 연달아 오면 앞 것이 빈 표제로 걸린다).
@@ -34,6 +36,8 @@ pub enum SubmitKind {
     ClaimEnding,
     /// 띄어쓰기: 공백 두 칸 · 문장부호 앞 공백 · 글자 뒤 문단 끝 공백 · 전각 공백(확인용).
     Spacing,
+    /// 【서열목록】 아래 첨부 줄이 없거나 · 그 파일이 없거나 · ST.26(XML)이 아니다(제출파일을 못 만든다).
+    SequenceFile,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -94,6 +98,7 @@ pub fn submission_checks(
     out.extend(sign_names(&description));
     out.extend(structure_issues(paragraphs));
     out.extend(spacing(paragraphs));
+    out.extend(sequence_file(paragraphs));
     out.extend(citations.iter().map(|issue| {
         let id = paragraphs
             .iter()
@@ -201,7 +206,7 @@ fn structure_issues(paragraphs: &[EditorParagraph]) -> Vec<SubmitIssue> {
     if !figures.is_empty() {
         match headings.iter().find(|(_, name)| *name == "대표도") {
             None => out.push(issue(
-                SubmitKind::Representative,
+                SubmitKind::RepresentativeMissing,
                 None,
                 "【대표도】가 없다".into(),
             )),
@@ -230,6 +235,50 @@ fn structure_issues(paragraphs: &[EditorParagraph]) -> Vec<SubmitIssue> {
         }
     }
     out
+}
+
+/// 서열목록: 【서열목록】 표제 다음 문단이 「서열목록 전자파일 첨부(경로)」이고 그 파일이 ST.26 인가(파일 이름만 보인다).
+fn sequence_file(paragraphs: &[EditorParagraph]) -> Vec<SubmitIssue> {
+    use crate::sequence_listing::{HEADING, link_path, read_st26};
+    let Some(at) = paragraphs
+        .iter()
+        .position(|p| p.text.trim().trim_start_matches('\u{c}') == HEADING)
+    else {
+        return Vec::new();
+    };
+    let issue = |paragraph: &EditorParagraph, detail: String| SubmitIssue {
+        kind: SubmitKind::SequenceFile,
+        paragraph_id: Some(paragraph.id.clone()),
+        detail,
+    };
+    let Some((line, path)) = paragraphs
+        .get(at + 1)
+        .and_then(|p| link_path(&p.text).map(|path| (p, path)))
+    else {
+        return vec![issue(
+            &paragraphs[at],
+            "【서열목록】 아래 첨부 줄이 없다 — 「서열목록 넣기…」로 파일을 고르세요".into(),
+        )];
+    };
+    let name = std::path::Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    match read_st26(std::path::Path::new(path)) {
+        Ok(_) => Vec::new(),
+        Err(error)
+            if error.details.get("reason").map(String::as_str) == Some("sequence_not_st26") =>
+        {
+            vec![issue(
+                line,
+                format!("「{name}」 — ST.26(XML) 서열목록이 아니다"),
+            )]
+        }
+        Err(_) => vec![issue(
+            line,
+            format!("「{name}」 — 파일이 없다(옮겼거나 지웠다)"),
+        )],
+    }
 }
 
 /// 글 사이 공백 두 칸 이상(자리 · 칸 수). 앞 들여쓰기 · 끝 공백 · 서지 줄 「(특허문헌 1)  KR…」의 괄호 뒤는 뺀다.
@@ -317,10 +366,11 @@ fn spacing(paragraphs: &[EditorParagraph]) -> Vec<SubmitIssue> {
             if chars[at] == ' ' {
                 let run = chars[at..].iter().take_while(|&&ch| ch == ' ').count();
                 let after = chars.get(at + run).copied();
-                // 「있다 .」 · 「A ,B」 — 소수 「 .5」 · 줄임표 「 ..」는 뺀다.
+                // 「있다 .」 · 「A ,B」 — 소수 「 .5」 · 확장자 「 .XML」 · 줄임표 「 ..」는 뺀다.
                 let next = chars.get(at + run + 1).copied();
                 if matches!(after, Some('.' | ','))
-                    && !next.is_some_and(|ch| ch.is_ascii_digit() || ch == '.')
+                    && !(after == Some('.')
+                        && next.is_some_and(|ch| ch.is_alphanumeric() || ch == '.'))
                 {
                     found[1].1.push(at);
                 }
@@ -383,22 +433,13 @@ fn citation_detail(issue: &CitationIssue) -> String {
 }
 
 /// 빈 식별번호: 상세설명의 본문 단락(표제 · 빈 문단 · 【발명의 명칭】 글 · 표 · 그림 문단 · 새 문단 「+」 말고) 가운데 번호가 없는 것.
-/// 번호가 하나도 없으면 한 줄(문단번호 넣기를 아직 안 했다).
+/// 번호가 하나도 없으면 걸지 않는다(HLT 는 번호 없이 내도 된다 · 제출파일이 차례로 매긴다).
 fn unnumbered(description: &[&EditorParagraph]) -> Vec<SubmitIssue> {
     let numbered = |p: &EditorParagraph| {
         p.number.as_deref().is_some_and(|n| !n.is_empty()) || p.wipo_id.is_some_and(|id| id > 0)
     };
     if !description.iter().any(|p| numbered(p)) {
-        return description
-            .iter()
-            .any(|p| heading(&p.text).is_none() && !p.text.trim().is_empty())
-            .then(|| SubmitIssue {
-                kind: SubmitKind::Unnumbered,
-                paragraph_id: None,
-                detail: "식별번호가 하나도 없습니다 — 「문단번호 넣기」를 누르세요".into(),
-            })
-            .into_iter()
-            .collect();
+        return Vec::new();
     }
     // 번호 값(최종본 번호 · 문단번호의 wipo_id) — 앞뒤 번호가 건너뛰면(0067 → 0069) 그 사이 문단은 번호를 가졌다
     // (실물: 표 글 문단 — 표 번호는 끝 줄에 있어 문단에 안 붙는다).
@@ -415,16 +456,19 @@ fn unnumbered(description: &[&EditorParagraph]) -> Vec<SubmitIssue> {
         matches!((before, after), (Some(a), Some(b)) if b > a.saturating_add(1))
     };
     let mut out = Vec::new();
-    let (mut in_title, mut in_citations) = (false, false);
+    let (mut in_title, mut in_citations, mut in_sequence) = (false, false, false);
     for (at, p) in description.iter().enumerate() {
         if let Some(name) = heading(&p.text) {
             in_title = name == "발명의 명칭";
             // 【특허문헌】 · 【비특허문헌】 목록은 첫 줄만 번호를 받는다(실물 제출본 그대로).
             in_citations = matches!(name, "특허문헌" | "비특허문헌");
+            // 【서열목록】 첨부 줄은 통특기도 번호를 매기지 않는다(제출 XML 에서만 번호를 받는다).
+            in_sequence = name == "서열목록";
             continue;
         }
         if in_title
             || in_citations
+            || in_sequence
             || gap(at)
             || p.text.trim().is_empty()
             || p.has_objects
@@ -1167,7 +1211,7 @@ mod tests {
             ]
         );
         assert!(issues[4].detail.contains("그런 도면이 없다"));
-        // 대표도가 없으면 문서 전체의 일 · 「없음」이나 있는 도면이면 괜찮다 · 400자는 괜찮다.
+        // 대표도가 없으면 문서 전체의 알림(막지 않는다) · 「없음」이나 있는 도면이면 괜찮다 · 400자는 괜찮다.
         let base = |representative: Option<&str>| {
             let mut rows = vec![("【요약】", None), ("가가가", None)];
             if let Some(value) = representative {
@@ -1182,7 +1226,7 @@ mod tests {
                 .iter()
                 .map(|i| (i.kind, i.paragraph_id.clone()))
                 .collect::<Vec<_>>(),
-            [(SubmitKind::Representative, None)]
+            [(SubmitKind::RepresentativeMissing, None)]
         );
         assert!(base(Some("도 1a")).is_empty());
         assert!(base(Some("없음")).is_empty());
@@ -1292,7 +1336,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unnumbered_document_gets_one_line_and_no_drawings_section_skips_figures() {
+    fn an_unnumbered_document_is_fine_and_no_drawings_section_skips_figures() {
         let paragraphs = doc(&[
             ("【발명의 설명】", None),
             ("【기술분야】", None),
@@ -1300,13 +1344,7 @@ mod tests {
             ("라마바", None),
         ]);
         let issues = submission_checks(&paragraphs, &[]);
-        assert_eq!(
-            kinds(&issues, SubmitKind::Unnumbered),
-            [(
-                "-",
-                "식별번호가 하나도 없습니다 — 「문단번호 넣기」를 누르세요"
-            )]
-        );
+        assert!(kinds(&issues, SubmitKind::Unnumbered).is_empty());
         assert!(kinds(&issues, SubmitKind::FigureMissing).is_empty());
         // 문단번호 넣기가 매긴 번호(wipo_id)도 번호다.
         let mut numbered = paragraphs.clone();
@@ -1421,19 +1459,48 @@ mod tests {
             ]
         );
         assert_eq!(spacing("가\u{3000}나"), ["전각 공백: 「가□나」"]);
-        // 앞 들여쓰기 · 서지 줄 괄호 뒤 두 칸 · 소수 · 줄임표 · 빈 문단은 걸지 않는다.
+        // 앞 들여쓰기 · 서지 줄 괄호 뒤 두 칸 · 소수 · 줄임표 · 확장자 · 빈 문단은 걸지 않는다.
         for clean in [
             "  \u{3000}들여 쓴 문단.",
             "\u{c}쪽 나눔 뒤.",
             "(특허문헌 1)  KR10-2099-0000001 A",
             "값은 약 .5 이고 그 밖 ...",
+            "파일은 .XML 형식이다.",
             "   ",
             "있다. ",
         ] {
             assert!(spacing(clean).is_empty(), "{clean}");
         }
+        assert_eq!(
+            spacing("(20분) , 25%"),
+            ["문장부호 앞 공백: 「(20분)␣,␣25%」"]
+        );
         // 서지 줄이어도 괄호 뒤가 아닌 두 칸은 건다.
         assert_eq!(spacing("(특허문헌 1)  KR  A").len(), 1);
+    }
+
+    /// 최종본을 연 문서(식별번호가 있다): 【서열목록】 첨부 줄은 통특기도 번호를 안 매기니 빈 식별번호로 걸지 않는다.
+    #[test]
+    fn sequence_link_line_is_not_an_unnumbered_paragraph() {
+        let paragraphs = doc(&[
+            ("【발명의 설명】", None),
+            ("본문.", Some("0001")),
+            ("【서열목록】", None),
+            ("서열목록 전자파일 첨부(/없는/seq.xml)", None),
+        ]);
+        let issues = submission_checks(&paragraphs, &[]);
+        assert!(
+            !issues.iter().any(|i| i.kind == SubmitKind::Unnumbered),
+            "{issues:?}"
+        );
+        assert_eq!(
+            issues
+                .iter()
+                .filter(|i| i.kind == SubmitKind::SequenceFile)
+                .map(|i| i.detail.as_str())
+                .collect::<Vec<_>>(),
+            ["「seq.xml」 — 파일이 없다(옮겼거나 지웠다)"]
+        );
     }
 
     #[test]
