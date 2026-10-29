@@ -3,12 +3,12 @@
    ⛔ 쪽 위 그림(.nk-*)은 통특기와 맞춘 정답이라 토큰을 타지 않는다. */
 :root {
   color-scheme: light;
-  --desk: #ecebe8;          /* 종이 뒤 바탕(Bear) */
-  --desk-shade: #e4e3df;
-  --chrome: #fbfbfa;        /* 툴바 · 창 */
-  --sidebar: #f3f2f0;       /* 구조 창(Things 3) */
+  --desk: #f6f4ef;          /* 종이 뒤 바탕(Bear) */
+  --desk-shade: #eeebe4;
+  --chrome: #ffffff;        /* 툴바 · 창 */
+  --sidebar: #faf8f4;       /* 구조 창(Things 3) */
   --surface: #ffffff;       /* 떠 있는 창 · 칸 */
-  --sunken: #f1f0ee;        /* 표 머리 · 접힌 띠 */
+  --sunken: #f5f3ee;        /* 표 머리 · 접힌 띠 */
   --hover: rgba(0, 0, 0, .05);
   --press: rgba(0, 0, 0, .09);
   --ink: #1d1d1f;
@@ -17,12 +17,12 @@
   --line: rgba(0, 0, 0, .1);
   --line-soft: rgba(0, 0, 0, .06);
   --field: rgba(0, 0, 0, .05);  /* 찾기 칸 같은 회색 둥근 입력 */
-  --accent: #d6453d;        /* Bear 붉은색 = 서안 주칠 — 낙관 · 초점 · 지금 자리 */
+  --accent: #e5483e;        /* Bear 붉은색 = 서안 주칠 — 낙관 · 초점 · 지금 자리 */
   --accent-ink: #a82d26;    /* 채움 · 글자용(흰 글자와 AA) */
   --accent-deep: #8f241e;
   --accent-press: #8f241e;  /* 채움 단추에 올렸을 때 */
-  --accent-soft: rgba(214, 69, 61, .12);
-  --accent-wash: rgba(214, 69, 61, .06);
+  --accent-soft: rgba(229, 72, 62, .14);
+  --accent-wash: rgba(229, 72, 62, .07);
   --on-accent: #ffffff;
   --info: #2a62c9;
   --info-soft: rgba(42, 98, 201, .1);
@@ -168,8 +168,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 .tree-label:hover { background: var(--hover); }
 .tree-note { margin-left: .35rem; font-size: .85em; color: var(--muted); }
 .tree-label.current { background: var(--accent-soft); color: var(--accent-deep); font-weight: 500; }
-.tree-icon { width: 15px; height: 15px; flex: none; filter: grayscale(1) opacity(.65); }
-.tree-label.current .tree-icon { filter: none; }
+.tree-icon { width: 15px; height: 15px; flex: none; }
 
 /* 책상과 종이: 위에서 빛이 드는 책상 · 종이는 가장자리 한 줄과 부드러운 그림자로 놓인다. */
 .editor-pages { overflow: auto; background: var(--desk); padding: 2rem 1.5rem 3.5rem; display: flex; flex-direction: column; align-items: center; gap: 1.6rem; }
