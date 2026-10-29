@@ -515,6 +515,26 @@ describe('page editing', () => {
     expect(last('editor_save_as')).toBeDefined();
   });
 
+  test('빈 책상(시작 화면): 문서가 없을 때만 보이고 · 「열기」는 툴바 열기와 같다 · 닫으면 다시 · 저장하면 낙관', async () => {
+    const root = document.createElement('div');
+    document.body.replaceChildren(root);
+    mountEditor(root);
+    const desk = root.querySelector<HTMLElement>('.desk-empty')!;
+    expect(desk.hidden).toBe(false);
+    expect(root.querySelector('.editor-pages')!.contains(desk), '쪽 칸을 비워도 지워지지 않게 바깥에').toBe(false);
+    desk.querySelector<HTMLButtonElement>('[data-start="open"]')!.click();
+    await settle(10);
+    expect(last('editor_open')).toBeDefined();
+    expect(desk.hidden).toBe(true);
+    root.querySelector<HTMLButtonElement>('[data-action="save"]')!.click();
+    await settle(20);
+    expect(root.querySelector('.seal')!.classList.contains('stamped')).toBe(true);
+    closeAnswer = true;
+    root.querySelector<HTMLButtonElement>('[data-action="close-document"]')!.click();
+    await settle(20);
+    expect(desk.hidden).toBe(false);
+  });
+
   test('close document clears the page; cancelling keeps it', async () => {
     const root = await open();
     closeAnswer = false;

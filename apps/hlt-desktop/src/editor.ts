@@ -292,6 +292,7 @@ export function mountEditor(root: HTMLElement): void {
         <div class="tb-group" role="group" aria-label="도움말">
           <button type="button" data-action="help" title="도움말 — 기능별 투어(화면 위에서 차례로 짚어 준다) · 단축키 모음">${icon('help')}<span>도움말</span></button>
         </div>
+        <span class="seal" aria-hidden="true">書案</span>
         <span class="editor-status" aria-live="polite"></span>
         <button type="button" class="review-left" hidden title="걸지 않은 오기 정정 — 누를 때마다 다음 정정을 찾기 막대로"></button>
         <span class="editor-error" role="alert" hidden title="눌러서 닫기"></span>
@@ -339,6 +340,16 @@ export function mountEditor(root: HTMLElement): void {
       <div class="editor-body">
         <nav class="editor-outline" aria-label="구조"></nav>
         <div class="editor-pages" tabindex="0"></div>
+        <section class="desk-empty" aria-labelledby="desk-title">
+          <h1 id="desk-title" class="desk-mark" lang="ko-Hani" aria-label="서안">書案</h1>
+          <div class="desk-start">
+            <p class="desk-lede">책상이 비어 있습니다.<br>펼칠 문서를 고르세요.</p>
+            <button type="button" class="desk-go primary" data-start="open">${icon('open')}<span>열기</span><kbd>⌘O</kbd></button>
+            <button type="button" class="desk-go" data-start="import">${icon('import')}<span>워드/XML로 HLT 만들기</span></button>
+            <button type="button" class="desk-go" data-start="new-opinion">${icon('opinion')}<span>새 의견서</span></button>
+            <p class="desk-hint">HLT · 제출파일(.fin · .hlz)을 엽니다. 모든 명령은 <kbd>⌘K</kbd>, 기능 투어는 「도움말」에 있습니다.</p>
+          </div>
+        </section>
         <div class="zoom-box" role="group" aria-label="문서 배율">
           <button type="button" data-action="zoom-out" title="문서 축소 (⌘−) " aria-label="문서 축소">${icon('zoomOut')}</button>
           <button type="button" data-action="zoom-reset" class="zoom-level" title="문서 실제 크기 (⌘0) — 지금 문서 배율" aria-label="문서 실제 크기">100%</button>
@@ -462,6 +473,18 @@ export function mountEditor(root: HTMLElement): void {
   );
 
   const say = (text: string) => (status.textContent = text);
+  // 낙관: 저장 · 제출파일 · 보정서가 끝나면 상태 줄 옆에 한 번 찍는다(화면 장식 · 알림은 상태 줄이 한다).
+  const seal = q<HTMLSpanElement>('.seal');
+  const stamp = () => {
+    seal.classList.remove('stamped');
+    void seal.offsetWidth;
+    seal.classList.add('stamped');
+  };
+  // 빈 책상(문서 없음) 시작 화면 — 단추는 툴바의 같은 동작을 누른다.
+  const deskEmpty = q<HTMLElement>('.desk-empty');
+  for (const button of deskEmpty.querySelectorAll<HTMLButtonElement>('[data-start]')) {
+    button.addEventListener('click', () => q<HTMLButtonElement>(`[data-action="${button.dataset.start}"]`).click());
+  }
   // 실패는 상태 줄(곧 덮인다)이 아니라 따로 남기고(눌러서 닫기) 기록 파일에도 쓴다 — 원인을 나중에 볼 수 있게.
   const errorBox = q<HTMLSpanElement>('.editor-error');
   errorBox.addEventListener('click', () => (errorBox.hidden = true));
@@ -648,6 +671,7 @@ export function mountEditor(root: HTMLElement): void {
   function layout(next: EditorViewDto, keepScroll: boolean) {
     const scroll = pagesRoot.scrollTop;
     view = next;
+    deskEmpty.hidden = true;
     const replaced = next.cp949_substitutions ?? [];
     if (replaced.length > 0) {
       const list = replaced.map((item) => `${item.from} → ${item.to || '(지움)'} (${item.count}곳)`).join(' · ');
@@ -696,6 +720,7 @@ export function mountEditor(root: HTMLElement): void {
   /** 문서 닫기 뒤: 쪽 · 구조 창 · 커서 · 찾기 결과를 비우고 처음 화면으로(단추는 다시 잠근다). */
   function clearDocument() {
     view = null;
+    deskEmpty.hidden = false;
     pages = new Map();
     observer.disconnect();
     pagesRoot.replaceChildren();
@@ -3478,7 +3503,10 @@ export function mountEditor(root: HTMLElement): void {
           const path = await (action === 'save' ? editorSave() : editorSaveAs());
           // 읽기 전용 문서의 사본을 만들었으면 그 사본을 고치는 문서가 됐다 — 고칠 수 있게 화면을 다시 받는다.
           if (path && action === 'save-as' && view?.read_only) layout(await editorView(), true);
-          if (path) say(`저장함: ${path}`);
+          if (path) {
+            say(`저장함: ${path}`);
+            stamp();
+          }
         } catch (error) {
           fail(`저장`, error);
         }
@@ -3529,6 +3557,7 @@ export function mountEditor(root: HTMLElement): void {
         try {
           const path = await editorExportFin();
           say(path ? `제출파일: ${path}${notice}` : '');
+          if (path) stamp();
         } catch (error) {
           fail('제출파일', error);
         }
@@ -3583,6 +3612,7 @@ export function mountEditor(root: HTMLElement): void {
           say('보정서 만드는 중…');
           const done = await editorExportAmendment();
           if (done) {
+            stamp();
             say(`보정서(${done.order}차) 생성작업을 완료하였습니다. ${done.dta} · 최종본 갱신 ${done.fin}${done.table ? ` · 대비표 ${done.table}` : ''}`);
             showAmendment(done);
           } else say('');
