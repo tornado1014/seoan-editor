@@ -1389,6 +1389,32 @@ pub async fn editor_toggle_format_spans(
     })
 }
 
+/// 서식째 붙여넣기(클립보드 `text/html` 의 런들): 문단 글의 `offset` 자리.
+#[tauri::command]
+pub async fn editor_paste_formatted(
+    window: Window,
+    state: State<'_, EditorState>,
+    paragraph_id: String,
+    offset: usize,
+    runs: Vec<(String, Vec<CharacterFormat>)>,
+) -> Result<EditorViewDto, CoreError> {
+    with_session(&state, &window, |session| {
+        session.paste_formatted(&paragraph_id, offset, &runs)?;
+        let title = title(session);
+        Ok(view(session, title))
+    })
+}
+
+/// 복사: 고른 구간을 서식째 HTML 로(클립보드 `text/html`).
+#[tauri::command]
+pub async fn editor_formatted_html(
+    window: Window,
+    state: State<'_, EditorState>,
+    spans: Vec<(String, usize, usize)>,
+) -> Result<String, CoreError> {
+    with_session(&state, &window, |session| session.formatted_html(&spans))
+}
+
 #[derive(Serialize)]
 pub struct ItemInsertedDto {
     pub view: EditorViewDto,

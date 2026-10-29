@@ -51,6 +51,8 @@ import {
   editorReplaceCellText,
   editorToggleFormat,
   editorToggleFormatSpans,
+  editorPasteFormatted,
+  editorFormattedHtml,
   editorDeleteRange,
   editorSetSize,
   type CharacterFormatDto,
@@ -99,7 +101,7 @@ import {
   type ReviewOutcomeDto,
   type ReviewReportDto,
 } from './contracts';
-import { documentStats, nestClaims, outlineTree, repeatedSentences, renderPage, richParagraph, sectionOf, selectOffsets, selectionOffsets } from './editor-view';
+import { documentStats, htmlRuns, nestClaims, outlineTree, repeatedSentences, renderPage, richParagraph, sectionOf, selectOffsets, selectionOffsets } from './editor-view';
 import type { OutlineNode } from './editor-view';
 import { openHelp as openTourList, runTour, TOURS } from './tour';
 import {
@@ -1222,24 +1224,25 @@ export function mountEditor(root: HTMLElement): void {
   }
 
   /** 친 · 붙여넣은 글에 CP949(HLT) 밖 글자가 있으면 확인 표를 거쳐 넣는다(그동안 키는 모아 둔다) · 취소면 버린다. */
-  function insertReviewed(text: string) {
-    if (!CP949_SUSPECT.test(text) || !canEdit()) return insertText(text);
+  /** `insert` 는 고른 바꿈을 받는다(서식째 붙여넣기는 런마다 건다). */
+  function insertReviewed(text: string, insert = (fix: (value: string) => string) => insertText(fix(text))) {
+    if (!CP949_SUSPECT.test(text) || !canEdit()) return insert((value) => value);
     holding += 1;
     void (async () => {
-      let next: string | null = text;
+      let fix: ((value: string) => string) | null = (value) => value;
       try {
         const findings = await editorCp949Scan(text);
         if (findings.length > 0) {
           const choices = await reviewCp949(findings, '입력한 글');
-          next = choices && Array.from(text, (ch) => choices[ch] ?? ch).join('');
+          fix = choices && ((value) => Array.from(value, (ch) => choices[ch] ?? ch).join(''));
         }
       } catch (error) {
         fail('글자 확인', error);
-        next = null;
+        fix = null;
       } finally {
         holding -= 1;
         input.focus({ preventScroll: true });
-        if (next) insertText(next);
+        if (fix) insert(fix);
         while (holding === 0 && backlog.length > 0) backlog.shift()!();
       }
     })();
@@ -1286,6 +1289,27 @@ export function mountEditor(root: HTMLElement): void {
     reveal = true;
     paint();
     schedule();
+  }
+
+  /** 서식째 붙여넣기(워드 · 서안 복사): 고른 것을 지우고 커서 자리에 런들을 넣는다(다시 굽기 한 번 · 되돌리기 한 번). */
+  function pasteFormatted(runs: [string, CharacterFormatDto[]][]) {
+    if (!caret || !canEdit()) return;
+    if (span() && !range()) {
+      deleteSelection();
+      return act(() => {
+        if (!span() || range()) pasteFormatted(runs);
+      });
+    }
+    const selection = range();
+    if (selection) deleteRange(...selection);
+    const { paragraph: id, offset } = caret;
+    const lines = runs.map(([value]) => value).join('').split('\n');
+    const tail = Array.from(lines.at(-1)!).length;
+    void structural('붙여넣기', async () => {
+      const next = await editorPasteFormatted(id, offset, runs);
+      const target = next.paragraphs[next.paragraphs.findIndex((item) => item.id === id) + lines.length - 1];
+      return { next, caret: target ? { paragraph: target.id, offset: lines.length > 1 ? tail : offset + tail } : null };
+    });
   }
 
   /** 강제 쪽나눔: 고른 것을 지우고 커서 자리에서 나눈다 — 뒤 조각이 새 쪽 첫머리(다시 굽기 한 번 · 되돌리기 한 번). */
@@ -1579,9 +1603,24 @@ export function mountEditor(root: HTMLElement): void {
     return selection ? pieces(selection).map(([id, a, b]) => charsOf(id).slice(a, b).join('')).join('\n') : null;
   };
   function clip(cut: boolean) {
-    if (!span()) return;
-    void navigator.clipboard.writeText(selectedText() ?? '');
-    if (cut && canEdit()) act(() => key('Backspace', false));
+    const whole = span();
+    if (!whole) return;
+    const text = selectedText() ?? '';
+    const spans = pieces(whole);
+    let written: Promise<unknown>;
+    if (typeof ClipboardItem === 'undefined' || spans.some(([id]) => isCell(id))) {
+      written = navigator.clipboard.writeText(text);
+    } else {
+      // 서식째(text/html): 워드 · 서안 붙여넣기가 굵게 · 첨자를 잇는다. 사용자 동작 안에서 쓰도록 HTML 은 약속으로 넘긴다.
+      const html = commit()
+        .then(() => editorFormattedHtml(spans))
+        .then((value) => new Blob([value], { type: 'text/html' }));
+      written = navigator.clipboard
+        .write([new ClipboardItem({ 'text/plain': new Blob([text], { type: 'text/plain' }), 'text/html': html })])
+        .catch(() => navigator.clipboard.writeText(text));
+    }
+    // 잘라내기는 HTML 을 읽은 뒤에 지운다(먼저 지우면 고른 문단이 사라져 읽지 못한다).
+    if (cut && canEdit()) void written.finally(() => act(() => key('Backspace', false)));
   }
 
   function selectAll() {
@@ -2408,6 +2447,12 @@ export function mountEditor(root: HTMLElement): void {
   input.addEventListener('paste', (event) => {
     event.preventDefault();
     const text = event.clipboardData?.getData('text/plain').replace(/\r\n?/g, '\n') ?? '';
+    // 서식이 있는 HTML(워드 · 서안 복사)이면 서식째 · 아니면(표 칸 포함) 글만.
+    const runs = caret && !isCell(caret.paragraph) ? htmlRuns(event.clipboardData?.getData('text/html') ?? '') : null;
+    if (runs) {
+      const plain = runs.map(([value]) => value).join('');
+      return act(() => insertReviewed(plain, (fix) => pasteFormatted(runs.map(([value, formats]) => [fix(value), formats]))));
+    }
     act(() => insertReviewed(text));
   });
 

@@ -207,6 +207,13 @@ beforeEach(() => {
         texts.splice(index, 1, ...String(args!.text).split('\n'));
         return view(texts);
       }
+      case 'editor_paste_formatted': {
+        const index = Number(String(args!.paragraphId).split(':')[1]);
+        const chars = Array.from(texts[index]);
+        chars.splice(Number(args!.offset), 0, (args!.runs as [string, string[]][]).map(([value]) => value).join(''));
+        texts.splice(index, 1, ...chars.join('').split('\n'));
+        return view(texts);
+      }
       case 'editor_replace_text_page_break': {
         const index = Number(String(args!.paragraphId).split(':')[1]);
         texts.splice(index, 1, ...String(args!.text).split('\n'));
@@ -364,6 +371,31 @@ describe('page editing', () => {
     type(root, '!');
     await settle(500);
     expect(texts).toEqual(['가!Z나다', '라마']);
+  });
+
+  test('paste keeps Word/Seoan formatting via HTML; plain clipboard keeps the old path', async () => {
+    const root = await open();
+    const paste = (data: Record<string, string>) => {
+      const event = new Event('paste', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'clipboardData', { value: { getData: (type: string) => data[type] ?? '' } });
+      root.querySelector('.caret-input')!.dispatchEvent(event);
+    };
+    clickAt(root, 63, 104); // 「나」 앞(1)
+    paste({ 'text/plain': 'H2O\nx', 'text/html': '<p>H<sub>2</sub>O</p><p>x</p>' });
+    await settle(50);
+    expect(last('editor_paste_formatted')).toEqual([
+      'editor_paste_formatted',
+      { paragraphId: 'paragraph:0', offset: 1, runs: [['H', []], ['2', ['subscript']], ['O\nx', []]] },
+    ]);
+    expect(texts).toEqual(['가H2O', 'x나다', '라마']);
+    type(root, '!'); // 커서는 붙인 글 끝(둘째 조각 「x」 뒤)
+    await settle(500);
+    expect(texts).toEqual(['가H2O', 'x!나다', '라마']);
+    const before = calls.filter(([command]) => command === 'editor_paste_formatted').length;
+    paste({ 'text/plain': '글만', 'text/html': '<p>글만</p>' });
+    await settle(500);
+    expect(calls.filter(([command]) => command === 'editor_paste_formatted')).toHaveLength(before);
+    expect(texts).toEqual(['가H2O', 'x!글만나다', '라마']);
   });
 
   test('cmd/ctrl+enter breaks the page at the caret; tab types a tab instead of leaving the page', async () => {

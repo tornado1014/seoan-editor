@@ -480,51 +480,102 @@ impl EditorSession {
             let old = cells(&model.paragraphs[index].inlines);
             let pieces: Vec<&str> = text.split('\n').collect();
             let new: Vec<char> = pieces.join("\u{1}").chars().collect();
-            let edited = splice(&old, &new);
-            // 문단 나누기: 자리표 `\u{1}` 에서 가른다. 새 문단은 앞 문단 모양을 잇는다.
-            let mut parts: Vec<Vec<Cell>> = vec![Vec::new()];
-            for cell in edited {
-                if cell == Cell::Char('\u{1}', Vec::new(), None)
-                    || matches!(&cell, Cell::Char('\u{1}', ..))
-                {
-                    parts.push(Vec::new());
-                } else {
-                    parts.last_mut().unwrap().push(cell);
-                }
-            }
-            let template = model.paragraphs[index].clone();
-            let mut replacements = Vec::with_capacity(parts.len());
-            for (part, cells) in parts.into_iter().enumerate() {
-                let mut paragraph = template.clone();
-                if part > 0 {
-                    paragraph.id = format!("{}:{part}", template.id);
-                    paragraph.marker = None;
-                    paragraph.page_break = page_break && part == 1;
-                    // 나눠서 새로 생긴 문단은 새 문단이다(통특기 식별번호 0xFFFFFFFF · 보정서에서 앞 번호 문단에 `<br/>`).
-                    paragraph.number = template.number.as_ref().map(|_| NEW_PARAGRAPH.to_string());
-                }
-                paragraph.inlines = inlines(&cells);
-                // 모델의 문단 글은 그림을 뺀 글자다(생성기가 런과 대조한다).
-                paragraph.text = cells
-                    .iter()
-                    .filter_map(|cell| match cell {
-                        Cell::Char(ch, ..) => Some(*ch),
-                        Cell::Image(_) => None,
-                    })
-                    .collect();
-                paragraph.image_ids = cells
-                    .iter()
-                    .filter_map(|cell| match cell {
-                        Cell::Image(id) => Some(id.clone()),
-                        Cell::Char(..) => None,
-                    })
-                    .collect();
-                paragraph.source_line_bytes.clear();
-                replacements.push(paragraph);
-            }
-            model.paragraphs.splice(index..=index, replacements);
+            split_cells(model, index, splice(&old, &new), page_break);
             Ok(())
         })
+    }
+
+    /// 서식째 붙여넣기(워드 · 서안 복사의 `text/html`): 문단 글(그림 = `_` 한 칸)의 `offset` 자리에 런들을 넣는다.
+    /// 넣은 글자는 앞 글자 서식을 잇지 않고 **런의 서식 그대로** · 크기만 이웃 글자를 잇는다. `\n` 은 문단 나누기.
+    pub fn paste_formatted(
+        &mut self,
+        paragraph_id: &str,
+        offset: usize,
+        runs: &[(String, Vec<CharacterFormat>)],
+    ) -> Result<(), CoreError> {
+        if runs.iter().all(|(text, _)| text.is_empty()) {
+            return Err(editor_error("empty_range"));
+        }
+        self.edit_model(|model| {
+            let index = model
+                .paragraphs
+                .iter()
+                .position(|paragraph| paragraph.id == paragraph_id)
+                .ok_or_else(|| editor_error("paragraph"))?;
+            if model.paragraphs[index].table_id.is_some() {
+                return Err(editor_error("table_paragraph"));
+            }
+            let old = cells(&model.paragraphs[index].inlines);
+            if offset > old.len() {
+                return Err(editor_error("range"));
+            }
+            let size = old[..offset]
+                .iter()
+                .rev()
+                .chain(old.iter())
+                .find_map(|cell| match cell {
+                    Cell::Char(_, _, size) => Some(*size),
+                    Cell::Image(_) => None,
+                })
+                .flatten();
+            let mut edited: Vec<Cell> = old[..offset].to_vec();
+            for (text, formats) in runs {
+                for ch in text.chars() {
+                    edited.push(match ch {
+                        '\n' => Cell::Char('\u{1}', Vec::new(), None),
+                        _ => Cell::Char(ch, formats.clone(), size),
+                    });
+                }
+            }
+            edited.extend_from_slice(&old[offset..]);
+            split_cells(model, index, edited, false);
+            Ok(())
+        })
+    }
+
+    /// 고른 구간을 서식째 HTML 로(복사 → 클립보드 `text/html`): 문단마다 `<p>` · 서식은 `<b><i><u><sup><sub>` · 그림은 뺀다.
+    pub fn formatted_html(&self, spans: &[(String, usize, usize)]) -> Result<String, CoreError> {
+        let parsed;
+        let model = match &self.versions[self.current].model {
+            Some(model) => &model.document,
+            None => {
+                parsed = hml_document_from_hlt(self.path())?.0;
+                &parsed
+            }
+        };
+        let mut out = String::new();
+        for (id, start, end) in spans {
+            let paragraph = model
+                .paragraphs
+                .iter()
+                .find(|paragraph| &paragraph.id == id)
+                .ok_or_else(|| editor_error("paragraph"))?;
+            let all = cells(&paragraph.inlines);
+            if start > end || *end > all.len() {
+                return Err(editor_error("range"));
+            }
+            out.push_str("<p>");
+            for cell in &all[*start..*end] {
+                if let Cell::Char(ch, formats, _) = cell {
+                    let tags: Vec<&str> =
+                        formats.iter().map(|format| format_tag(*format)).collect();
+                    for tag in &tags {
+                        out.push_str(&format!("<{tag}>"));
+                    }
+                    match ch {
+                        '&' => out.push_str("&amp;"),
+                        '<' => out.push_str("&lt;"),
+                        '>' => out.push_str("&gt;"),
+                        _ => out.push(*ch),
+                    }
+                    for tag in tags.iter().rev() {
+                        out.push_str(&format!("</{tag}>"));
+                    }
+                }
+            }
+            out.push_str("</p>");
+        }
+        Ok(out)
     }
 
     /// 문단 정렬 · 들여쓰기(파일 단위, 국문 800 = 4mm)를 한 판으로 바꾼다 — 오프라인 정렬(화학식 · 표 제목)용.
@@ -3088,6 +3139,60 @@ fn visible(paragraph: &crate::HmlParagraph) -> String {
             Cell::Image(_) => '_',
         })
         .collect()
+}
+
+/// 문단 나누기: 자리표 `\u{1}` 에서 가른다. 새 문단은 앞 문단 모양을 잇는다.
+fn split_cells(model: &mut HmlDocument, index: usize, edited: Vec<Cell>, page_break: bool) {
+    let mut parts: Vec<Vec<Cell>> = vec![Vec::new()];
+    for cell in edited {
+        if cell == Cell::Char('\u{1}', Vec::new(), None) || matches!(&cell, Cell::Char('\u{1}', ..))
+        {
+            parts.push(Vec::new());
+        } else {
+            parts.last_mut().unwrap().push(cell);
+        }
+    }
+    let template = model.paragraphs[index].clone();
+    let mut replacements = Vec::with_capacity(parts.len());
+    for (part, cells) in parts.into_iter().enumerate() {
+        let mut paragraph = template.clone();
+        if part > 0 {
+            paragraph.id = format!("{}:{part}", template.id);
+            paragraph.marker = None;
+            paragraph.page_break = page_break && part == 1;
+            // 나눠서 새로 생긴 문단은 새 문단이다(통특기 식별번호 0xFFFFFFFF · 보정서에서 앞 번호 문단에 `<br/>`).
+            paragraph.number = template.number.as_ref().map(|_| NEW_PARAGRAPH.to_string());
+        }
+        paragraph.inlines = inlines(&cells);
+        // 모델의 문단 글은 그림을 뺀 글자다(생성기가 런과 대조한다).
+        paragraph.text = cells
+            .iter()
+            .filter_map(|cell| match cell {
+                Cell::Char(ch, ..) => Some(*ch),
+                Cell::Image(_) => None,
+            })
+            .collect();
+        paragraph.image_ids = cells
+            .iter()
+            .filter_map(|cell| match cell {
+                Cell::Image(id) => Some(id.clone()),
+                Cell::Char(..) => None,
+            })
+            .collect();
+        paragraph.source_line_bytes.clear();
+        replacements.push(paragraph);
+    }
+    model.paragraphs.splice(index..=index, replacements);
+}
+
+fn format_tag(format: CharacterFormat) -> &'static str {
+    match format {
+        CharacterFormat::Bold => "b",
+        CharacterFormat::Italic => "i",
+        CharacterFormat::Underline => "u",
+        CharacterFormat::Superscript => "sup",
+        CharacterFormat::Subscript => "sub",
+    }
 }
 
 fn splice(old: &[Cell], new: &[char]) -> Vec<Cell> {

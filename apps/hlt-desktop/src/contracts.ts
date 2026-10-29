@@ -231,6 +231,11 @@ export const editorToggleFormat = (paragraphId: string, start: number, end: numb
   invoke<EditorViewDto>('editor_toggle_format', { paragraphId, start, end, format });
 export const editorToggleFormatSpans = (spans: [string, number, number][], format: CharacterFormatDto) =>
   invoke<EditorViewDto>('editor_toggle_format_spans', { spans, format });
+/** 서식째 붙여넣기: 문단 글의 offset 자리에 (글, 서식) 런들(`\n` = 문단 나누기). */
+export const editorPasteFormatted = (paragraphId: string, offset: number, runs: [string, CharacterFormatDto[]][]) =>
+  invoke<EditorViewDto>('editor_paste_formatted', { paragraphId, offset, runs });
+/** 복사: 고른 구간(문단마다 [id, start, end])을 서식째 HTML 로. */
+export const editorFormattedHtml = (spans: [string, number, number][]) => invoke<string>('editor_formatted_html', { spans });
 export const editorDeleteRange = (fromId: string, fromOffset: number, toId: string, toOffset: number) =>
   invoke<EditorViewDto>('editor_delete_range', { fromId, fromOffset, toId, toOffset });
 export const editorInsertItem = (paragraphId: string, before: boolean, kind: string, number: string) =>

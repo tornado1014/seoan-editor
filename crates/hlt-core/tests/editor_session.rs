@@ -1455,3 +1455,35 @@ fn replace_texts_changes_several_paragraphs_in_one_undo_step() {
             .is_err()
     );
 }
+
+/// 서식째 붙여넣기: 넣은 글자는 앞 글자 서식(굵게)을 잇지 않고 런의 서식 그대로 · `\n` 은 문단 나누기 ·
+/// 뒤 글자는 제 서식을 지킨다. 복사 HTML 이 그 서식을 그대로 낸다.
+#[test]
+fn pastes_runs_with_their_own_formats() {
+    use hlt_core::CharacterFormat::{Bold, Subscript, Superscript};
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("붙여넣기.HLT");
+    hlt_core::save_new_opinion_as_new(&path, hlt_core::WriteOptions::default()).unwrap();
+    let mut session = EditorSession::open(&path).unwrap();
+    let body = session.paragraphs()[1].id.clone();
+    session.replace_text(&body, "앞뒤").unwrap();
+    session.toggle_format(&body, 0, 1, Bold).unwrap();
+    let runs = vec![
+        ("H".to_string(), vec![]),
+        ("2".to_string(), vec![Subscript]),
+        ("O\nx".to_string(), vec![]),
+        ("2".to_string(), vec![Superscript]),
+    ];
+    session.paste_formatted(&body, 1, &runs).unwrap();
+    let ids: Vec<(String, String)> = session
+        .paragraphs()
+        .iter()
+        .map(|p| (p.id.clone(), p.text.clone()))
+        .collect();
+    assert_eq!(ids[1].1, "앞H2O");
+    assert_eq!(ids[2].1, "x2뒤");
+    let html = session
+        .formatted_html(&[(ids[1].0.clone(), 0, 4), (ids[2].0.clone(), 0, 3)])
+        .unwrap();
+    assert_eq!(html, "<p><b>앞</b>H<sub>2</sub>O</p><p>x<sup>2</sup>뒤</p>");
+}

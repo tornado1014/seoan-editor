@@ -1,5 +1,5 @@
 // 편집 화면 쪽 그리기(P5). 쪽 계획(`page_plan`)의 글자·그림 자리를 그대로 놓는다 — 인쇄와 같은 배치.
-import type { PlannedPageDto } from './contracts';
+import type { CharacterFormatDto, PlannedPageDto } from './contracts';
 
 export const BOLD = 2;
 export const ITALIC = 4;
@@ -361,4 +361,63 @@ export function selectOffsets(root: HTMLElement, start: number, end: number) {
     selection?.removeAllRanges();
     selection?.addRange(range);
   }
+}
+
+const BLOCK = new Set(['P', 'DIV', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'TR', 'TABLE', 'UL', 'OL', 'BLOCKQUOTE']);
+const SKIP = new Set(['STYLE', 'SCRIPT', 'HEAD', 'TITLE', 'META', 'XML']);
+
+/** 클립보드 `text/html`(워드 · 서안 복사) → 서식 런. `\n` = 문단 나누기. 글자 서식이 하나도 없으면 null(그냥 글 붙여넣기). */
+export function htmlRuns(html: string): [string, CharacterFormatDto[]][] | null {
+  const body = new DOMParser().parseFromString(html, 'text/html').body;
+  const runs: [string, CharacterFormatDto[]][] = [];
+  let formatted = false;
+  const push = (text: string, formats: CharacterFormatDto[]) => {
+    const last = runs.at(-1);
+    if (last && last[1].join() === formats.join()) last[0] += text;
+    else runs.push([text, formats]);
+  };
+  const newline = () => {
+    const last = runs.at(-1);
+    if (last && !last[0].endsWith('\n')) push('\n', []);
+  };
+  const walk = (node: Node, inherited: CharacterFormatDto[]) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = (node.textContent ?? '').replace(/[\s\u00a0]+/g, ' ');
+      if (!text.trim() && !(runs.at(-1)?.[0].match(/\S$/))) return;
+      if (inherited.length > 0) formatted = true;
+      return push(text, inherited);
+    }
+    if (!(node instanceof Element) || SKIP.has(node.tagName) || node.tagName.includes(':')) return;
+    if (node.tagName === 'BR') return push('\n', []);
+    const formats = new Set(inherited);
+    const tag = node.tagName;
+    const style = (node.getAttribute('style') ?? '').toLowerCase();
+    if (tag === 'B' || tag === 'STRONG' || /font-weight:\s*(bold|[6-9]00)/.test(style)) formats.add('bold');
+    if (tag === 'I' || tag === 'EM' || /font-style:\s*italic/.test(style)) formats.add('italic');
+    if (tag === 'U' || /text-decoration[^;]*underline/.test(style)) formats.add('underline');
+    const sup = tag === 'SUP' || /vertical-align:\s*super/.test(style);
+    const sub = tag === 'SUB' || /vertical-align:\s*sub/.test(style);
+    if (sup) formats.delete('subscript'), formats.add('superscript');
+    if (sub) formats.delete('superscript'), formats.add('subscript');
+    // 굵게 끄기(워드 `font-weight:normal`)
+    if (/font-weight:\s*(normal|[1-4]00)/.test(style)) formats.delete('bold');
+    if (/font-style:\s*normal/.test(style)) formats.delete('italic');
+    const block = BLOCK.has(tag);
+    if (block) newline();
+    const list = [...formats].sort() as CharacterFormatDto[];
+    for (const child of Array.from(node.childNodes)) walk(child, list);
+    if (block) newline();
+  };
+  walk(body, []);
+  // 문단 앞뒤 빈칸 · 끝 줄바꿈을 걷는다(HTML 들여쓰기 공백).
+  const text = runs.map(([value]) => value).join('');
+  if (!formatted || !text.trim()) return null;
+  const trimmed = runs
+    .map(([value, formats]) => [value.replace(/ *\n */g, '\n'), formats] as [string, CharacterFormatDto[]])
+    .filter(([value]) => value !== '');
+  while (trimmed.length > 0 && /^[\s]*$/.test(trimmed.at(-1)![0])) trimmed.pop();
+  if (trimmed.length > 0) trimmed[trimmed.length - 1][0] = trimmed.at(-1)![0].replace(/\s+$/, '');
+  while (trimmed.length > 0 && /^\s*$/.test(trimmed[0][0])) trimmed.shift();
+  if (trimmed.length > 0) trimmed[0][0] = trimmed[0][0].replace(/^\s+/, '');
+  return trimmed;
 }

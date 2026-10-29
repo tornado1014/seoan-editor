@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 
-import { outlineTree, renderPage, richParagraph, selectOffsets, selectionOffsets, repeatedSentences, documentStats } from './editor-view';
+import { htmlRuns, outlineTree, renderPage, richParagraph, selectOffsets, selectionOffsets, repeatedSentences, documentStats } from './editor-view';
 import type { OutlineNode } from './editor-view';
 
 describe('renderPage', () => {
@@ -175,4 +175,36 @@ it('documentStats: 쪽 · 청구항(삭제 · 독립 · 종속) · 문단 · 글
   expect(rows['요약']).toBe('3자(공백 빼고 · 권장 400자)');
   expect(rows['요금이 붙는 기준']).toBe('20쪽 넘는 쪽 3쪽 · 청구항 2개 — 금액은 특허로 요금표로 확인');
   expect(Object.fromEntries(documentStats(paragraphs, 5, {}))['청구항']).toBe('3개(삭제 1)');
+});
+
+describe('htmlRuns', () => {
+  it('reads Word clipboard HTML into formatted runs and paragraph breaks', () => {
+    const html = `<html><head><style>p.MsoNormal{margin:0}</style></head><body>
+<p class=MsoNormal><b>굵은</b> 글 H<sub>2</sub>O<o:p></o:p></p>
+<p class=MsoNormal><span style='font-style:italic'>기울임</span> x<span style='vertical-align:super'>2</span><o:p>&nbsp;</o:p></p>
+</body></html>`;
+    expect(htmlRuns(html)).toEqual([
+      ['굵은', ['bold']],
+      [' 글 H', []],
+      ['2', ['subscript']],
+      ['O\n', []],
+      ['기울임', ['italic']],
+      [' x', []],
+      ['2', ['superscript']],
+    ]);
+  });
+  it('reads what Seoan itself copies', () => {
+    expect(htmlRuns('<p><b>앞</b>H<sub>2</sub>O</p><p>x<sup>2</sup>뒤</p>')).toEqual([
+      ['앞', ['bold']],
+      ['H', []],
+      ['2', ['subscript']],
+      ['O\nx', []],
+      ['2', ['superscript']],
+      ['뒤', []],
+    ]);
+  });
+  it('returns null when nothing is formatted (plain paste path)', () => {
+    expect(htmlRuns('<p>그냥 글</p><p>둘째 줄</p>')).toBeNull();
+    expect(htmlRuns('<p><b> </b></p>')).toBeNull();
+  });
 });
