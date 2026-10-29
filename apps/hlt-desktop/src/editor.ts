@@ -475,6 +475,7 @@ export function mountEditor(root: HTMLElement): void {
   const say = (text: string) => (status.textContent = text);
   // 낙관: 저장 · 제출파일 · 보정서가 끝나면 상태 줄 옆에 한 번 찍는다(화면 장식 · 알림은 상태 줄이 한다).
   const seal = q<HTMLSpanElement>('.seal');
+  seal.addEventListener('animationend', () => seal.classList.remove('stamped'));
   const stamp = () => {
     seal.classList.remove('stamped');
     void seal.offsetWidth;
