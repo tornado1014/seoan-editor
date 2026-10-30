@@ -675,9 +675,9 @@ impl EditorSession {
                 .filter(|index| *index > 0)
                 .ok_or_else(|| editor_error("paragraph"))?;
             // 표제 · 표에 빈 줄을 붙이는 것은 그 빈 줄을 지우는 것이다(표제 【도 3b】 앞 빈 줄에서 Delete).
+            // 글을 다 지운 표제(보정에서 종속항 【청구항 N】 을 손으로 지운 자리)도 빈 줄이다 — 표제 표시만 남아 지워지지 않았다.
             let empty = |paragraph: &crate::HmlParagraph| {
                 paragraph.table_id.is_none()
-                    && paragraph.marker.is_none()
                     && paragraph.inlines.is_empty()
                     && paragraph.image_ids.is_empty()
                     && paragraph.text.is_empty()
@@ -830,7 +830,7 @@ impl EditorSession {
                     Some("table_paragraph")
                 } else if paragraphs
                     .iter()
-                    .any(|paragraph| paragraph.marker.is_some())
+                    .any(|paragraph| paragraph.marker.is_some() && !paragraph.text.is_empty())
                 {
                     Some("heading_paragraph")
                 } else {

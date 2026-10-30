@@ -1487,3 +1487,50 @@ fn pastes_runs_with_their_own_formats() {
         .unwrap();
     assert_eq!(html, "<p><b>앞</b>H<sub>2</sub>O</p><p>x<sup>2</sup>뒤</p>");
 }
+
+/// 보정에서 종속항을 손으로 지우기: 【청구항 2】 표제 글 · 본문 글을 지우면 빈 줄 둘이 남는다 — 둘 다 Backspace 로 지워진다
+/// (글을 다 지운 표제는 표제 표시만 남아 「표제는 붙일 수 없다」로 거부되던 것).
+#[test]
+fn an_emptied_claim_heading_can_be_removed() {
+    let temp = tempfile::tempdir().unwrap();
+    let spec = SYNTHETIC_SPEC.replace(
+        "</claims>",
+        "<claim num=\"3\"><claim-text>제1항에 있어서, 손잡이를 더 포함하는 장치.</claim-text></claim>\n</claims>",
+    );
+    let fin = synthetic_fin_with(temp.path(), &spec);
+    let mut session = EditorSession::open(&fin).unwrap();
+    let id = |s: &EditorSession, i: usize| s.paragraphs()[i].id.clone();
+    let texts = |s: &EditorSession| -> Vec<String> {
+        s.paragraphs()[6..10]
+            .iter()
+            .map(|p| p.text.clone())
+            .collect()
+    };
+    assert_eq!(session.paragraphs()[8].text, "【청구항 2】");
+    session.replace_text(&id(&session, 9), "").unwrap();
+    session.replace_text(&id(&session, 8), "").unwrap();
+    session.merge_with_previous(&id(&session, 9)).unwrap();
+    session.merge_with_previous(&id(&session, 8)).unwrap();
+    assert_eq!(
+        texts(&session),
+        [
+            "【청구항 1】",
+            "몸체를 포함하는 장치.",
+            "【청구항 3】",
+            "제1항에 있어서, 손잡이를 더 포함하는 장치."
+        ]
+    );
+
+    // 고르기로 지우기: 청구항 1 본문 끝 ~ 빈 표제 뒤 빈 줄 — 빈 표제는 막지 않는다.
+    let mut session = EditorSession::open(&fin).unwrap();
+    session.replace_text(&id(&session, 9), "").unwrap();
+    session.replace_text(&id(&session, 8), "").unwrap();
+    let end = session.paragraphs()[7].text.chars().count();
+    session
+        .delete_range(&id(&session, 7), end, &id(&session, 9), 0)
+        .unwrap();
+    assert_eq!(
+        texts(&session)[..3],
+        ["【청구항 1】", "몸체를 포함하는 장치.", "【청구항 3】"]
+    );
+}
