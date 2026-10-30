@@ -203,6 +203,25 @@ describe('htmlRuns', () => {
       ['뒤', []],
     ]);
   });
+  it('keeps empty paragraphs as blank lines (Word o:p nbsp, Seoan empty p, br)', () => {
+    const word = `<div class=WordSection1><p class=MsoNormal><b>첫</b> 줄<o:p></o:p></p>
+<p class=MsoNormal><o:p>&nbsp;</o:p></p>
+<p class=MsoNormal><o:p>&nbsp;</o:p></p>
+<p class=MsoNormal>넷째<o:p></o:p></p>
+<p class=MsoNormal><o:p>&nbsp;</o:p></p></div>`;
+    expect(htmlRuns(word)).toEqual([
+      ['첫', ['bold']],
+      [' 줄\n\n\n넷째\n', []],
+    ]);
+    expect(htmlRuns('<p><b>가</b></p><p></p><p>나</p>')).toEqual([
+      ['가', ['bold']],
+      ['\n\n나', []],
+    ]);
+    expect(htmlRuns('<b>가</b><br><br>나')).toEqual([
+      ['가', ['bold']],
+      ['\n\n나', []],
+    ]);
+  });
   it('returns null when nothing is formatted (plain paste path)', () => {
     expect(htmlRuns('<p>그냥 글</p><p>둘째 줄</p>')).toBeNull();
     expect(htmlRuns('<p><b> </b></p>')).toBeNull();

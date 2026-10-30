@@ -376,15 +376,18 @@ export function htmlRuns(html: string): [string, CharacterFormatDto[]][] | null 
     if (last && last[1].join() === formats.join()) last[0] += text;
     else runs.push([text, formats]);
   };
-  const newline = () => {
+  // 글자 수(줄바꿈 빼고) — 빈 문단(워드 `<p><o:p>&nbsp;</o:p></p>` · 서안 `<p></p>`)을 알아보는 데 쓴다.
+  let written = 0;
+  const lineOpen = () => {
     const last = runs.at(-1);
-    if (last && !last[0].endsWith('\n')) push('\n', []);
+    return !!last && !last[0].endsWith('\n');
   };
   const walk = (node: Node, inherited: CharacterFormatDto[]) => {
     if (node.nodeType === Node.TEXT_NODE) {
       const text = (node.textContent ?? '').replace(/[\s\u00a0]+/g, ' ');
       if (!text.trim() && !(runs.at(-1)?.[0].match(/\S$/))) return;
-      if (inherited.length > 0) formatted = true;
+      if (inherited.length > 0 && text.trim()) formatted = true;
+      written += text.length;
       return push(text, inherited);
     }
     if (!(node instanceof Element) || SKIP.has(node.tagName) || node.tagName.includes(':')) return;
@@ -403,21 +406,24 @@ export function htmlRuns(html: string): [string, CharacterFormatDto[]][] | null 
     if (/font-weight:\s*(normal|[1-4]00)/.test(style)) formats.delete('bold');
     if (/font-style:\s*normal/.test(style)) formats.delete('italic');
     const block = BLOCK.has(tag);
-    if (block) newline();
+    if (block && lineOpen()) push('\n', []);
+    const before = written;
     const list = [...formats].sort() as CharacterFormatDto[];
     for (const child of Array.from(node.childNodes)) walk(child, list);
-    if (block) newline();
+    // 문단 끝: 글이 있었으면 줄을 닫고, 글 없는 문단은 빈 줄 하나(겹친 div > p 는 안쪽 p 가 이미 닫았다).
+    if (block && (lineOpen() || written === before)) push('\n', []);
   };
   walk(body, []);
-  // 문단 앞뒤 빈칸 · 끝 줄바꿈을 걷는다(HTML 들여쓰기 공백).
-  const text = runs.map(([value]) => value).join('');
-  if (!formatted || !text.trim()) return null;
-  const trimmed = runs
-    .map(([value, formats]) => [value.replace(/ *\n */g, '\n'), formats] as [string, CharacterFormatDto[]])
-    .filter(([value]) => value !== '');
-  while (trimmed.length > 0 && /^[\s]*$/.test(trimmed.at(-1)![0])) trimmed.pop();
-  if (trimmed.length > 0) trimmed[trimmed.length - 1][0] = trimmed.at(-1)![0].replace(/\s+$/, '');
-  while (trimmed.length > 0 && /^\s*$/.test(trimmed[0][0])) trimmed.shift();
-  if (trimmed.length > 0) trimmed[0][0] = trimmed[0][0].replace(/^\s+/, '');
-  return trimmed;
+  if (!formatted) return null;
+  // 줄 앞뒤 빈칸(HTML 들여쓰기 공백)을 걷고, 마지막 문단을 닫은 줄바꿈 하나만 뗀다 — 빈 줄은 남긴다.
+  for (const [index, run] of runs.entries()) {
+    run[0] = run[0].replace(/ +\n/g, '\n').replace(/\n +/g, '\n');
+    const next = runs[index + 1];
+    if (next?.[0].startsWith('\n')) run[0] = run[0].replace(/ +$/, '');
+    if (run[0].endsWith('\n') && next) next[0] = next[0].replace(/^ +/, '');
+  }
+  runs[0][0] = runs[0][0].replace(/^ +/, '');
+  const last = runs.at(-1)!;
+  last[0] = last[0].replace(/ +$/, '').replace(/\n$/, '');
+  return runs.filter(([value]) => value !== '');
 }
