@@ -363,7 +363,15 @@ pub fn export_kipo_xml(
             continue;
         }
         if marker.starts_with("【청구항") {
-            claim_parts.push(markup);
+            // 제출 XML 에는 들여쓰기 칸이 없다. 한 단(800) 넘게 들여쓴 줄은 넘는 단 수만큼 앞에 탭을 둔다
+            // (통특기 제출본 청구항의 `<br/>\t` 꼴). 왼쪽 여백 + 첫 줄 들여쓰기 = 그 줄 첫 글자 자리.
+            let depth = paragraph
+                .shape_id
+                .as_ref()
+                .and_then(|id| document.shapes.iter().find(|shape| &shape.id == id))
+                .map_or(0, |shape| shape.lmargin_raw + shape.indent_raw);
+            let tabs = (depth.saturating_sub(800) + 399) / 800; // 반 단은 내림(워드 첫 줄 두 단 = 1998 · 2000 → 탭 하나)
+            claim_parts.push(format!("{}{markup}", "\t".repeat(tabs as usize)));
             continue;
         }
         if marker.starts_with("【도 ") {

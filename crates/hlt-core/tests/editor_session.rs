@@ -1602,3 +1602,39 @@ fn indent_moves_the_whole_paragraph() {
         assert_eq!(shape(&saved).lmargin_raw, 0, "0 에서 멈춘다");
     }
 }
+
+/// 명세서 제출 XML 에는 들여쓰기 칸이 없다. 한 단 넘게 들여쓴 청구항 줄은 넘는 단 수만큼 `<br/>` 뒤에 탭을 둔다
+/// (첫 줄 두 단 · 문단 전체 한 단 더 → 탭 하나). 한 단짜리 줄은 그대로.
+#[test]
+fn deep_claim_lines_carry_tabs_into_the_submission_xml() {
+    let temp = tempfile::tempdir().unwrap();
+    let spec = SYNTHETIC_SPEC.replace(
+        "<claim-text>몸체를 포함하는 장치.</claim-text>",
+        "<claim-text>장치로서,<br/>몸체; 및<br/>덮개; 및<br/>손잡이를 포함하는 장치.</claim-text>",
+    );
+    assert_ne!(spec, SYNTHETIC_SPEC);
+    let fin = synthetic_fin_with(temp.path(), &spec);
+    let mut session = EditorSession::open(&fin).unwrap();
+    let id = |session: &EditorSession, head: &str| {
+        session
+            .paragraphs()
+            .iter()
+            .find(|p| p.text.starts_with(head))
+            .unwrap()
+            .id
+            .clone()
+    };
+    let body = id(&session, "몸체");
+    session.set_indent(&body, 2000).unwrap();
+    let lid = id(&session, "덮개");
+    session.shift_indent(&lid, 800).unwrap();
+    let out = temp.path().join("탭.HLT");
+    session.save_as(&out).unwrap();
+    let xml = hlt_core::export_kipo_xml_path(&out, &Default::default())
+        .unwrap()
+        .xml;
+    assert!(
+        xml.contains("장치로서,<br/>\t몸체; 및<br/>\t덮개; 및<br/>손잡이를"),
+        "{xml}"
+    );
+}
