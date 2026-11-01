@@ -689,14 +689,18 @@ fn cp949_review_scans_then_applies_the_chosen_replacements() {
     assert!(chosen.cells.iter().any(|cell| cell.text == "caf"));
 }
 
-/// 워드에서 첫 줄만 두 단 넘게 들여쓴 문단: HLT 로 구워 다시 열어도 그 깊이가 남는다(한 단으로 줄지 않는다).
+/// 워드에서 첫 줄만 두 단 넘게 들여쓴 문단 · 왼쪽 들여쓰기 문단: HLT 로 구워 다시 열어도 그 깊이가 남는다.
 #[test]
-fn a_deep_first_line_indent_survives_the_hlt() {
+fn word_indents_survive_the_hlt() {
     let xml = PARAGRAPH_DOCUMENT_XML.replace(
         r#"<w:ind w:firstLine="800"/></w:pPr><w:r><w:t>청구 내용"#,
         r#"<w:ind w:firstLine="1598"/></w:pPr><w:r><w:t>청구 내용"#,
     );
-    assert_ne!(xml, PARAGRAPH_DOCUMENT_XML);
+    let xml = xml.replace(
+        "<w:ind w:firstLine=\"800\"/></w:pPr>\n <w:r><w:t xml:space=\"preserve\">일반",
+        "<w:ind w:left=\"1280\" w:firstLine=\"800\"/></w:pPr>\n <w:r><w:t xml:space=\"preserve\">일반",
+    );
+    assert_eq!(xml.matches("w:left=").count(), 1);
     let mut png = Vec::new();
     image::RgbImage::from_pixel(8, 8, image::Rgb([0, 0, 0]))
         .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
@@ -731,4 +735,6 @@ fn a_deep_first_line_indent_survives_the_hlt() {
     };
     assert_eq!(indent("청구 내용"), (1998, 0));
     assert_eq!(indent("시험 발명"), (800, 0));
+    // 워드의 왼쪽 들여쓰기(w:left · 「들여쓰기 늘리기」)는 문단 전체 여백으로 온다.
+    assert_eq!(indent("일반"), (800, 1600));
 }

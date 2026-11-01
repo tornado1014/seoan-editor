@@ -172,6 +172,7 @@ struct ParagraphDraft {
     inlines: Vec<DocxInlineSeed>,
     align: String,
     indent_raw: i32,
+    lmargin_raw: i32,
     page_break: bool,
 }
 
@@ -474,7 +475,7 @@ fn append_word_paragraph(
         tail_text: String::new(),
         align: draft.align,
         indent_raw: draft.indent_raw,
-        lmargin_raw: 0,
+        lmargin_raw: draft.lmargin_raw,
         rmargin_raw: 0,
         lspace,
         page_break: false,
@@ -700,17 +701,22 @@ fn parse_word_paragraph(paragraph: &WordNode, source: &str) -> Result<ParagraphD
         .and_then(|node| node.first_child("jc"))
         .and_then(|node| node.attribute("val"))
         .map_or_else(|| "justified".to_string(), normalize_word_align);
-    let indent_raw = properties
-        .and_then(|node| node.first_child("ind"))
-        .and_then(|node| node.attribute("firstline"))
-        .map(|value| {
-            value
-                .parse::<i32>()
-                .map(|dxa| (dxa * 5 + 2) / 4)
-                .map_err(|_| document_error(source))
-        })
-        .transpose()?
-        .unwrap_or(0);
+    // 들여쓰기 칸(dxa)을 서안 단위로(×5/4). 왼쪽은 새 워드가 `w:start` 로도 쓴다.
+    let ind = |names: &[&str]| {
+        properties
+            .and_then(|node| node.first_child("ind"))
+            .and_then(|node| names.iter().find_map(|name| node.attribute(name)))
+            .map(|value| {
+                value
+                    .parse::<i32>()
+                    .map(|dxa| (dxa * 5 + 2) / 4)
+                    .map_err(|_| document_error(source))
+            })
+            .transpose()
+            .map(|value| value.unwrap_or(0))
+    };
+    let indent_raw = ind(&["firstline"])?;
+    let lmargin_raw = ind(&["left", "start"])?.max(0);
     let page_break = paragraph_has_page_break(paragraph);
     let mut inlines = Vec::new();
     collect_paragraph_runs(paragraph, &mut inlines, source)?;
@@ -718,6 +724,7 @@ fn parse_word_paragraph(paragraph: &WordNode, source: &str) -> Result<ParagraphD
         inlines,
         align,
         indent_raw,
+        lmargin_raw,
         page_break,
     })
 }
