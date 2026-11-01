@@ -1534,3 +1534,40 @@ fn an_emptied_claim_heading_can_be_removed() {
         ["【청구항 1】", "몸체를 포함하는 장치.", "【청구항 3】"]
     );
 }
+
+/// 들여쓰기 단추는 한 단(800)씩 더하고 취소는 한 단씩 던다 — 두 단 이상도 저장하고 다시 열면 그대로다
+/// (전엔 모양 표에 0 · 800 만 있어 1600 이 가까운 800 으로 접혔다). 의견서(원본 틀) · 명세서(내장 틀) 둘 다.
+#[test]
+fn indent_steps_deeper_and_survives_save() {
+    let temp = tempfile::tempdir().unwrap();
+    let opinion = temp.path().join("의견서.HLT");
+    hlt_core::save_new_opinion_as_new(&opinion, hlt_core::WriteOptions::default()).unwrap();
+    let fin = synthetic_fin_with(temp.path(), SYNTHETIC_SPEC);
+    for (source, index) in [(opinion, 1), (fin, 7)] {
+        let mut session = EditorSession::open(&source).unwrap();
+        let body = session.paragraphs()[index].id.clone();
+        session.set_indent(&body, 0).unwrap(); // 새 의견서 본문은 이미 한 단(800)이다
+        for _ in 0..3 {
+            session.shift_indent(&body, 800).unwrap();
+        }
+        let out = temp.path().join(format!("세단{index}.HLT"));
+        session.save_as(&out).unwrap();
+        let saved = EditorSession::open(&out).unwrap();
+        assert_eq!(
+            saved.document.paragraphs[index].indent_raw,
+            2400,
+            "{}",
+            source.display()
+        );
+        for _ in 0..4 {
+            session.shift_indent(&body, -800).unwrap();
+        }
+        let back = temp.path().join(format!("영단{index}.HLT"));
+        session.save_as(&back).unwrap();
+        let saved = EditorSession::open(&back).unwrap();
+        assert_eq!(
+            saved.document.paragraphs[index].indent_raw, 0,
+            "0 에서 멈춘다"
+        );
+    }
+}

@@ -242,7 +242,7 @@ beforeEach(() => {
         return view(texts);
       }
       case 'editor_set_alignment':
-      case 'editor_set_indent':
+      case 'editor_shift_indent':
       case 'editor_toggle_format':
         return view(texts);
       case 'editor_new_opinion':
@@ -1243,20 +1243,20 @@ describe('page editing', () => {
     expect(last('editor_replace_text')).toEqual(['editor_replace_text', expect.objectContaining({ paragraphId: 'paragraph:2' })]);
   });
 
-  test('들여쓰기 · 들여쓰기 취소: 커서 문단에 본문 들여쓰기 · 0 (툴바 단추 · 우클릭과 같은 길)', async () => {
+  test('들여쓰기 · 들여쓰기 취소: 커서 문단을 한 단(800)씩 더 · 덜 (툴바 단추 · 우클릭과 같은 길)', async () => {
     const root = await open();
     clickAt(root, 63, 104);
     q(root, '[data-action="outdent"]').click();
     await settle(10);
-    expect(last('editor_set_indent')).toEqual(['editor_set_indent', { paragraphId: 'paragraph:0', indent: 0 }]);
+    expect(last('editor_shift_indent')).toEqual(['editor_shift_indent', { paragraphId: 'paragraph:0', step: -800 }]);
     q(root, '[data-action="indent"]').click();
     await settle(10);
-    expect((last('editor_set_indent')![1] as { indent: number }).indent).toBeGreaterThan(0);
+    expect(last('editor_shift_indent')).toEqual(['editor_shift_indent', { paragraphId: 'paragraph:0', step: 800 }]);
     // ⇧Tab 도 들여쓰기 취소다 — 탭 문자를 넣지 않는다.
     calls.length = 0;
     root.querySelector('.caret-input')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }));
     await settle(10);
-    expect(last('editor_set_indent')).toEqual(['editor_set_indent', { paragraphId: 'paragraph:0', indent: 0 }]);
+    expect(last('editor_shift_indent')).toEqual(['editor_shift_indent', { paragraphId: 'paragraph:0', step: -800 }]);
     await settle(500);
     expect(glyphs(root)).not.toContain('\t');
     expect(calls.some(([c]) => c === 'editor_replace_text'), '탭 문자를 넣지 않는다').toBe(false);

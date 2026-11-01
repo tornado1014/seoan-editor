@@ -194,8 +194,8 @@ export const editorSetAlignment = (paragraphId: string, align: Alignment) =>
   invoke<EditorViewDto>('editor_set_alignment', { paragraphId, align });
 /** 본문 첫 줄 들여쓰기 값(실물 본문 문단 = 800 · 통특기 단추는 799 를 쓴다 — 화면 차이 없음). */
 export const BODY_INDENT = 800;
-export const editorSetIndent = (paragraphId: string, indent: number) =>
-  invoke<EditorViewDto>('editor_set_indent', { paragraphId, indent });
+export const editorShiftIndent = (paragraphId: string, step: number) =>
+  invoke<EditorViewDto>('editor_shift_indent', { paragraphId, step });
 /** 편집기 기록 파일(앱 기록 폴더의 editor.log)에 한 줄. */
 export const editorLog = (line: string) => invoke<void>('editor_log', { line });
 export const editorMergeParagraph = (paragraphId: string) =>

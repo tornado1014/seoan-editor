@@ -40,6 +40,8 @@ pub fn generate_hlt_document_with_profile(
     let mut profile = std::borrow::Cow::Borrowed(profile);
     if profile.shape_map.is_some() {
         add_alignment_shapes(profile.to_mut(), document);
+    } else {
+        add_deep_indent_shapes(profile.to_mut(), document, dialect, &mut body);
     }
     let profile = profile.as_ref();
     if let Some(map) = &profile.shape_map {
@@ -201,29 +203,90 @@ fn add_alignment_shapes(profile: &mut GenerationProfile, document: &HmlDocument)
                 crate::generate_body::TABLE_CELL_LSPACE,
             )
         }));
+    let mut map = profile.shape_map.take().expect("shape map");
     for (indent, align, lspace) in wanted {
-        let map = profile.shape_map.as_ref().expect("shape map");
-        if map
-            .iter()
-            .any(|shape| (shape.0, shape.1 & 0xfff, shape.2) == (indent, align, lspace))
-        {
+        add_shape(profile, &mut map, (indent, align, lspace));
+    }
+    profile.shape_map = Some(map);
+}
+
+/// 편집기 들여쓰기 두 단 이상(800 의 배수 · 1600 이상) — 틀 모양 표에는 0 · 800 뿐이다.
+/// ponytail: 800 의 배수가 아닌 깊은 값은 전처럼 가까운 모양으로 접힌다.
+fn deep_indent(indent: i32) -> bool {
+    indent >= 1600 && indent % 800 == 0
+}
+
+/// 모양 표에 (들여쓰기, 정렬, 줄 간격)이 없으면 같은 (들여쓰기, 줄 간격) 모양의 정렬만 바꿔 표 끝에 덧붙인다.
+/// 깊은 들여쓰기(`deep_indent`)는 같은 줄 간격에서 들여쓰기가 가장 가까운 모양(같은 정렬 먼저)을 복사해 들여쓰기도 바꾼다.
+/// 맞는 원본이 없으면 덧붙이지 않는다(가까운 모양으로 남는다).
+fn add_shape(
+    profile: &mut GenerationProfile,
+    map: &mut Vec<(i32, u32, u32, u32)>,
+    (indent, align, lspace): (i32, u32, u32),
+) {
+    if map
+        .iter()
+        .any(|shape| (shape.0, shape.1 & 0xfff, shape.2) == (indent, align, lspace))
+    {
+        return;
+    }
+    let Some(&(_, _, _, index)) = map
+        .iter()
+        .filter(|shape| shape.2 == lspace && (deep_indent(indent) || shape.0 == indent))
+        .min_by_key(|shape| (shape.1 & 0xfff != align, shape.0.abs_diff(indent)))
+    else {
+        return;
+    };
+    // 레코드 i 는 모양 바이트 72i-8 부터 72바이트(앞 8바이트는 파일에서 개수 뒤 0) · +8 = 들여쓰기 · +12 = 정렬.
+    let at = 72 * index as usize - 8;
+    let mut record = profile.shapes[at..at + 72].to_vec();
+    record[8..12].copy_from_slice(&indent.to_le_bytes());
+    record[12..16].copy_from_slice(&align.to_le_bytes());
+    profile.shapes.to_mut().extend_from_slice(&record);
+    let added = profile.shape_count;
+    profile.shape_count += 1;
+    map.push((indent, align, lspace, added));
+}
+
+/// 내장 틀(명세서): 깊은 들여쓰기(`deep_indent`) 문단만 새 모양을 덧붙여 그 줄에 단다.
+/// 0 · 800 과 XML · docx 입력(`shape_index` 의 0.8 환산)은 그대로 둔다.
+fn add_deep_indent_shapes(
+    profile: &mut GenerationProfile,
+    document: &HmlDocument,
+    dialect: GenerationDialect,
+    body: &mut crate::HltBodyPlan,
+) {
+    let deep: BTreeMap<&str, (i32, u32, u32)> = document
+        .paragraphs
+        .iter()
+        .filter(|p| p.table_id.is_none() && deep_indent(p.indent_raw))
+        .map(|p| {
+            (
+                p.id.as_str(),
+                (p.indent_raw, align_code(&p.align), p.lspace),
+            )
+        })
+        .collect();
+    if deep.is_empty() {
+        return;
+    }
+    let mut map = crate::generate_body::shape_map(dialect).to_vec();
+    for wanted in deep.values() {
+        add_shape(profile, &mut map, *wanted);
+    }
+    for line in &mut body.lines {
+        if line.cell_id.is_some() {
             continue;
         }
-        let Some(&(_, _, _, index)) = map
-            .iter()
-            .find(|shape| (shape.0, shape.2) == (indent, lspace))
-        else {
+        let Some(wanted) = deep.get(line.paragraph_id.as_str()) else {
             continue;
         };
-        // 레코드 i 는 모양 바이트 72i-8 부터 72바이트(앞 8바이트는 파일에서 개수 뒤 0) · +12 = 정렬.
-        let at = 72 * index as usize - 8;
-        let mut record = profile.shapes[at..at + 72].to_vec();
-        record[12..16].copy_from_slice(&align.to_le_bytes());
-        profile.shapes.to_mut().extend_from_slice(&record);
-        let added = profile.shape_count;
-        profile.shape_count += 1;
-        let map = profile.shape_map.as_mut().expect("shape map");
-        map.push((indent, align, lspace, added));
+        if let Some(shape) = map
+            .iter()
+            .find(|shape| (shape.0, shape.1 & 0xfff, shape.2) == *wanted)
+        {
+            line.shape_index = shape.3;
+        }
     }
 }
 

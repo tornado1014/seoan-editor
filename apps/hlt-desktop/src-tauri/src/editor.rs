@@ -1344,16 +1344,16 @@ pub async fn editor_set_alignment(
     })
 }
 
-/// 문단 첫 줄 들여쓰기(「들여쓰기」 800 · 「들여쓰기 취소」 0) — 커서가 있는 문단.
+/// 문단 첫 줄 들여쓰기 한 단 더 · 덜(「들여쓰기」 +800 · 「들여쓰기 취소」 −800) — 커서가 있는 문단.
 #[tauri::command]
-pub async fn editor_set_indent(
+pub async fn editor_shift_indent(
     window: Window,
     state: State<'_, EditorState>,
     paragraph_id: String,
-    indent: i32,
+    step: i32,
 ) -> Result<EditorViewDto, CoreError> {
     with_session(&state, &window, |session| {
-        session.set_indent(&paragraph_id, indent)?;
+        session.shift_indent(&paragraph_id, step)?;
         let title = title(session);
         Ok(view(session, title))
     })

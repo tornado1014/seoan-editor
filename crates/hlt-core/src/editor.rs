@@ -635,11 +635,27 @@ impl EditorSession {
         })
     }
 
-    /// 문단 첫 줄 들여쓰기(편집기 「들여쓰기」 · 「들여쓰기 취소」 단추 — 통특기처럼 정해진 값으로 켜고 0 으로 끈다).
+    /// 문단 첫 줄 들여쓰기를 정해진 값으로(CLI · 0 으로 끄기).
     pub fn set_indent(&mut self, paragraph_id: &str, indent_raw: i32) -> Result<(), CoreError> {
         if !(0..=4000).contains(&indent_raw) {
             return Err(editor_error("indent"));
         }
+        self.change_indent(paragraph_id, |_| indent_raw)
+    }
+
+    /// 편집기 「들여쓰기」 · 「들여쓰기 취소」 단추: 한 단(`step` = ±800)씩 더하고 던다(0..=4000).
+    /// 파일 값 799 같은 어긋난 값은 800 의 배수로 맞춘다 — 생성기는 800 의 배수만 새 모양으로 싣는다.
+    pub fn shift_indent(&mut self, paragraph_id: &str, step: i32) -> Result<(), CoreError> {
+        self.change_indent(paragraph_id, |current| {
+            ((current + step + 400).div_euclid(800) * 800).clamp(0, 4000)
+        })
+    }
+
+    fn change_indent(
+        &mut self,
+        paragraph_id: &str,
+        to: impl Fn(i32) -> i32,
+    ) -> Result<(), CoreError> {
         self.edit_model(|model| {
             let anchor = model.sections.iter().any(|section| {
                 section.paragraph_ids.first().map(String::as_str) == Some(paragraph_id)
@@ -652,6 +668,7 @@ impl EditorSession {
             if paragraph.table_id.is_some() {
                 return Err(editor_error("table_paragraph"));
             }
+            let indent_raw = to(paragraph.indent_raw);
             // 생성기가 고친 식별항목 표제(절 닻)를 들여쓰기 0 으로 굽는다(`generate_body.rs` is_anchor) — 켜면 저장 때 조용히 사라진다.
             // ponytail: 표제 들여쓰기가 필요해지면 「모양을 아는 표제」를 모델에 실어 생성기 규칙에서 빼라.
             if anchor && paragraph.marker.is_some() && indent_raw != 0 {

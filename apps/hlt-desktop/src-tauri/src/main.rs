@@ -26,8 +26,8 @@ use editor::{
     editor_paste_formatted, editor_print_pdf, editor_read_review, editor_redo, editor_remove_items,
     editor_renumber_plan, editor_replace, editor_replace_cell_text, editor_replace_picture,
     editor_replace_text, editor_replace_text_page_break, editor_replace_texts, editor_resize_image,
-    editor_save, editor_save_as, editor_save_csv, editor_set_alignment, editor_set_indent,
-    editor_set_size, editor_sign_table, editor_source_open, editor_submission_checks,
+    editor_save, editor_save_as, editor_save_csv, editor_set_alignment, editor_set_size,
+    editor_shift_indent, editor_sign_table, editor_source_open, editor_submission_checks,
     editor_table_edit, editor_toggle_format, editor_toggle_format_spans, editor_undo, editor_view,
 };
 
@@ -357,7 +357,7 @@ fn main() {
             editor_replace_text,
             editor_replace_text_page_break,
             editor_set_alignment,
-            editor_set_indent,
+            editor_shift_indent,
             editor_merge_paragraph,
             editor_new_tab,
             editor_close,
