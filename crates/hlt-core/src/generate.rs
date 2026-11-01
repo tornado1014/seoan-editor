@@ -44,9 +44,7 @@ pub fn generate_hlt_document_with_profile(
     if let Some(map) = &profile.shape_map {
         remap_shapes(&mut body, document, map);
     }
-    if document.paragraphs.iter().any(|p| p.lmargin_raw > 0) {
-        add_margin_shapes(profile.to_mut(), document, &mut body);
-    }
+    add_indent_shapes(&mut profile, document, &mut body);
     let profile = profile.as_ref();
     if body.lines.is_empty() {
         return Err(generation_error("empty_document"));
@@ -230,36 +228,56 @@ fn add_alignment_shapes(profile: &mut GenerationProfile, document: &HmlDocument)
     }
 }
 
-/// 왼쪽 여백(문단 전체 들여쓰기 · 레코드 +0)이 있는 문단: 그 줄에 고른 모양을 복사해 여백만 바꿔 표 끝에 덧붙인다.
-/// 모양 고르기(내장 줄지도 · 원본 틀 지도)는 여백을 모른다 — 지도에는 여백 0 모양만 있다(`template.rs`) — 그래서 고른 뒤에 단다.
-fn add_margin_shapes(
-    profile: &mut GenerationProfile,
+/// 모양 고르기(내장 줄지도 · 원본 틀 지도)는 왼쪽 여백을 모르고 첫 줄 들여쓰기는 지도에 있는 값(0 · 한 단)으로만 맞춘다.
+/// 고른 모양이 문단과 다르면 — 여백이 있거나 첫 줄이 반 단 넘게 어긋나면(워드의 첫 줄 두 단) — 복사해 그 값으로 고쳐 표 끝에 덧붙인다.
+fn add_indent_shapes(
+    profile: &mut std::borrow::Cow<'_, GenerationProfile>,
     document: &HmlDocument,
     body: &mut crate::HltBodyPlan,
 ) {
-    let margins: BTreeMap<&str, i32> = document
+    let wanted: BTreeMap<&str, (i32, i32)> = document
         .paragraphs
         .iter()
-        .filter(|p| p.table_id.is_none() && p.lmargin_raw > 0)
-        .map(|p| (p.id.as_str(), p.lmargin_raw))
+        .filter(|p| p.table_id.is_none())
+        .map(|p| (p.id.as_str(), (p.lmargin_raw, p.indent_raw)))
         .collect();
-    let mut added: BTreeMap<(u32, i32), u32> = BTreeMap::new();
+    let mut added: BTreeMap<(u32, i32, i32), u32> = BTreeMap::new();
     for line in &mut body.lines {
-        let Some(&margin) = margins.get(line.paragraph_id.as_str()) else {
+        let Some(&(margin, indent)) = wanted.get(line.paragraph_id.as_str()) else {
             continue;
         };
         if line.cell_id.is_some() || line.shape_index == 0 {
             continue;
         }
-        line.shape_index = *added.entry((line.shape_index, margin)).or_insert_with(|| {
-            // 레코드 i 는 모양 바이트 72i-8 부터 72바이트 · +0 = 왼쪽 여백.
-            let at = 72 * line.shape_index as usize - 8;
-            let mut record = profile.shapes[at..at + 72].to_vec();
-            record[0..4].copy_from_slice(&margin.to_le_bytes());
-            profile.shapes.to_mut().extend_from_slice(&record);
-            profile.shape_count += 1;
-            profile.shape_count - 1
-        });
+        // 레코드 i 는 모양 바이트 72i-8 부터 72바이트 · +0 = 왼쪽 여백 · +8 = 첫 줄 들여쓰기.
+        let at = 72 * line.shape_index as usize - 8;
+        let field = |offset: usize| {
+            i32::from_le_bytes(
+                profile.shapes[at + offset..at + offset + 4]
+                    .try_into()
+                    .unwrap(),
+            )
+        };
+        let chosen = field(8);
+        let indent = if (indent - chosen).abs() > 400 {
+            indent
+        } else {
+            chosen
+        };
+        if margin == field(0) && indent == chosen {
+            continue;
+        }
+        line.shape_index = *added
+            .entry((line.shape_index, margin, indent))
+            .or_insert_with(|| {
+                let mut record = profile.shapes[at..at + 72].to_vec();
+                record[0..4].copy_from_slice(&margin.to_le_bytes());
+                record[8..12].copy_from_slice(&indent.to_le_bytes());
+                let profile = profile.to_mut();
+                profile.shapes.to_mut().extend_from_slice(&record);
+                profile.shape_count += 1;
+                profile.shape_count - 1
+            });
     }
 }
 

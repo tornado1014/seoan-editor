@@ -688,3 +688,47 @@ fn cp949_review_scans_then_applies_the_chosen_replacements() {
     assert_eq!(caption.text, "10^5 \u{FF5E} 3 \u{FF5E} 1");
     assert!(chosen.cells.iter().any(|cell| cell.text == "caf"));
 }
+
+/// 워드에서 첫 줄만 두 단 넘게 들여쓴 문단: HLT 로 구워 다시 열어도 그 깊이가 남는다(한 단으로 줄지 않는다).
+#[test]
+fn a_deep_first_line_indent_survives_the_hlt() {
+    let xml = PARAGRAPH_DOCUMENT_XML.replace(
+        r#"<w:ind w:firstLine="800"/></w:pPr><w:r><w:t>청구 내용"#,
+        r#"<w:ind w:firstLine="1598"/></w:pPr><w:r><w:t>청구 내용"#,
+    );
+    assert_ne!(xml, PARAGRAPH_DOCUMENT_XML);
+    let mut png = Vec::new();
+    image::RgbImage::from_pixel(8, 8, image::Rgb([0, 0, 0]))
+        .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let parts = vec![
+        ("[Content_Types].xml", b"<Types/>".as_slice()),
+        ("word/document.xml", xml.as_bytes()),
+        ("word/_rels/document.xml.rels", RELS_XML.as_bytes()),
+        ("word/media/image1.png", png.as_slice()),
+    ];
+    let file = write_docx(&parts);
+    let (document, payloads, _) = hlt_core::load_generation_input(file.path()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let hlt = dir.path().join("첫줄.HLT");
+    hlt_core::save_generated_hlt_as_new(
+        file.path(),
+        &document,
+        hlt_core::GenerationDialect::PatentSpecificationKo,
+        &payloads,
+        &hlt,
+        hlt_core::WriteOptions::default(),
+    )
+    .unwrap();
+    let (reopened, _, _) = hlt_core::load_generation_input(&hlt).unwrap();
+    let indent = |text: &str| {
+        reopened
+            .paragraphs
+            .iter()
+            .find(|p| p.text.contains(text))
+            .map(|p| (p.indent_raw, p.lmargin_raw))
+            .unwrap()
+    };
+    assert_eq!(indent("청구 내용"), (1998, 0));
+    assert_eq!(indent("시험 발명"), (800, 0));
+}
