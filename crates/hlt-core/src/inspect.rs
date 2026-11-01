@@ -899,6 +899,9 @@ fn parse_shapes(
     for index in 1..count {
         let offset = base + 72 * u64::from(index);
         let record = read_range(file, offset, 44)?;
+        // 레코드: +0 왼쪽 여백 · +4 오른쪽 여백 · +8 첫 줄 들여쓰기 · +12 정렬 · +40 줄 간격
+        // (통특기 문단모양 `<pstyle lmargin rmargin indent lspace …>` 차례).
+        let lmargin = u32::from_le_bytes(record[0..4].try_into().expect("lmargin"));
         let indent = u32::from_le_bytes(record[8..12].try_into().expect("indent"));
         let align = u32::from_le_bytes(record[12..16].try_into().expect("align"));
         let lspace = u32::from_le_bytes(record[40..44].try_into().expect("lspace"));
@@ -914,6 +917,7 @@ fn parse_shapes(
         out.push(ShapeRecord {
             id: format!("shape:{index}"),
             index,
+            lmargin_raw: lmargin,
             indent_raw: indent,
             lspace,
             align_raw: align,

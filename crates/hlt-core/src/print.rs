@@ -293,7 +293,7 @@ fn place_line(
     // 글자 없는 줄(빈 문단)도 커서가 설 줄은 낸다 — 글리프가 없어 인쇄엔 안 보인다.
     if !items.iter().any(|(_, item, _)| item.has_ink()) {
         let line = line.start.map(|start| {
-            let x = LEFT + line.indent * PT_PER_PX600;
+            let x = LEFT + (line.margin + line.indent) * PT_PER_PX600;
             PlannedLine {
                 top,
                 glyphs: Vec::new(),
@@ -308,7 +308,7 @@ fn place_line(
     }
     // 자연 폭(끝 공백 제외)과 칸마다 시작 자리(px600).
     let mut starts = Vec::with_capacity(items.len());
-    let (mut width, mut natural) = (line.indent, line.indent);
+    let (mut width, mut natural) = (line.margin + line.indent, line.margin + line.indent);
     for (_, item, _) in items {
         starts.push(width);
         if matches!(item, Item::Ascii(b'\t', _)) {

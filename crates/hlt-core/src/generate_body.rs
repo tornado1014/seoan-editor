@@ -667,14 +667,6 @@ pub(crate) const PCT_SHAPE_MAP: &[(i32, u32, u32, u32)] = &[
     (0, 1024, 130, 15),
 ];
 
-/// 내장 틀의 문단 모양 줄지도.
-pub(crate) fn shape_map(dialect: GenerationDialect) -> &'static [(i32, u32, u32, u32)] {
-    match dialect {
-        GenerationDialect::PatentSpecificationKo => DOMESTIC_SHAPE_MAP,
-        GenerationDialect::PctPatent => PCT_SHAPE_MAP,
-    }
-}
-
 fn shape_index(dialect: GenerationDialect, indent: i32, align: &str, lspace: u32) -> u32 {
     let indent = ((indent as f64) * 0.8).round() as i32;
     let align = match align {

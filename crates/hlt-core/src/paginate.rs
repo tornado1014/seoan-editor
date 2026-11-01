@@ -97,6 +97,8 @@ pub(crate) struct PrintedLine {
     pub(crate) items: Vec<(char, Item, u32)>,
     /// 첫 줄 들여쓰기(px600) — 문단 첫 인쇄 줄만.
     pub(crate) indent: f64,
+    /// 문단 왼쪽 여백(px600) — 문단의 모든 줄.
+    pub(crate) margin: f64,
     /// 문단(칸 밖 묶음)의 마지막 인쇄 줄 — 양쪽 맞춤을 안 편다.
     pub(crate) last: bool,
     pub(crate) height: i64,
@@ -128,6 +130,18 @@ pub(crate) fn line_heights(document: &InspectDocument, inflated: &[u8]) -> Heigh
         .iter()
         .map(|shape| (shape.id.as_str(), i64::from(shape.indent_raw as i32)))
         .collect();
+    let margin: BTreeMap<&str, i64> = document
+        .shapes
+        .iter()
+        .map(|shape| (shape.id.as_str(), i64::from(shape.lmargin_raw as i32)))
+        .collect();
+    let line_margin = |line: usize| {
+        document.lines[line]
+            .shape_id
+            .as_deref()
+            .and_then(|id| margin.get(id).copied())
+            .unwrap_or(0)
+    };
     let line_indent = |line: usize| {
         document.lines[line]
             .shape_id
@@ -244,6 +258,7 @@ pub(crate) fn line_heights(document: &InspectDocument, inflated: &[u8]) -> Heigh
         line_dpi: &line_dpi,
         lspace: &line_lspace,
         indent: &line_indent,
+        margin: &line_margin,
         sub: &|line: usize, at: usize| codes.sub(line, at),
         attr: &|line: usize, at: usize| codes.attr(line, at),
         caption: &figure_caption,
@@ -305,6 +320,7 @@ struct Context<'a> {
     line_dpi: &'a BTreeMap<usize, bool>,
     lspace: &'a dyn Fn(usize) -> i64,
     indent: &'a dyn Fn(usize) -> i64,
+    margin: &'a dyn Fn(usize) -> i64,
     sub: &'a dyn Fn(usize, usize) -> bool,
     /// 글자모양 비트(밑줄 1 · 굵게 2 · 기울임 4 · 위첨자 16 · 아래첨자 32).
     attr: &'a dyn Fn(usize, usize) -> u32,
@@ -326,6 +342,7 @@ fn reflow_group(lines: &[usize], paragraph_start: bool, group: &mut Group<'_>, c
     } else {
         0.0
     };
+    let margin = (cx.margin)(lines[0]) as f64 * reflow::TWIP;
     let mut items: Vec<Item> = Vec::new();
     let mut glyphs: Vec<char> = Vec::new();
     let mut attrs: Vec<u32> = Vec::new();
@@ -365,7 +382,7 @@ fn reflow_group(lines: &[usize], paragraph_start: bool, group: &mut Group<'_>, c
         }
         bounds.push(items.len());
     }
-    let printed = reflow::reflow(&items, &bounds, indent);
+    let printed = reflow::reflow(&items, &bounds, indent, margin);
     if printed.is_empty() {
         for &line in lines {
             group.out[line] += lsp;
@@ -373,6 +390,7 @@ fn reflow_group(lines: &[usize], paragraph_start: bool, group: &mut Group<'_>, c
                 line,
                 items: Vec::new(),
                 indent: 0.0,
+                margin,
                 last: true,
                 height: lsp,
                 ascent: TEXT_ASCENT,
@@ -428,6 +446,7 @@ fn reflow_group(lines: &[usize], paragraph_start: bool, group: &mut Group<'_>, c
             line,
             items: (a..b).map(|q| (glyphs[q], items[q], attrs[q])).collect(),
             indent: if index == indented { indent } else { 0.0 },
+            margin,
             last: index + 1 == printed.len(),
             height,
             ascent: if count > 0 {

@@ -1535,39 +1535,70 @@ fn an_emptied_claim_heading_can_be_removed() {
     );
 }
 
-/// 들여쓰기 단추는 한 단(800)씩 더하고 취소는 한 단씩 던다 — 두 단 이상도 저장하고 다시 열면 그대로다
-/// (전엔 모양 표에 0 · 800 만 있어 1600 이 가까운 800 으로 접혔다). 의견서(원본 틀) · 명세서(내장 틀) 둘 다.
+/// 들여쓰기 단추 = 워드 「들여쓰기 늘리기」: 문단 **전체**의 왼쪽 여백이 한 단(800)씩 늘고 줄며(0 에서 멈춤),
+/// 첫 줄 들여쓰기는 그대로다. 저장하고 다시 열어도 남고, 쪽 위의 모든 줄이 여백만큼 오른쪽으로 간다.
+/// 의견서(원본 틀) · 명세서(내장 틀) 둘 다.
 #[test]
-fn indent_steps_deeper_and_survives_save() {
+fn indent_moves_the_whole_paragraph() {
     let temp = tempfile::tempdir().unwrap();
     let opinion = temp.path().join("의견서.HLT");
     hlt_core::save_new_opinion_as_new(&opinion, hlt_core::WriteOptions::default()).unwrap();
     let fin = synthetic_fin_with(temp.path(), SYNTHETIC_SPEC);
+    let long = "가나다라마바사아자차카타파하 ".repeat(12);
+    // 문단 줄마다 첫 글자 앞 x(pt).
+    let starts = |session: &EditorSession, index: usize| -> Vec<f64> {
+        let id = session.paragraphs()[index].id.clone();
+        session
+            .plan
+            .pages
+            .iter()
+            .flat_map(|page| &page.lines)
+            .filter(|line| line.paragraph.as_deref() == Some(id.as_str()))
+            .filter_map(|line| line.stops.first().copied())
+            .collect()
+    };
     for (source, index) in [(opinion, 1), (fin, 7)] {
         let mut session = EditorSession::open(&source).unwrap();
         let body = session.paragraphs()[index].id.clone();
-        session.set_indent(&body, 0).unwrap(); // 새 의견서 본문은 이미 한 단(800)이다
-        for _ in 0..3 {
+        session.replace_text(&body, &long).unwrap();
+        let indent = session.document.paragraphs[index].indent_raw;
+        let before = starts(&session, index);
+        assert!(before.len() >= 3, "여러 줄 문단: {before:?}");
+        for _ in 0..2 {
             session.shift_indent(&body, 800).unwrap();
         }
-        let out = temp.path().join(format!("세단{index}.HLT"));
+        let after = starts(&session, index);
+        // 1600 = 80pt. 첫 줄도 둘째 줄부터도 같은 만큼 민다(첫 줄 들여쓰기는 그대로).
+        assert!(
+            (after[0] - before[0] - 80.0).abs() < 0.5,
+            "{before:?} → {after:?}"
+        );
+        assert!(
+            (after[1] - before[1] - 80.0).abs() < 0.5,
+            "{before:?} → {after:?}"
+        );
+        assert!(after.len() >= before.len(), "좁아진 폭으로 다시 흘린다");
+        let out = temp.path().join(format!("두단{index}.HLT"));
         session.save_as(&out).unwrap();
         let saved = EditorSession::open(&out).unwrap();
-        assert_eq!(
-            saved.document.paragraphs[index].indent_raw,
-            2400,
-            "{}",
-            source.display()
-        );
-        for _ in 0..4 {
+        let shape = |s: &EditorSession| {
+            let id = s.document.paragraphs[index].shape_id.clone().unwrap();
+            s.document
+                .shapes
+                .iter()
+                .find(|x| x.id == id)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(shape(&saved).lmargin_raw, 1600, "{}", source.display());
+        assert_eq!(saved.document.paragraphs[index].indent_raw, indent);
+        assert_eq!(starts(&saved, index)[1], after[1], "다시 열어도 같은 자리");
+        for _ in 0..3 {
             session.shift_indent(&body, -800).unwrap();
         }
         let back = temp.path().join(format!("영단{index}.HLT"));
         session.save_as(&back).unwrap();
         let saved = EditorSession::open(&back).unwrap();
-        assert_eq!(
-            saved.document.paragraphs[index].indent_raw, 0,
-            "0 에서 멈춘다"
-        );
+        assert_eq!(shape(&saved).lmargin_raw, 0, "0 에서 멈춘다");
     }
 }

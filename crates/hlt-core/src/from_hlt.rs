@@ -173,7 +173,11 @@ pub fn hml_document_from_hlt(
             text,
             align: record.align.clone(),
             indent_raw: i32::try_from(record.indent_raw).unwrap_or(0),
-            lmargin_raw: 0,
+            lmargin_raw: record
+                .shape_id
+                .as_deref()
+                .and_then(|id| document.shapes.iter().find(|shape| shape.id == id))
+                .map_or(0, |shape| i32::try_from(shape.lmargin_raw).unwrap_or(0)),
             rmargin_raw: 0,
             lspace: record.lspace,
             page_break: raw.contains(PAGE_BREAK),

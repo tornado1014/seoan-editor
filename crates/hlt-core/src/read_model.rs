@@ -156,6 +156,8 @@ pub struct LineRecord {
 pub struct ShapeRecord {
     pub id: String,
     pub index: u32,
+    /// 문단 왼쪽 여백(문단 전체를 민다 · 레코드 +0). 첫 줄 들여쓰기(`indent_raw` · +8)는 이 여백에서 다시 잰다.
+    pub lmargin_raw: u32,
     pub indent_raw: u32,
     pub lspace: u32,
     pub align_raw: u32,

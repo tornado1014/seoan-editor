@@ -38,7 +38,11 @@ pub fn docx_bytes(
             .collect(),
     };
     for paragraph in &document.paragraphs {
-        let props = paragraph_props(&paragraph.align, paragraph.indent_raw);
+        let props = paragraph_props(
+            &paragraph.align,
+            paragraph.indent_raw,
+            paragraph.lmargin_raw,
+        );
         let page = if paragraph.page_break {
             r#"<w:r><w:br w:type="page"/></w:r>"#
         } else {
@@ -212,17 +216,19 @@ impl Media<'_> {
     }
 }
 
-fn paragraph_props(align: &str, indent_raw: i32) -> String {
+fn paragraph_props(align: &str, indent_raw: i32, lmargin_raw: i32) -> String {
     let jc = match align {
         "left" | "center" | "right" => align,
         _ => "both",
     };
     // 읽기기 역식: indent_raw = (dxa*5+2)/4.
     let first = indent_raw.max(0) * 4 / 5;
-    let ind = if first > 0 {
-        format!(r#"<w:ind w:firstLine="{first}"/>"#)
-    } else {
-        String::new()
+    let left = lmargin_raw.max(0) * 4 / 5;
+    let ind = match (left > 0, first > 0) {
+        (false, false) => String::new(),
+        (false, true) => format!(r#"<w:ind w:firstLine="{first}"/>"#),
+        (true, false) => format!(r#"<w:ind w:left="{left}"/>"#),
+        (true, true) => format!(r#"<w:ind w:left="{left}" w:firstLine="{first}"/>"#),
     };
     format!(r#"<w:pPr><w:jc w:val="{jc}"/>{ind}</w:pPr>"#)
 }
@@ -339,7 +345,7 @@ fn table_xml(
             } else if cell.rowspan > 1 {
                 props.push_str(r#"<w:vMerge w:val="restart"/>"#);
             }
-            let para = paragraph_props(&cell.align, 0);
+            let para = paragraph_props(&cell.align, 0, 0);
             out.push_str(&format!(
                 "<w:tc><w:tcPr>{props}</w:tcPr><w:p>{para}{}</w:p></w:tc>",
                 runs(&cell.inlines, media)

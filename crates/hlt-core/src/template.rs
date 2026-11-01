@@ -252,10 +252,13 @@ pub fn source_generation_profile(path: &Path) -> Result<crate::GenerationProfile
         regions.geometry + 5 + GEOMETRY_RECORD * geometry_count,
         "source_profile_geometry",
     )?;
-    // 레코드 i(1..) = 모양 바이트 72i-8 부터: +8 들여쓰기 · +12 정렬 · +40 줄 간격.
+    // 레코드 i(1..) = 모양 바이트 72i-8 부터: +0 왼쪽 여백 · +8 들여쓰기 · +12 정렬 · +40 줄 간격.
+    // 왼쪽 여백이 있는 모양은 지도에서 뺀다 — 지도는 여백을 모르니 여백 없는 문단이 그 모양을 받으면 통째로 밀린다
+    // (여백 있는 문단은 생성기가 고른 뒤 여백을 단다 · `add_margin_shapes`).
     let field = |at: usize| u32::from_le_bytes(shapes[at..at + 4].try_into().expect("shape field"));
     let shape_map = (1..shape_count as usize)
         .filter(|index| PARAGRAPH_SHAPE_RECORD * index + 36 <= shapes.len())
+        .filter(|index| field(PARAGRAPH_SHAPE_RECORD * index - 8) == 0)
         .map(|index| {
             let at = PARAGRAPH_SHAPE_RECORD * index;
             (

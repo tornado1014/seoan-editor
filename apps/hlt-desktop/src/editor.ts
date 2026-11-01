@@ -257,8 +257,8 @@ export function mountEditor(root: HTMLElement): void {
           <button type="button" data-action="align-justified" disabled title="양쪽 정렬 (커서가 있는 문단)">${icon('justify')}</button>
           <button type="button" data-action="align-center" disabled title="가운데 정렬 (커서가 있는 문단)">${icon('center')}</button>
           <button type="button" data-action="align-left" disabled title="왼쪽 정렬 (커서가 있는 문단)">${icon('left')}</button>
-          <button type="button" data-action="indent" disabled title="들여쓰기 — 첫 줄을 한 단 더 (커서가 있는 문단)">${icon('indent')}</button>
-          <button type="button" data-action="outdent" disabled title="들여쓰기 취소 — 한 단 덜 (커서가 있는 문단 · ⇧Tab)">${icon('outdent')}</button>
+          <button type="button" data-action="indent" disabled title="들여쓰기 — 문단 전체를 한 단 오른쪽으로 (커서가 있는 문단)">${icon('indent')}</button>
+          <button type="button" data-action="outdent" disabled title="들여쓰기 취소 — 문단 전체를 한 단 왼쪽으로 (커서가 있는 문단 · ⇧Tab)">${icon('outdent')}</button>
         </div>
         <div class="tb-group" role="group" aria-label="넣기">
           <button type="button" data-action="math" disabled title="수식 넣기(LaTeX)">${icon('math')}<span>수식</span></button>

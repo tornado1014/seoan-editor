@@ -202,8 +202,13 @@ fn skip_blanks(items: &[Item], mut pos: usize, limit: usize) -> usize {
     pos
 }
 
-/// 인쇄 줄 = [(시작, 끝)]. `bounds` = 저장 줄 끝 자리들.
-pub(crate) fn reflow(items: &[Item], bounds: &[usize], indent: f64) -> Vec<(usize, usize)> {
+/// 인쇄 줄 = [(시작, 끝)]. `bounds` = 저장 줄 끝 자리들. `margin` = 문단 왼쪽 여백(줄마다 그만큼 폭을 먼저 쓴다).
+pub(crate) fn reflow(
+    items: &[Item],
+    bounds: &[usize],
+    indent: f64,
+    margin: f64,
+) -> Vec<(usize, usize)> {
     let n = items.len();
     let mut lines: Vec<(usize, usize)> = Vec::new();
     let (mut pos, mut pulled) = (0_usize, false);
@@ -213,7 +218,7 @@ pub(crate) fn reflow(items: &[Item], bounds: &[usize], indent: f64) -> Vec<(usiz
             continue;
         }
         pulled = false;
-        let ind = if lines.is_empty() { indent } else { 0.0 };
+        let ind = margin + if lines.is_empty() { indent } else { 0.0 };
         if end == pos || line_width(items, pos, end, ind) <= WIDTH {
             match pull_to(items, pos, end, ind) {
                 None => {
@@ -240,7 +245,7 @@ pub(crate) fn reflow(items: &[Item], bounds: &[usize], indent: f64) -> Vec<(usiz
         }
     }
     while pos < n && items[pos..].iter().any(|item| item.has_ink()) {
-        let ind = if lines.is_empty() { indent } else { 0.0 };
+        let ind = margin + if lines.is_empty() { indent } else { 0.0 };
         match cut(items, pos, ind, WIDTH, SUBTOKEN_END) {
             None => {
                 lines.push((pos, n));
@@ -279,12 +284,17 @@ mod tests {
     #[test]
     fn keeps_fitting_lines_and_pushes_overflow_forward() {
         // 한글 38자 = 3,800 ≤ 3,896 → 저장 줄 그대로.
-        assert_eq!(reflow(&wide(38), &[38], 0.0), vec![(0, 38)]);
+        assert_eq!(reflow(&wide(38), &[38], 0.0, 0.0), vec![(0, 38)]);
+        // 왼쪽 여백 200(한글 2자)은 줄마다 폭을 먼저 쓴다 → 36 에서 넘친다.
+        assert_eq!(
+            reflow(&wide(38), &[38], 0.0, 200.0),
+            vec![(0, 36), (36, 38)]
+        );
         // 40자 한 줄 → 38 에서 넘쳐 둘로.
-        assert_eq!(reflow(&wide(40), &[40], 0.0), vec![(0, 38), (38, 40)]);
+        assert_eq!(reflow(&wide(40), &[40], 0.0, 0.0), vec![(0, 38), (38, 40)]);
         // 첨자 한글 62 → 62자까지 들어간다(3,844).
         assert_eq!(
-            reflow(&vec![Item::Wide(true); 62], &[62], 0.0),
+            reflow(&vec![Item::Wide(true); 62], &[62], 0.0, 0.0),
             vec![(0, 62)]
         );
     }
@@ -293,11 +303,11 @@ mod tests {
     fn pulls_up_only_at_a_natural_hangul_break() {
         // 저장 줄 10자 + 다음 저장 줄 40자: 첫 줄에 여유가 있고 넘침이 한글 → 끌어올림(38에서 끊김).
         let items = wide(50);
-        assert_eq!(reflow(&items, &[10, 50], 0.0), vec![(0, 38), (38, 50)]);
+        assert_eq!(reflow(&items, &[10, 50], 0.0, 0.0), vec![(0, 38), (38, 50)]);
         // 넘침 자리가 ASCII 토큰이면 끌어올리지 않는다.
         let mut items = wide(10);
         items.extend(vec![Item::Ascii(b'a', false); 80]);
-        assert_eq!(reflow(&items, &[10, 90], 0.0)[0], (0, 10));
+        assert_eq!(reflow(&items, &[10, 90], 0.0, 0.0)[0], (0, 10));
     }
 
     #[test]

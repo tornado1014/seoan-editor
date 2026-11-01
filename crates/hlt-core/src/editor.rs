@@ -640,20 +640,23 @@ impl EditorSession {
         if !(0..=4000).contains(&indent_raw) {
             return Err(editor_error("indent"));
         }
-        self.change_indent(paragraph_id, |_| indent_raw)
+        self.change_indent(paragraph_id, |p| &mut p.indent_raw, |_| indent_raw)
     }
 
-    /// 편집기 「들여쓰기」 · 「들여쓰기 취소」 단추: 한 단(`step` = ±800)씩 더하고 던다(0..=4000).
-    /// 파일 값 799 같은 어긋난 값은 800 의 배수로 맞춘다 — 생성기는 800 의 배수만 새 모양으로 싣는다.
+    /// 편집기 「들여쓰기」 · 「들여쓰기 취소」 단추 = 워드 「들여쓰기 늘리기 · 줄이기」: 문단 **전체**의 왼쪽 여백을
+    /// 한 단(`step` = ±800)씩 더하고 던다(0..=4000 · 800 의 배수로 맞춘다). 첫 줄 들여쓰기는 그대로(여백에서 다시 잰다).
     pub fn shift_indent(&mut self, paragraph_id: &str, step: i32) -> Result<(), CoreError> {
-        self.change_indent(paragraph_id, |current| {
-            ((current + step + 400).div_euclid(800) * 800).clamp(0, 4000)
-        })
+        self.change_indent(
+            paragraph_id,
+            |p| &mut p.lmargin_raw,
+            |current| ((current + step + 400).div_euclid(800) * 800).clamp(0, 4000),
+        )
     }
 
     fn change_indent(
         &mut self,
         paragraph_id: &str,
+        field: fn(&mut crate::HmlParagraph) -> &mut i32,
         to: impl Fn(i32) -> i32,
     ) -> Result<(), CoreError> {
         self.edit_model(|model| {
@@ -668,14 +671,14 @@ impl EditorSession {
             if paragraph.table_id.is_some() {
                 return Err(editor_error("table_paragraph"));
             }
-            let indent_raw = to(paragraph.indent_raw);
+            let value = to(*field(paragraph));
             // 생성기가 고친 식별항목 표제(절 닻)를 들여쓰기 0 으로 굽는다(`generate_body.rs` is_anchor) — 켜면 저장 때 조용히 사라진다.
             // ponytail: 표제 들여쓰기가 필요해지면 「모양을 아는 표제」를 모델에 실어 생성기 규칙에서 빼라.
-            if anchor && paragraph.marker.is_some() && indent_raw != 0 {
+            if anchor && paragraph.marker.is_some() && value != 0 {
                 return Err(editor_error("heading_indent"));
             }
-            if paragraph.indent_raw != indent_raw {
-                paragraph.indent_raw = indent_raw;
+            if *field(paragraph) != value {
+                *field(paragraph) = value;
                 paragraph.source_line_bytes.clear();
             }
             Ok(())
