@@ -174,6 +174,11 @@ const TOUR_SEEN = 'seoan.tour.seen';
 /** 자동 저장: 마지막 고침 뒤 이만큼 손을 멈추면 복구본을 둔다(설정 「자동 저장 간격」의 기본값). */
 export const AUTOSAVE_MS = 120_000;
 
+/** 상태 줄은 한 줄이라 긴 경로가 정작 상태를 밀어낸다 — 경로는 파일 이름만 남긴다(전체는 마우스를 올리면). */
+export function shortenPaths(text: string): string {
+  return text.replace(/(^|[\s(「'"])((?:[A-Za-z]:)?[\\/](?=[^\s\\/])(?:[^\\/·\n]*[\\/])+)/g, '$1');
+}
+
 /** 문서 배율 한 걸음 · 범위(50~200%). */
 export function nextZoom(zoom: number, step: -1 | 0 | 1): number {
   if (step === 0) return 1;
@@ -474,7 +479,10 @@ export function mountEditor(root: HTMLElement): void {
     { root: pagesRoot, rootMargin: '600px 0px' },
   );
 
-  const say = (text: string) => (status.textContent = text);
+  const say = (text: string) => {
+    status.textContent = shortenPaths(text);
+    status.title = text;
+  };
   // 낙관: 저장 · 제출파일 · 보정서가 끝나면 상태 줄 옆에 한 번 찍는다(화면 장식 · 알림은 상태 줄이 한다).
   const seal = q<HTMLSpanElement>('.seal');
   seal.addEventListener('animationend', () => seal.classList.remove('stamped'));
@@ -3094,7 +3102,9 @@ export function mountEditor(root: HTMLElement): void {
   root.append(batchBar);
   void listen<{ at: number; total: number; file: string }>('batch-progress', (event) => {
     batchBar.hidden = false;
-    batchBar.querySelector('span')!.textContent = `일괄 ${event.payload.at + 1}/${event.payload.total} · ${event.payload.file}`;
+    const line = `일괄 ${event.payload.at + 1}/${event.payload.total} · ${event.payload.file}`;
+    batchBar.querySelector('span')!.textContent = shortenPaths(line);
+    batchBar.querySelector('span')!.title = line;
   });
 
   /** 일괄 처리 결과 창: 표 · CSV 로 저장 · 닫기. */

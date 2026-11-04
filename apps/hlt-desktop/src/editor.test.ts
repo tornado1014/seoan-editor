@@ -1893,7 +1893,8 @@ describe('page editing', () => {
     amendAnswer = { dta: '/d/보정.dta', fin: '/d/x.fin', order: 1, items: [], table: '/d/보정_대비표.docx' };
     root.querySelector<HTMLButtonElement>('[data-action="amend"]')!.click();
     await settle(10);
-    expect(root.querySelector('.editor-status')!.textContent).toContain('대비표 /d/보정_대비표.docx');
+    expect(root.querySelector('.editor-status')!.textContent).toContain('대비표 보정_대비표.docx');
+    expect(root.querySelector<HTMLElement>('.editor-status')!.title).toContain('대비표 /d/보정_대비표.docx');
   });
 
   test('identification item: right-click submenu → number (next one filled in) → heading + empty paragraph below', async () => {
@@ -2053,5 +2054,28 @@ describe('sectionOf', () => {
     expect([...sectionOf(ps).values()]).toEqual([
       'other', 'description', 'description', 'claims', 'claims', 'claims', 'other', 'other', 'claims', 'claims', 'other', 'other',
     ]);
+  });
+});
+
+describe('shortenPaths', () => {
+  test('경로는 파일 이름만 남기고 상태 글은 그대로', async () => {
+    const { shortenPaths } = await import('./editor');
+    expect(shortenPaths('저장함: /Users/me/긴 폴더 이름/사건/문서 최종본.HLT')).toBe('저장함: 문서 최종본.HLT');
+    expect(shortenPaths('보정서(1차) 생성작업을 완료하였습니다. /a/b/x.dta · 최종본 갱신 C:\\Users\\me\\y.fin')).toBe(
+      '보정서(1차) 생성작업을 완료하였습니다. x.dta · 최종본 갱신 y.fin',
+    );
+    expect(shortenPaths('여는 중… (/tmp/a/b.docx)')).toBe('여는 중… (b.docx)');
+    expect(shortenPaths('고친 곳 1/3 · 식별번호 / 청구항 / 도면')).toBe('고친 곳 1/3 · 식별번호 / 청구항 / 도면');
+  });
+
+  test('상태 줄 · 일괄 띠: 파일 이름만 보이고 전체 경로는 마우스를 올리면', async () => {
+    const root = await open();
+    await settle(10);
+    handlers.get('notice')!({ payload: '제출파일: /Users/me/아주 긴 폴더/사건/최종본.fin' });
+    const status = root.querySelector<HTMLElement>('.editor-status')!;
+    expect(status.textContent).toBe('제출파일: 최종본.fin');
+    expect(status.title).toBe('제출파일: /Users/me/아주 긴 폴더/사건/최종본.fin');
+    handlers.get('batch-progress')!({ payload: { at: 0, total: 2, file: 'C:\\긴 폴더\\a.HLT' } });
+    expect(root.querySelector('.batch-progress span')!.textContent).toBe('일괄 1/2 · a.HLT');
   });
 });
