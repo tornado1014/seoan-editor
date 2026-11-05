@@ -119,6 +119,17 @@ pub fn plan_table_tail(
                 .ok_or_else(|| tail_structure("missing_cell"))?;
             row_groups.entry(cell.row).or_default().push(cell);
         }
+        // 열 폭은 칸마다 환산된다. 병합 칸도 그 합이어야 옆 행과 끝이 맞는다(합을 한 번에 환산하면 어긋난다).
+        let mut column_widths: BTreeMap<u32, u32> = BTreeMap::new();
+        for cell in row_groups.values().flatten() {
+            if let (1, Some(column), Some(width)) =
+                (cell.colspan, cell.column_begin, cell.hwidth_raw)
+            {
+                column_widths
+                    .entry(column)
+                    .or_insert_with(|| crate::colwidth_to_cell_width(width));
+            }
+        }
         let heights: Vec<u32> = row_groups
             .values()
             .map(|items| {
@@ -135,8 +146,19 @@ pub fn plan_table_tail(
             let mut cursor = 0_u32;
             let mut indices = Vec::new();
             for cell in items {
+                let spanned = || {
+                    let first = cell.column_begin?;
+                    (cell.colspan > 1)
+                        .then(|| {
+                            (first..first + cell.colspan)
+                                .map(|column| column_widths.get(&column).copied())
+                                .sum::<Option<u32>>()
+                        })
+                        .flatten()
+                };
                 let width = cell
                     .width_raw
+                    .or_else(spanned)
                     .or_else(|| cell.hwidth_raw.map(crate::colwidth_to_cell_width))
                     .ok_or_else(|| tail_structure("missing_width"))?;
                 let start = cell.start_raw.unwrap_or(cursor);

@@ -83,6 +83,7 @@ pub(crate) struct TailLayout {
 struct RawCell {
     start: u32,
     width: u32,
+    stored_colspan: u32,
     vertical_align: u32,
     rowspan: u32,
     continuation: bool,
@@ -117,6 +118,7 @@ pub(crate) struct EditLayout {
 struct CellGeometry {
     start: u32,
     width: u32,
+    stored_colspan: u32,
     continuation: bool,
     vertical_align: u32,
 }
@@ -1133,6 +1135,7 @@ fn parse_font_geometry(
             CellGeometry {
                 start: fields[4],
                 width: fields[5],
+                stored_colspan: fields[18],
                 // 세로병합에 덮인 칸은 field[16] 의 비트 16 으로 표시된다.
                 // 값 전체를 보면 안 된다. 옛 저장본은 32/56, 통특기 v6.3 이 새로
                 // 만든 저장본은 0/16 을 쓴다. 56 과 16 만 비트 16 을 품는다.
@@ -1143,6 +1146,30 @@ fn parse_font_geometry(
         );
     }
     Ok(geometry)
+}
+
+/// 저장된 칸 수로 표가 사각형을 이루면 그 열 수. 칸 끝 좌표는 환산 반올림으로 몇 단위씩 흔들려
+/// 좌표로 세면 없는 열이 생긴다. 저장 값이 비었거나 행마다 합이 다르면 `None` — 좌표로 센다.
+fn stored_column_count(rows: &[Vec<RawCell>]) -> Option<u32> {
+    let mut covered = vec![0_u32; rows.len()];
+    let mut columns = None;
+    for (index, row) in rows.iter().enumerate() {
+        let mut total = covered[index];
+        for cell in row {
+            if cell.stored_colspan == 0 {
+                return None;
+            }
+            total = total.checked_add(cell.stored_colspan)?;
+            let last = index.saturating_add(cell.rowspan as usize);
+            for below in covered.iter_mut().take(last).skip(index + 1) {
+                *below = below.checked_add(cell.stored_colspan)?;
+            }
+        }
+        if *columns.get_or_insert(total) != total {
+            return None;
+        }
+    }
+    columns
 }
 
 fn parse_tables(
@@ -1192,6 +1219,7 @@ fn parse_tables(
                 row.push(RawCell {
                     start: cell_geometry.start,
                     width: cell_geometry.width,
+                    stored_colspan: cell_geometry.stored_colspan,
                     vertical_align: cell_geometry.vertical_align,
                     rowspan: 1,
                     continuation: cell_geometry.continuation,
@@ -1271,13 +1299,17 @@ fn parse_tables(
             .enumerate()
             .map(|(index, value)| (*value, index as u32))
             .collect();
+        let stored_columns = stored_column_count(&rows);
         let table_id = format!("table:{table_index}");
         let mut cell_ids = Vec::new();
         for (row_index, row) in rows.into_iter().enumerate() {
             for (occurrence, raw_cell) in row.into_iter().enumerate() {
                 let id = format!("cell:{table_index}:{row_index}:{occurrence}");
-                let colspan =
-                    positions[&(raw_cell.start + raw_cell.width)] - positions[&raw_cell.start];
+                let colspan = if stored_columns.is_some() {
+                    raw_cell.stored_colspan
+                } else {
+                    positions[&(raw_cell.start + raw_cell.width)] - positions[&raw_cell.start]
+                };
                 for line in &raw_cell.line_indices {
                     line_to_cell.insert(*line, id.clone());
                 }
@@ -1326,7 +1358,7 @@ fn parse_tables(
             anchor_section_id: anchor.map(|value| value.id.clone()),
             anchor_paragraph_id: anchor.and_then(|value| value.anchor_paragraph_id.clone()),
             row_count,
-            column_count: points.len().saturating_sub(1) as u32,
+            column_count: stored_columns.unwrap_or(points.len().saturating_sub(1) as u32),
             cell_ids,
             source_range,
         });

@@ -36,7 +36,7 @@ pub fn cell_width_to_colwidth(width: u32) -> u32 {
 /// 자기 산출물을 다시 들여와도 제자리로 안 돌아온다(noop 네이티브 2797 → colwidth 3497
 /// → 들여오기 2826, 약 1.04% 확대). 이 규칙은 그 증가를 그대로 재현한다.
 ///
-/// ⚠️ 가로병합이 있는 행의 열은 여기서 +2~+5 벗어난다. 미해결.
+/// 가로병합 칸은 합에 이 환산을 쓰지 않는다 — 열마다 환산한 합을 쓴다(`plan_table_tail`).
 pub fn colwidth_to_cell_width(colwidth: u32) -> u32 {
     let shrunk = u64::from(colwidth).saturating_mul(97) / 100;
     (shrunk.saturating_mul(5) / 6)
