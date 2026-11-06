@@ -153,7 +153,7 @@ bash apps/hlt-desktop/scripts/install-mac.sh      # 맥 앱 빌드 · 설치
 
 하네스에서 쓰기: `cargo install --path crates/hlt-cli` 뒤 `skills/seoan` 을 하네스의 스킬 폴더에 링크한다. 하네스에 깔 바이너리는 **미커밋 수정이 없는 릴리스 태그**에서 빌드한다 — `hlt-cli version` 이 빌드한 태그·커밋·미커밋 여부(`dirty`)를 알려 주고, 하네스는 이것으로 받아들일 판을 고른다.
 
-**릴리스:** `tauri.conf.json` 의 `version` 을 올리고 같은 판의 태그(`v0.6.4` 등)를 올리면, GitHub Actions(`.github/workflows/release.yml`)가 맥·윈도 설치 파일과 업데이트 파일(`latest.json` · 서명)을 만들어 Release 에 올립니다. 업데이트 서명 키는 저장소 시크릿에만 있습니다.
+**릴리스:** `tauri.conf.json` 의 `version` 을 올리고, 그 판에서 달라진 점을 `release-notes/v0.6.4.md` 처럼 태그 이름의 파일로 함께 커밋한 뒤(쓰는 형식은 `## 제목` · `- 항목` · 문단 — 앱이 업데이트 뒤 첫 실행에 이 노트를 보여 준다 · 파일이 없으면 설치 안내 한 줄) 같은 판의 태그(`v0.6.4` 등)를 올리면, GitHub Actions(`.github/workflows/release.yml`)가 맥·윈도 설치 파일과 업데이트 파일(`latest.json` · 서명)을 만들어 Release 에 올립니다. 업데이트 서명 키는 저장소 시크릿에만 있습니다.
 
 실제 출원 문서는 저장소에 넣지 않습니다. 실제 문서로 재는 테스트(`#[ignore]`)는 그 자료가 있는 환경에서만 돕니다.
 
