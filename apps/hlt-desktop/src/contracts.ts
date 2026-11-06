@@ -280,10 +280,12 @@ export interface AmendmentDoneDto {
   fin: string;
   order: number;
   items: AmendItemDto[];
-  /** 보정 전후 대비표(.docx · dta 옆 · 못 썼으면 `null`). */
-  table: string | null;
+  /** 보정서 보기(.HLT · dta 옆 · 읽기 전용 새 탭으로 열렸다 · 못 만들었으면 `null`). */
+  view: string | null;
 }
 export const editorExportAmendment = () => invoke<AmendmentDoneDto | null>('editor_export_amendment');
+/** 보정 전후 대비표(워드): 저장한 자리 · 고르기를 취소하면 `null`. */
+export const editorExportComparisonTable = () => invoke<string | null>('editor_export_comparison_table');
 /** OA 검토보고서(docx)에서 읽은 보정안 · 상세설명 오기 후보 · 도면 할 일. */
 export type ProposedClaimDto = { number: string; before: string[]; after: string[] };
 export type DescriptionNoteDto = { paragraphs: string[]; wrong: string; right: string | null; sentence: string; positional: boolean };

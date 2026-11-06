@@ -153,6 +153,8 @@ beforeEach(() => {
         return '/tmp/x.fin';
       case 'editor_export_amendment':
         return amendAnswer;
+      case 'editor_export_comparison_table':
+        return '/d/x_대비표.docx';
       case 'editor_batch_generate':
       case 'editor_batch_check':
         return batchAnswer;
@@ -1488,6 +1490,9 @@ describe('page editing', () => {
     expect(root.querySelector<HTMLElement>('.find-bar')!.hidden).toBe(false);
     await send('tool:문서 통계');
     expect(root.querySelector('.stats-shade strong')!.textContent).toBe('문서 통계');
+    await send('tool:보정 전후 대비표…');
+    expect(calls.some(([command]) => command === 'editor_export_comparison_table')).toBe(true);
+    expect(root.querySelector('.editor-status')!.textContent).toContain('보정 전후 대비표를 저장했습니다.');
     await send('help:shortcuts');
     expect(root.querySelector('.shortcut-shade strong')!.textContent).toBe('단축키 모음');
     await send('help:tours');
@@ -1888,13 +1893,15 @@ describe('page editing', () => {
     root.querySelector<HTMLFormElement>('.citation-ask')!.requestSubmit();
     await settle(10);
     expect(calls.some(([command]) => command === 'editor_export_amendment')).toBe(true);
-    // 다 만들면 상태줄에 대비표 자리도.
+    // 다 만들면 상태줄에 보정서 · 보기 자리 — 대비표는 따로 만든다 · 옛 목록 창은 없다.
     issuesAnswer = [];
-    amendAnswer = { dta: '/d/보정.dta', fin: '/d/x.fin', order: 1, items: [], table: '/d/보정_대비표.docx' };
+    amendAnswer = { dta: '/d/보정.dta', fin: '/d/x.fin', order: 1, items: [], view: '/d/보정_보정서.HLT' };
     root.querySelector<HTMLButtonElement>('[data-action="amend"]')!.click();
     await settle(10);
-    expect(root.querySelector('.editor-status')!.textContent).toContain('대비표 보정_대비표.docx');
-    expect(root.querySelector<HTMLElement>('.editor-status')!.title).toContain('대비표 /d/보정_대비표.docx');
+    const status = root.querySelector<HTMLElement>('.editor-status')!;
+    expect(status.title).toContain('보기 /d/보정_보정서.HLT');
+    expect(status.title).not.toContain('대비표');
+    expect(root.querySelector('.amend-view')).toBeNull();
   });
 
   test('identification item: right-click submenu → number (next one filled in) → heading + empty paragraph below', async () => {

@@ -1672,3 +1672,57 @@ fn deep_claim_lines_carry_tabs_into_the_submission_xml() {
         "{xml}"
     );
 }
+
+/// 보정서 보기: 최종본(.fin)에서 문단을 고쳐 만든 보정서 XML → 항목 → 보기 HLT 를 다시 열면 그 문단이 보정대상 · 정정 · 새 글로 보인다.
+#[test]
+fn the_amendment_view_shows_what_the_dta_carries() {
+    let temp = tempfile::tempdir().unwrap();
+    let fin = synthetic_fin(temp.path());
+    let mut session = EditorSession::open(&fin).unwrap();
+    let body = session
+        .paragraphs()
+        .into_iter()
+        .find(|p| p.text.starts_with("본 발명은"))
+        .unwrap()
+        .id;
+    session
+        .replace_text(&body, "본 발명은 보정한 글이다.")
+        .unwrap();
+    let after = session.materialize().unwrap();
+    let kipo = hlt_core::KipoExportOptions {
+        paragraph_numbers: session.paragraph_numbers(),
+        ..Default::default()
+    };
+    let export = hlt_core::export_amendment_from_fin(
+        &fin,
+        &after,
+        "spec_1.dta",
+        "2026-11-06",
+        &kipo,
+        &Default::default(),
+    )
+    .unwrap();
+    let items = hlt_core::amendment_items(&export.xml);
+    assert_eq!(items.len(), 1, "{}", export.xml);
+    let view = temp.path().join("spec_1_보정서.HLT");
+    hlt_core::amendment_hlt_from_items(&items, &view).unwrap();
+    let texts: Vec<String> = EditorSession::open(&view)
+        .unwrap()
+        .paragraphs()
+        .into_iter()
+        .map(|p| p.text)
+        .filter(|text| !text.is_empty())
+        .collect();
+    assert!(
+        texts[0].starts_with("【보정대상항목】 식별번호 ["),
+        "{texts:?}"
+    );
+    assert_eq!(
+        texts[1..],
+        [
+            "【보정방법】 정정",
+            "【보정내용】",
+            "본 발명은 보정한 글이다."
+        ]
+    );
+}

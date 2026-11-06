@@ -2169,23 +2169,16 @@ pub async fn editor_export_fin(
     Ok(Some(path.display().to_string()))
 }
 
-/// 보정서 한 항목(읽기 전용 보정서 보기 — 통특기 【보정대상 항목】 · 【보정방법】 · 【보정내용】).
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct AmendItemDto {
-    pub target: String,
-    pub method: String,
-    pub content: String,
-}
-
+/// 보정서생성 결과(보정서 · 갱신한 최종본 · 차수 · 항목 · 보기 HLT).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AmendmentDoneDto {
     pub dta: String,
     pub fin: String,
     /// 보정서 차수(1차 · 2차 …).
     pub order: u32,
-    pub items: Vec<AmendItemDto>,
-    /// 보정 전후 대비표(.docx · dta 옆). 못 썼으면 `None`(보정서는 그대로 낸다).
-    pub table: Option<String>,
+    pub items: Vec<hlt_core::AmendmentItem>,
+    /// 보정서 보기(.HLT · dta 옆 · 읽기 전용 새 탭으로 연다). 못 만들었으면 `None`(보정서는 그대로 낸다).
+    pub view: Option<String>,
 }
 
 /// 보정서생성(통특기 「보정서생성」): 최종본(.fin)으로 연 문서만. 보정서 파일 이름을 묻고(기본 `<문서>.dta` ·
@@ -2197,23 +2190,45 @@ pub async fn editor_export_amendment(
     app: AppHandle,
     state: State<'_, EditorState>,
 ) -> Result<Option<AmendmentDoneDto>, CoreError> {
-    let fin = state
+    // 최종본(.fin)으로 연 문서는 그 fin · 저장해 둔 문서파일(.HLT)이면 통특기처럼 보정대상 최종본을 고른다.
+    let source = state
         .slot(window.label())
         .lock()
         .ok()
-        .and_then(|slot| slot.source.clone())
-        .filter(|path| {
-            path.extension()
-                .and_then(|value| value.to_str())
-                .is_some_and(|value| value.eq_ignore_ascii_case("fin"))
-        })
-        .ok_or_else(|| {
-            let mut error = CoreError::new(ErrorCode::UnsupportedFormat, "export_amendment", false);
-            error
-                .details
-                .insert("reason".into(), "amendment_needs_final".into());
-            error
-        })?;
+        .and_then(|slot| slot.source.clone());
+    let is_fin = |path: &PathBuf| {
+        path.extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("fin"))
+    };
+    let fin = match source.clone().filter(is_fin) {
+        Some(fin) => fin,
+        None => {
+            if source.is_none() {
+                let mut error =
+                    CoreError::new(ErrorCode::UnsupportedFormat, "export_amendment", false);
+                error
+                    .details
+                    .insert("reason".into(), "amendment_needs_final".into());
+                return Err(error);
+            }
+            let mut picker = app
+                .dialog()
+                .file()
+                .set_title("보정대상 최종본 선택")
+                .add_filter("최종본", &["fin"]);
+            if let Some(folder) = source.as_deref().and_then(std::path::Path::parent) {
+                picker = picker.set_directory(folder);
+            }
+            let Some(fin) = picker
+                .blocking_pick_file()
+                .and_then(|picked| picked.into_path().ok())
+            else {
+                return Ok(None);
+            };
+            fin
+        }
+    };
     let mut dialog = app
         .dialog()
         .file()
@@ -2258,28 +2273,56 @@ pub async fn editor_export_amendment(
     write_replacing(&dta_path, &export.dta).map_err(io)?;
     // 연 fin 을 그 자리에서 바꾼다(통특기 보정서생성도 그렇다).
     write_replacing(&fin, &export.fin).map_err(io)?;
-    // 보정 전후 대비표 — 보정서와 같은 기준(연 상태 = 최종본). 덤이라 못 써도 보정서는 낸다.
-    let table_path = dta_path.with_file_name(format!("{}_대비표.docx", stem(&dta_name)));
-    let table = with_session(&state, &window, |session| Ok(session.amendment_table()))
-        .ok()
-        .flatten()
-        .filter(|rows| !rows.is_empty())
-        .and_then(|rows| {
-            hlt_core::comparison_table_docx(
-                &format!("보정 전후 대비표 — {}", stem(&dta_name)),
-                &rows,
-            )
-            .ok()
+    // 보정서 보기: dta 내용을 HLT 로 구워 읽기 전용 새 탭에 연다(통특기도 생성 뒤 보정서를 읽기 전용으로 보여 준다).
+    // 덤이라 못 만들어도 보정서는 낸다 · 다른 탭에 그 파일이 열려 있으면 덮지 않는다.
+    let items = hlt_core::amendment_items(&export.xml);
+    let view_path = dta_path.with_file_name(format!("{}_보정서.HLT", stem(&dta_name)));
+    let view = (state.window_of(&view_path).is_none()
+        && source.as_deref() != Some(view_path.as_path()))
+    .then(|| {
+        bake_replacing(&view_path, |staged| {
+            hlt_core::amendment_hlt_from_items(&items, staged)
         })
-        .filter(|bytes| write_replacing(&table_path, bytes).is_ok())
-        .map(|_| table_path.display().to_string());
+    })
+    .and_then(Result::ok)
+    .filter(|()| {
+        new_tab_with(
+            &app,
+            Some(window.label()),
+            Some(view_path.clone()),
+            Some(OpenMode::ReadOnly),
+        )
+        .is_ok()
+    })
+    .map(|()| view_path.display().to_string());
     Ok(Some(AmendmentDoneDto {
-        table,
+        view,
         dta: dta_path.display().to_string(),
         fin: fin.display().to_string(),
         order: amendment_order(&export.xml),
-        items: amendment_items(&export.xml),
+        items,
     }))
+}
+
+/// 보정 전후 대비표(워드): 연 상태(최종본 · 보정서 기준)에 견준 바뀐 항목 · 보정 전 · 보정 후. 저장 자리를 묻는다.
+/// 견줄 것이 없으면 `amendment_table_empty` · 고르기를 취소하면 `None`.
+#[tauri::command]
+pub async fn editor_export_comparison_table(
+    window: Window,
+    app: AppHandle,
+    state: State<'_, EditorState>,
+) -> Result<Option<String>, CoreError> {
+    let rows = with_session(&state, &window, |session| Ok(session.amendment_table()))?
+        .filter(|rows| !rows.is_empty())
+        .ok_or_else(|| refused("amendment_table_empty"))?;
+    let name = stem(&window.title().unwrap_or_default());
+    let Some(path) = pick_save(&app, &format!("{name}_대비표.docx"), "docx") else {
+        return Ok(None);
+    };
+    let bytes = hlt_core::comparison_table_docx(&format!("보정 전후 대비표 — {name}"), &rows)?;
+    write_replacing(&path, &bytes)
+        .map_err(|_| CoreError::new(ErrorCode::IoError, "comparison_table", false))?;
+    Ok(Some(path.display().to_string()))
 }
 
 /// 있는 파일도 덮는다 — 옆 임시 파일(`이름.확장자.tmp`)에 다 쓴 뒤 바꿔 끼워, 실패해도 반쯤 쓴 파일 대신 옛 파일이 남는다.
@@ -2316,55 +2359,6 @@ fn amendment_order(xml: &str) -> u32 {
         .and_then(|(_, rest)| rest.split_once('"'))
         .and_then(|(value, _)| value.parse::<u32>().ok())
         .map_or(1, |value| value.saturating_sub(1).max(1))
-}
-
-/// 보정서 XML 의 `<AmendBody>` 를 통특기 보정서 보기 항목으로.
-fn amendment_items(xml: &str) -> Vec<AmendItemDto> {
-    let attribute = |head: &str, name: &str| {
-        head.split_once(&format!("{name}=\""))
-            .and_then(|(_, rest)| rest.split_once('"'))
-            .map(|(value, _)| value.to_string())
-            .unwrap_or_default()
-    };
-    xml.split("<AmendBody ")
-        .skip(1)
-        .filter_map(|chunk| {
-            let (head, rest) = chunk.split_once('>')?;
-            let body = rest.split("</AmendBody>").next().unwrap_or_default();
-            let number = attribute(head, "attributeValue")
-                .trim_start_matches('0')
-                .to_string();
-            let target = match attribute(head, "elementName").as_str() {
-                "claim" => format!("청구항 {number}"),
-                "p" => format!("식별번호 [{:0>4}]", number),
-                "invention-title" => "발명의 명칭".to_string(),
-                "summary" => "요약".to_string(),
-                "figure" => format!("도 {number}"),
-                other => other.to_string(),
-            };
-            let method = match attribute(head, "status").as_str() {
-                "D" => "삭제",
-                "I" => "추가",
-                _ => "정정",
-            }
-            .to_string();
-            let mut content = String::new();
-            let mut in_tag = false;
-            for ch in body.replace("<br/>", "\n").chars() {
-                match ch {
-                    '<' => in_tag = true,
-                    '>' => in_tag = false,
-                    _ if !in_tag => content.push(ch),
-                    _ => {}
-                }
-            }
-            Some(AmendItemDto {
-                target,
-                method,
-                content: content.trim().to_string(),
-            })
-        })
-        .collect()
 }
 
 /// 단락삭제(통특기 「단락삭제」 대화상자): 종류 하나 · 번호 여럿. 【청구항 N】은 내용까지 지운다.
@@ -2495,7 +2489,8 @@ mod tests {
 
 #[cfg(test)]
 mod amendment_view_tests {
-    use super::{amendment_items, amendment_order};
+    use super::amendment_order;
+    use hlt_core::amendment_items;
 
     /// 통특기 보정서(dta 의 XML 꼴) → 보정서 보기 항목 · 차수.
     #[test]

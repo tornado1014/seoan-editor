@@ -24,6 +24,7 @@ import {
   type TableOperationDto,
   type CellPositionDto,
   editorExportAmendment,
+  editorExportComparisonTable,
   editorReadReview,
   editorAmendmentBasis,
   editorAmendmentMarks,
@@ -91,7 +92,6 @@ import {
   type EditorParagraphDto,
   type EditorViewDto,
   type PlannedPageDto,
-  type AmendmentDoneDto,
   type AmendmentMarksDto,
   type CitationIssueDto,
   type SubmitIssueDto,
@@ -337,7 +337,7 @@ export function mountEditor(root: HTMLElement): void {
             <option value="file">다른 파일…</option>
           </select>
           <button type="button" data-action="basis" disabled title="보정 근거 — 바뀐 청구항의 새 말이 있는 원출원 명세서 단락 · 의견서 인용 문장 초안">${icon('evidence')}<span>보정 근거</span></button>
-          <button type="button" data-action="amend" disabled title="보정서 만들기 — 청구항 인용을 먼저 점검하고 보정서(.dta) · 대비표(워드)를 만듭니다">${icon('amend')}<span>보정서</span></button>
+          <button type="button" data-action="amend" disabled title="보정서 만들기 — 청구항 인용을 먼저 점검하고 보정서(.dta)를 만들어 최종본(.fin)에 더한 뒤 보정서를 새 탭에 보여 줍니다">${icon('amend')}<span>보정서</span></button>
         </div>
         <div class="tb-group" role="group" aria-label="내보내기">
           <button type="button" data-action="pdf" disabled title="PDF로 인쇄">${icon('print')}<span>PDF</span></button>
@@ -1803,21 +1803,6 @@ export function mountEditor(root: HTMLElement): void {
   }
 
   /** 읽기 전용 보정서 보기(통특기 보정서생성 뒤 「…dta - 읽기 전용」 창): 【보정대상 항목】 · 【보정방법】 · 【보정내용】. */
-  function showAmendment(done: AmendmentDoneDto) {
-    const box = document.createElement('div');
-    box.className = 'amend-view';
-    const rows = done.items
-      .map(
-        (item) => `<p><b>【보정대상 항목】</b> ${escapeHtml(item.target)}</p><p><b>【보정방법】</b> ${escapeHtml(item.method)}</p>${
-          item.content ? `<p><b>【보정내용】</b></p><pre>${escapeHtml(item.content)}</pre>` : ''
-        }`,
-      )
-      .join('');
-    box.innerHTML = `<header>${escapeHtml(done.dta)} - 읽기 전용<button type="button">닫기</button></header><div class="amend-body">${rows}</div>`;
-    box.querySelector('button')!.addEventListener('click', () => box.remove());
-    root.append(box);
-  }
-
   /** 식별항목 번호 묻기(작은 입력 칸 · Enter = 넣기 · Esc = 취소). 영문 · 숫자만. */
   /** CP949 밖 글자 확인 표: 줄 = 글자 한 종류(코드 · 몇 곳 · 처음 나온 곳 앞뒤 글 · 바꿀 글자 칸 · 지움).
    *  돌려줌 = 고른 대응(글자 → 바꿀 글 · 빈 글 = 지움) · 취소면 `null`. 바꿀 글도 CP949 인지 확인한 뒤에 닫는다. */
@@ -3328,7 +3313,17 @@ export function mountEditor(root: HTMLElement): void {
     },
     { label: osKeys('다음 고친 곳 (⌘])'), run: () => void jumpEdit(true) },
     { label: osKeys('앞 고친 곳 (⌘[)'), run: () => void jumpEdit(false) },
+    { label: '보정 전후 대비표…', run: () => void comparisonTable() },
   ];
+
+  async function comparisonTable() {
+    try {
+      const path = await editorExportComparisonTable();
+      if (path) say(`보정 전후 대비표를 저장했습니다. ${path}`);
+    } catch (error) {
+      fail('대비표', error);
+    }
+  }
 
   async function runBatch(kind: 'generate' | 'check') {
     try {
@@ -3738,8 +3733,7 @@ export function mountEditor(root: HTMLElement): void {
           const done = await editorExportAmendment();
           if (done) {
             stamp();
-            say(`보정서(${done.order}차) 생성작업을 완료하였습니다. ${done.dta} · 최종본 갱신 ${done.fin}${done.table ? ` · 대비표 ${done.table}` : ''}`);
-            showAmendment(done);
+            say(`보정서(${done.order}차) 생성작업을 완료하였습니다. 보정서 ${done.dta} · 최종본 갱신 ${done.fin}${done.view ? ` · 보기 ${done.view}` : ''}`);
           } else say('');
         } catch (error) {
           fail('보정서', error);
@@ -4006,7 +4000,8 @@ function describe(error: unknown): string {
       'table_skipped:index_out_of_range': '표 밖의 자리입니다',
       'table_skipped:no_change': '바뀐 것이 없습니다',
       amendment_empty: '변경된 내용이 없습니다',
-      amendment_needs_final: '최종본(.fin)으로 연 문서에서만 보정서를 만듭니다(열기에서 .fin 을 고르세요)',
+      amendment_needs_final: '최종본(.fin)으로 연 문서나 저장한 문서파일(.HLT)에서 보정서를 만듭니다',
+      amendment_table_empty: '견줄 보정 전 상태가 없거나 바뀐 곳이 없습니다(최종본으로 연 문서에서 고친 뒤 쓰세요)',
       item_missing: '그 번호의 식별항목이 없습니다',
       open_elsewhere: '그 파일은 다른 탭에 열려 있습니다 — 그 탭에서 저장하거나 닫은 뒤 하세요',
       read_only_save: '읽기 전용으로 연 문서입니다 — 「다른 이름으로 저장」으로 사본을 만드세요',

@@ -32,7 +32,7 @@ pub(crate) fn is_opinion_xml(xml: &str) -> bool {
 
 /// 의견서 XML 을 새 `.HLT` 로 굽는다(`work` = 틀을 둘 빈 폴더).
 pub(crate) fn hlt_from_opinion_xml(xml: &str, work: &Path, output: &Path) -> Result<(), CoreError> {
-    hlt_from_paragraphs(&parse_opinion(xml)?, work, output)
+    hlt_from_paragraphs(&parse_opinion(xml)?, None, work, output)
 }
 
 /// 글로 새 의견서: 줄 하나 = 【의견내용】 아래 본문 문단 하나(빈 줄 = 빈 문단 · 서식 없음).
@@ -52,11 +52,112 @@ pub fn opinion_hlt_from_text(text: &str, output: &Path) -> Result<(), CoreError>
         return crate::save_new_opinion_as_new(output, WriteOptions::default()).map(|_| ());
     }
     let work = tempfile::tempdir().map_err(|_| import_error("work"))?;
-    hlt_from_paragraphs(&paragraphs, work.path(), output)
+    hlt_from_paragraphs(&paragraphs, None, work.path(), output)
+}
+
+/// 보정서 보기 한 항목(통특기 보정서: 【보정대상항목】 · 【보정방법】 · 【보정내용】).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct AmendmentItem {
+    pub target: String,
+    pub method: String,
+    pub content: String,
+}
+
+/// 보정서 XML 의 `<AmendBody>` → 보기 항목(문서 순서).
+pub fn amendment_items(xml: &str) -> Vec<AmendmentItem> {
+    let attribute = |head: &str, name: &str| {
+        head.split_once(&format!("{name}=\""))
+            .and_then(|(_, rest)| rest.split_once('"'))
+            .map(|(value, _)| value.to_string())
+            .unwrap_or_default()
+    };
+    xml.split("<AmendBody ")
+        .skip(1)
+        .filter_map(|chunk| {
+            let (head, rest) = chunk.split_once('>')?;
+            let body = rest.split("</AmendBody>").next().unwrap_or_default();
+            let number = attribute(head, "attributeValue")
+                .trim_start_matches('0')
+                .to_string();
+            let target = match attribute(head, "elementName").as_str() {
+                "claim" => format!("청구항 {number}"),
+                "p" => format!("식별번호 [{:0>4}]", number),
+                "invention-title" => "발명의 명칭".to_string(),
+                "summary" => "요약".to_string(),
+                "figure" => format!("도 {number}"),
+                other => other.to_string(),
+            };
+            let method = match attribute(head, "status").as_str() {
+                "D" => "삭제",
+                "I" => "추가",
+                _ => "정정",
+            }
+            .to_string();
+            let mut content = String::new();
+            let mut in_tag = false;
+            for ch in body.replace("<br/>", "\n").chars() {
+                match ch {
+                    '<' => in_tag = true,
+                    '>' => in_tag = false,
+                    _ if !in_tag => content.push(ch),
+                    _ => {}
+                }
+            }
+            Some(AmendmentItem {
+                target,
+                method,
+                content: content.trim().to_string(),
+            })
+        })
+        .collect()
+}
+
+/// 보정서 보기 `.HLT`: 항목마다 【보정대상항목】 · 【보정방법】 · (삭제가 아니면) 【보정내용】 + 내용 줄, 항목 사이 빈 줄.
+/// 틀은 새 의견서와 같고, 틀의 표제(【의견내용】)는 첫 항목의 【보정대상항목】 줄로 바꾼다.
+// ponytail: 보정내용은 글만 싣는다(그림 · 수식은 태그째 벗겨진다) — 도면 보정 보기가 필요하면 dta 그림을 싣는다.
+pub fn amendment_hlt_from_items(items: &[AmendmentItem], output: &Path) -> Result<(), CoreError> {
+    let label = |mark: &str, rest: &str| OpinionParagraph {
+        runs: if rest.is_empty() {
+            vec![(mark.to_string(), vec![CharacterFormat::Bold])]
+        } else {
+            vec![
+                (mark.to_string(), vec![CharacterFormat::Bold]),
+                (format!(" {rest}"), Vec::new()),
+            ]
+        },
+        ..OpinionParagraph::default()
+    };
+    let plain = |line: &str| OpinionParagraph {
+        runs: if line.is_empty() {
+            Vec::new()
+        } else {
+            vec![(line.to_string(), Vec::new())]
+        },
+        ..OpinionParagraph::default()
+    };
+    let Some(first) = items.first() else {
+        return Err(import_error("amendment_empty"));
+    };
+    let mut paragraphs = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        if index > 0 {
+            paragraphs.push(OpinionParagraph::default());
+            paragraphs.push(label("【보정대상항목】", &item.target));
+        }
+        paragraphs.push(label("【보정방법】", &item.method));
+        if item.method != "삭제" {
+            paragraphs.push(label("【보정내용】", ""));
+            paragraphs.extend(item.content.lines().map(plain));
+        }
+    }
+    let heading = format!("【보정대상항목】 {}", first.target);
+    let work = tempfile::tempdir().map_err(|_| import_error("work"))?;
+    hlt_from_paragraphs(&paragraphs, Some(&heading), work.path(), output)
 }
 
 fn hlt_from_paragraphs(
     paragraphs: &[OpinionParagraph],
+    heading: Option<&str>,
     work: &Path,
     output: &Path,
 ) -> Result<(), CoreError> {
@@ -83,6 +184,9 @@ fn hlt_from_paragraphs(
         .map(|paragraph| paragraph.indent_raw as i32)
         .unwrap_or(0);
     let (first, last) = (first.id.clone(), last.id.clone());
+    if let (Some(heading), Some(top)) = (heading, template.first()) {
+        session.replace_text(&top.id, heading)?;
+    }
     if first != last {
         session.delete_range(&first, 0, &last, 0)?;
     }
