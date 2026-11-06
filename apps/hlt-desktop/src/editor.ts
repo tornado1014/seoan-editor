@@ -1,6 +1,7 @@
 // 편집 화면(P5): 도구 막대 · 구조 창 · 쪽 화면 · 문단 고치기 창.
 // 쪽은 보일 때 한 쪽씩 받아 그린다. 고치면 문서 전체가 다시 구워지고 보이는 쪽을 다시 받는다.
 import { listen } from '@tauri-apps/api/event';
+import { osKeys } from './keys';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Menu } from '@tauri-apps/api/menu';
 import {
@@ -228,7 +229,7 @@ const icon = (name: string) =>
 export function mountEditor(root: HTMLElement): void {
   /** 쪽 그리기 배율(pt → 화면 px) — 문서 배율(설정 · ⌘+ ⌘− ⌘0)이 곱해진다. 툴바 · 개요는 그대로. */
   let scale = SCALE;
-  root.innerHTML = `
+  root.innerHTML = osKeys(`
     <div class="editor">
       <div class="editor-toolbar" role="toolbar">
         <div class="tb-group" role="group" aria-label="파일">
@@ -389,7 +390,7 @@ export function mountEditor(root: HTMLElement): void {
           </div>
         </div>
       </div>
-    </div>`;
+    </div>`);
   const q = <T extends Element>(selector: string) => root.querySelector<T>(selector)!;
   const pagesRoot = q<HTMLDivElement>('.editor-pages');
   const outlineRoot = q<HTMLElement>('.editor-outline');
@@ -480,6 +481,7 @@ export function mountEditor(root: HTMLElement): void {
   );
 
   const say = (text: string) => {
+    text = osKeys(text);
     status.textContent = shortenPaths(text);
     status.title = text;
   };
@@ -2196,7 +2198,7 @@ export function mountEditor(root: HTMLElement): void {
         }
         button.replaceWith(
           Object.assign(document.createElement('p'), {
-            textContent: `공백 두 칸을 한 칸으로 고쳤습니다(⌘Z로 되돌리기).${left.size ? ` 표 칸 ${left.size}곳은 직접 고치세요.` : ''}`,
+            textContent: osKeys(`공백 두 칸을 한 칸으로 고쳤습니다(⌘Z로 되돌리기).${left.size ? ` 표 칸 ${left.size}곳은 직접 고치세요.` : ''}`),
           }),
         );
       });
@@ -2803,7 +2805,7 @@ export function mountEditor(root: HTMLElement): void {
       <label>자동 저장 간격 <input name="autosave" type="number" min="1" max="60" value="${current.autosave_minutes}"> 분 — 고친 뒤 손을 멈추면 복구본을 둡니다</label>
       <label>이전 판 보관 <input name="keep" type="number" min="1" max="100" value="${current.history_keep}"> 개 — 파일마다 최근 판만</label>
       <label>이전 판 보관 기간 <input name="days" type="number" min="1" max="365" value="${current.history_days}"> 일 — 지난 판은 지웁니다</label>
-      <label>문서 배율 <input name="zoom" type="number" min="50" max="200" step="10" value="${Math.round(current.zoom * 100)}"> % — ⌘+ · ⌘− · ⌘0</label>
+      <label>문서 배율 <input name="zoom" type="number" min="50" max="200" step="10" value="${Math.round(current.zoom * 100)}"> % — ${osKeys('⌘+ · ⌘− · ⌘0')}</label>
       <label><input name="marks" type="checkbox"${current.marks_default ? ' checked' : ''}> 문단부호(↵)를 기본으로 보이기</label>
       <div class="settings-buttons"><button type="submit">저장</button><button type="button" class="settings-cancel">취소</button></div></form>`;
     const form = shade.querySelector<HTMLFormElement>('form')!;
@@ -3259,7 +3261,7 @@ export function mountEditor(root: HTMLElement): void {
     // 도움말을 열었으면 처음 실행 권유는 할 일을 다 했다.
     root.querySelector<HTMLButtonElement>('.tour-invite-close')?.click();
     openTourList(root, () =>
-      showTable('단축키 모음', ['단축키', '하는 일'], SHORTCUTS.map((cells) => ({ cells })), 'shortcut-shade'),
+      showTable('단축키 모음', ['단축키', '하는 일'], SHORTCUTS.map((cells) => ({ cells: cells.map((cell) => osKeys(cell)) })), 'shortcut-shade'),
     );
   }
 
@@ -3277,8 +3279,8 @@ export function mountEditor(root: HTMLElement): void {
         showTable('문서 통계', ['항목', '값'], rows.map((cells) => ({ cells })), 'stats-shade');
       },
     },
-    { label: '다음 고친 곳 (⌘])', run: () => void jumpEdit(true) },
-    { label: '앞 고친 곳 (⌘[)', run: () => void jumpEdit(false) },
+    { label: osKeys('다음 고친 곳 (⌘])'), run: () => void jumpEdit(true) },
+    { label: osKeys('앞 고친 곳 (⌘[)'), run: () => void jumpEdit(false) },
   ];
 
   async function runBatch(kind: 'generate' | 'check') {
@@ -3323,7 +3325,7 @@ export function mountEditor(root: HTMLElement): void {
       else tool?.run();
     } else if (id === 'batch:generate' || id === 'batch:check') void runBatch(id === 'batch:generate' ? 'generate' : 'check');
     else if (id === 'help:tours') openHelp();
-    else if (id === 'help:shortcuts') showTable('단축키 모음', ['단축키', '하는 일'], SHORTCUTS.map((cells) => ({ cells })), 'shortcut-shade');
+    else if (id === 'help:shortcuts') showTable('단축키 모음', ['단축키', '하는 일'], SHORTCUTS.map((cells) => ({ cells: cells.map((cell) => osKeys(cell)) })), 'shortcut-shade');
     else if (id === 'palette') openPalette();
     else if (id === 'go') {
       if (view) void askGo();

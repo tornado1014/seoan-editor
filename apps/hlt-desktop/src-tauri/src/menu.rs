@@ -19,8 +19,38 @@ pub const TOOLS: [&str; 7] = [
     "앞 고친 곳 (⌘[)",
 ];
 
+/// 이름 끝 단축키 표기: 맥 표기(⌘ ⇧ ⌥ ⌃)로 쓰고 윈도에서는 Ctrl · Alt · Shift 로(화면 `keys.ts` 와 같은 규칙).
+/// 메뉴 id 는 그대로 두고 보이는 이름만 바꾼다.
+fn keys(text: &str, windows: bool) -> String {
+    if !windows {
+        return text.to_string();
+    }
+    let mut out = String::new();
+    let mut group = String::new();
+    let flush = |group: &mut String, out: &mut String| {
+        for (marks, name) in [("⌘⌃", "Ctrl+"), ("⌥", "Alt+"), ("⇧", "Shift+")] {
+            if marks.chars().any(|mark| group.contains(mark)) {
+                out.push_str(name);
+            }
+        }
+        group.clear();
+    };
+    for ch in text.chars() {
+        if "⌘⌃⌥⇧".contains(ch) {
+            group.push(ch);
+        } else {
+            flush(&mut group, &mut out);
+            out.push(ch);
+        }
+    }
+    flush(&mut group, &mut out);
+    out
+}
+
 pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
-    let item = |id: &str, text: &str| MenuItem::with_id(app, id, text, true, None::<&str>);
+    let item = |id: &str, text: &str| {
+        MenuItem::with_id(app, id, keys(text, cfg!(windows)), true, None::<&str>)
+    };
     let action = |name: &str, text: &str| item(&format!("action:{name}"), text);
     let file = SubmenuBuilder::new(app, "파일")
         .item(&action("new-tab", "새 탭 (⌘T)")?)
@@ -164,4 +194,21 @@ pub fn forward(app: &AppHandle, id: &str) -> bool {
         let _ = app.emit_to(label.as_str(), "menu-action", id.to_string());
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn windows_labels_spell_out_the_modifiers() {
+        assert_eq!(super::keys("저장 (⌘S)", false), "저장 (⌘S)");
+        assert_eq!(super::keys("저장 (⌘S)", true), "저장 (Ctrl+S)");
+        assert_eq!(
+            super::keys("다른 이름으로 저장… (⇧⌘S)", true),
+            "다른 이름으로 저장… (Ctrl+Shift+S)"
+        );
+        assert_eq!(
+            super::keys("다음 고친 곳 (⌘])", true),
+            "다음 고친 곳 (Ctrl+])"
+        );
+    }
 }

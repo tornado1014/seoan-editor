@@ -1,6 +1,11 @@
 // 기능 투어: 실제 화면 위에서 그 기능의 단추 · 칸을 차례로 비추고(나머지는 어둡게) 말풍선으로 설명한다.
 // 투어는 데이터(단계 목록) · 엔진은 하나. 투어는 문서를 고치지 않는다 — 단계 준비로 연 것(찾기 막대 등)은 끝낼 때 되돌린다.
 
+import { isWindows, osKeys } from './keys';
+
+/** 설정 메뉴 자리 — 맥은 앱 메뉴, 윈도는 「도구」 끝. */
+const SETTINGS_MENU = isWindows() ? '「도구 › 설정…」' : '「서안 통특기 › 설정…」';
+
 export interface TourStep {
   /** 비출 화면 요소(선택자). 없거나 보이지 않으면 말풍선만 가운데에. */
   target: string;
@@ -242,7 +247,7 @@ export const TOURS: Tour[] = [
     summary: '글자 크기 · 자동 저장 간격 · 이전 판 보관',
     steps: [
       { target: '.zoom-box', title: '문서 배율', text: '문서 칸 오른쪽 아래 − · 100% · + (또는 ⌘+ 확대 · ⌘− 축소 · ⌘0 실제 크기 · 50~200%). 문서 쪽만 커지고 툴바 · 개요는 그대로입니다. 모든 탭이 같은 배율이 되고 다음 실행에도 남습니다.' },
-      { target: '.editor-toolbar', title: '설정', text: '⌘,(메뉴 「서안 통특기 › 설정…」)에서 자동 저장 간격 · 이전 판 보관 개수와 날수 · 문서 배율 · 문단부호 기본 보이기를 바꿉니다.' },
+      { target: '.editor-toolbar', title: '설정', text: `⌘,(메뉴 ${SETTINGS_MENU})에서 자동 저장 간격 · 이전 판 보관 개수와 날수 · 문서 배율 · 문단부호 기본 보이기를 바꿉니다.` },
     ],
   },
   {
@@ -308,9 +313,9 @@ export function runTour(root: HTMLElement, tour: Tour, onEnd: () => void = () =>
     at = index;
     const step = tour.steps[at];
     undo = step.prepare?.(root);
-    layer.querySelector('.tour-count')!.textContent = `${tour.title} · ${at + 1}/${tour.steps.length}`;
-    layer.querySelector('.tour-title')!.textContent = step.title;
-    layer.querySelector('.tour-text')!.textContent = step.text;
+    layer.querySelector('.tour-count')!.textContent = osKeys(`${tour.title} · ${at + 1}/${tour.steps.length}`);
+    layer.querySelector('.tour-title')!.textContent = osKeys(step.title);
+    layer.querySelector('.tour-text')!.textContent = osKeys(step.text);
     layer.querySelector<HTMLButtonElement>('.tour-prev')!.disabled = at === 0;
     layer.querySelector('.tour-next')!.textContent = at === tour.steps.length - 1 ? '마치기' : '다음';
     place();
@@ -358,7 +363,7 @@ export function openHelp(root: HTMLElement, showShortcuts: () => void): void {
         `<section><h3>${escape(group)}</h3><ul>${TOURS.filter((tour) => tour.group === group)
           .map(
             (tour) =>
-              `<li><button type="button" class="help-tour" data-tour="${tour.id}"><strong>${escape(tour.title)}</strong><span>${escape(tour.summary)}</span></button></li>`,
+              `<li><button type="button" class="help-tour" data-tour="${tour.id}"><strong>${escape(osKeys(tour.title))}</strong><span>${escape(osKeys(tour.summary))}</span></button></li>`,
           )
           .join('')}</ul></section>`,
     )
