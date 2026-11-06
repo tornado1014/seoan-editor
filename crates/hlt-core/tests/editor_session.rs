@@ -1765,11 +1765,16 @@ fn excluded_and_deleted_amendments_leave_the_baseline() {
             dta,
             "2026-11-06",
             &kipo,
-            &Default::default(),
+            // 앱처럼 차수를 비워 넘긴다(기본값 003 은 고정 차수).
+            &hlt_core::AmendmentOptions {
+                dta_version: String::new(),
+                ..Default::default()
+            },
         )
         .unwrap();
         std::fs::write(&fin, &export.fin).unwrap();
-        hlt_core::amendment_items(&export.xml)
+        let version = export.xml.split("dtaVersion=\"").nth(1).unwrap()[..3].to_string();
+        (hlt_core::amendment_items(&export.xml), version)
     };
     let set = |states: &[(&str, hlt_core::AmendmentState)]| {
         let states: Vec<(String, hlt_core::AmendmentState)> = states
@@ -1798,7 +1803,9 @@ fn excluded_and_deleted_amendments_leave_the_baseline() {
         original_text,
         "제외한 보정서는 기준에 안 든다"
     );
-    // 제외한 뒤 다시 만들면 첫 보정서와 같은 내용(쌓이면 「변경 없음」이 된다).
+    // 제외한 뒤 다시 만들면 첫 보정서와 같은 내용(쌓이면 「변경 없음」이 된다). 차수도 같다 — 통특기는 제외한
+    // 보정서를 dtaVersion 에 안 센다(xresult 는 AMD002 · 완료 문구는 「2차」인데 dtaVersion 은 002 · 통특기 실측).
+    assert_eq!(first.1, "002");
     assert_eq!(amend("spec_2.dta"), first);
 
     set(&[("spec_1.dta", Deleted)]);
@@ -1815,4 +1822,22 @@ fn excluded_and_deleted_amendments_leave_the_baseline() {
     assert_eq!(body_text(&fin), original_text);
     set(&[("spec_2.dta", Submitted)]);
     assert_eq!(body_text(&fin), amended_text, "다시 제출하면 반영된다");
+
+    // 다 지우면 [AMENDMENT] 절이 없다 — 보정한 적 없는 최종본과 같은 xresult(통특기 실측).
+    set(&[("spec_2.dta", Deleted)]);
+    let xresult = |fin: &std::path::Path| {
+        use std::io::Read;
+        let mut text = String::new();
+        zip::ZipArchive::new(std::fs::File::open(fin).unwrap())
+            .unwrap()
+            .by_name("xresult.inf")
+            .unwrap()
+            .read_to_string(&mut text)
+            .unwrap();
+        text
+    };
+    let fresh = temp.path().join("fresh");
+    std::fs::create_dir(&fresh).unwrap();
+    assert_eq!(xresult(&fin), xresult(&synthetic_fin(&fresh)));
+    assert_eq!(body_text(&fin), original_text);
 }

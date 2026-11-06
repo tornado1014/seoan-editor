@@ -1324,7 +1324,7 @@ mod final_version_tests {
 /// 보정서생성(통특기와 같은 흐름): 최종본 `.fin` 의 명세서 XML 청구항(보정 전)과 보정한 HLT(보정 후)를 대조해
 /// `.dta` 를 만들고 그 `.fin` 에 더한다:
 /// - documentID = 그 `.fin` 의 `APPTIME` (2/2) · 발명의 명칭 = 명세서 `invention-title` 의 「국문{영문}」.
-/// - docType = 명세서 뿌리 요소 · dtaVersion = 보정서 순번 + 1(`options.dta_version` 이 비면).
+/// - docType = 명세서 뿌리 요소 · dtaVersion = 제출한 보정서 순번 + 1(`options.dta_version` 이 비면 · 제외한 것은 안 센다).
 /// - 새 `.fin` = 기존 항목(바이트 그대로) + 새 `.dta`(무압축 저장) + `[AMENDMENT]` 를 고친 `xresult.inf`.
 pub fn export_amendment_from_fin(
     final_fin: &Path,
@@ -1489,7 +1489,12 @@ pub fn export_amendment_from_fin(
         options.invention_en_title = en;
     }
     if options.dta_version.is_empty() {
-        options.dta_version = dta_version(amendments.len());
+        // 제외(상태 0)한 보정서는 차수에 안 센다(통특기 실측 · xresult 번호는 전부 센다).
+        let submitted = amendments
+            .iter()
+            .filter(|each| amendment_submitted(each))
+            .count();
+        options.dta_version = dta_version(submitted);
     }
     let xml = build_amendment_xml(&entries, &options);
     let images = amendment_images(&entries, &payloads, &source, &options.image_time)?;
@@ -1665,7 +1670,10 @@ pub fn set_fin_amendment_states(
         .next()
         .unwrap_or_default()
         .to_string();
-    text.push_str(&format!("[AMENDMENT]\r\nAMDCNT={}\r\n", kept.len()));
+    // 다 지우면 통특기는 [AMENDMENT] 절을 통째 뺀다(보정한 적 없는 최종본과 같은 꼴 · 통특기 실측).
+    if !kept.is_empty() {
+        text.push_str(&format!("[AMENDMENT]\r\nAMDCNT={}\r\n", kept.len()));
+    }
     for (index, value) in kept.iter().enumerate() {
         text.push_str(&format!("AMD{:03}={value}\r\n", index + 1));
     }
