@@ -818,7 +818,8 @@ fn container_element(marker: &str) -> Option<(&'static str, Option<&'static str>
         // 앞 절(technical-field)에 조용히 딸려 들어간다.
         "배경기술" | "발명의 배경이 되는 기술" => ("background-art", None),
         "발명의 내용" => ("", SUMMARY),
-        "해결하고자 하는 과제" => ("tech-problem", SUMMARY),
+        // 통특기 2026.11.05 판부터 표제가 「해결하려는 과제」다. 옛 판으로 만든 문서도 읽는다.
+        "해결하려는 과제" | "해결하고자 하는 과제" => ("tech-problem", SUMMARY),
         "과제의 해결 수단" => ("tech-solution", SUMMARY),
         "발명의 효과" => ("advantageous-effects", SUMMARY),
         "도면의 간단한 설명" => ("description-of-drawings", None),
@@ -1310,5 +1311,17 @@ mod figure_number_tests {
         assert_eq!(super::figure_number("【도 12】"), "12");
         assert_eq!(super::figure_number("도 3b"), "3b");
         assert_eq!(super::figure_number("【수학식 7】"), "7");
+    }
+
+    #[test]
+    fn both_problem_headings_open_tech_problem() {
+        for marker in ["【해결하려는 과제】", "【해결하고자 하는 과제】"] {
+            let (tag, parent) = super::container_element(marker).unwrap();
+            assert_eq!(
+                (tag, parent),
+                ("tech-problem", Some("summary-of-invention")),
+                "{marker}"
+            );
+        }
     }
 }

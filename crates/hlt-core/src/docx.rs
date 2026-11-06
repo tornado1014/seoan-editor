@@ -436,7 +436,7 @@ fn append_word_paragraph(
 ) -> Result<(), CoreError> {
     let draft = parse_word_paragraph(paragraph, source)?;
     let paragraph_id = format!("paragraph:{}", document.paragraphs.len() + 1);
-    let (inlines, image_ids) = materialize_docx_inlines(
+    let (mut inlines, image_ids) = materialize_docx_inlines(
         document,
         image_sources,
         media,
@@ -445,7 +445,20 @@ fn append_word_paragraph(
         draft.inlines,
         source,
     )?;
-    let text = hml_inline_text(&inlines);
+    let mut text = hml_inline_text(&inlines);
+    // 통특기 2026.11.05 판부터 이 표제는 【해결하려는 과제】다. 옛 이름으로 쓴 원고도 새 이름으로 굽는다.
+    if section_marker(&text).as_deref() == Some("【해결하고자 하는 과제】") {
+        let (formats, size) = match inlines.first() {
+            Some(HmlInline::Text { formats, size, .. }) => (formats.clone(), *size),
+            _ => (Vec::new(), None),
+        };
+        text = "【해결하려는 과제】".to_string();
+        inlines = vec![HmlInline::Text {
+            text: text.clone(),
+            formats,
+            size,
+        }];
+    }
     let marker = section_marker(&text);
     let section_id = if let Some(title) = marker.as_ref() {
         let index = document.sections.len() as u32 + 1;

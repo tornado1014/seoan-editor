@@ -1605,6 +1605,40 @@ fn indent_moves_the_whole_paragraph() {
 
 /// 명세서 제출 XML 에는 들여쓰기 칸이 없다. 한 단 넘게 들여쓴 청구항 줄은 넘는 단 수만큼 `<br/>` 뒤에 탭을 둔다
 /// (첫 줄 두 단 · 문단 전체 한 단 더 → 탭 하나). 한 단짜리 줄은 그대로.
+/// 통특기 2026.11.05 판부터 `tech-problem` 표제는 【해결하려는 과제】다. 굽기는 새 이름, 내보내기는 그 절을 `tech-problem` 으로.
+#[test]
+fn tech_problem_uses_the_new_heading_and_survives_the_submission_xml() {
+    let temp = tempfile::tempdir().unwrap();
+    let spec = SYNTHETIC_SPEC.replace(
+        "</technical-field>",
+        "</technical-field>\n<summary-of-invention><tech-problem><p num=\"0002\">과제 문단이다.</p></tech-problem></summary-of-invention>",
+    );
+    assert_ne!(spec, SYNTHETIC_SPEC);
+    let fin = synthetic_fin_with(temp.path(), &spec);
+    let mut session = EditorSession::open(&fin).unwrap();
+    let texts: Vec<String> = session
+        .paragraphs()
+        .iter()
+        .map(|p| p.text.clone())
+        .collect();
+    assert!(
+        texts.iter().any(|t| t == "【해결하려는 과제】"),
+        "{texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|t| t == "【해결하고자 하는 과제】"),
+        "{texts:?}"
+    );
+    let out = temp.path().join("과제.HLT");
+    session.save_as(&out).unwrap();
+    let xml = hlt_core::export_kipo_xml_path(&out, &Default::default())
+        .unwrap()
+        .xml;
+    let start = xml.find("<tech-problem>").expect("tech-problem");
+    assert!(xml[start..].contains("과제 문단이다."), "{xml}");
+    assert!(xml.find("<summary-of-invention>").unwrap() < start, "{xml}");
+}
+
 #[test]
 fn deep_claim_lines_carry_tabs_into_the_submission_xml() {
     let temp = tempfile::tempdir().unwrap();

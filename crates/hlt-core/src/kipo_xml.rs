@@ -876,7 +876,7 @@ fn normalize_patent(
         builder.emit_section("【발명의 내용】");
         let mut emitted_subsection = false;
         for (tag, title) in [
-            ("tech-problem", "【해결하고자 하는 과제】"),
+            ("tech-problem", "【해결하려는 과제】"),
             ("tech-solution", "【과제의 해결 수단】"),
             ("advantageous-effects", "【발명의 효과】"),
         ] {
@@ -1176,7 +1176,9 @@ fn section_level(title: &str) -> u32 {
         "claim" | "figure" => 1,
         _ => match title {
             "발명의 설명" | "청구범위" | "요약서" | "도면" => 0,
-            "과제의 해결 수단" | "해결하고자 하는 과제" | "발명의 효과" => 2,
+            "과제의 해결 수단" | "해결하려는 과제" | "해결하고자 하는 과제" | "발명의 효과" => {
+                2
+            }
             _ => 1,
         },
     }

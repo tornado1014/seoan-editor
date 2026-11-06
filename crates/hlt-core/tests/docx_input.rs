@@ -219,6 +219,27 @@ fn real_package_inventory_matches_the_original_docx() {
     assert_eq!(first.pixel_height, 702);
 }
 
+/// 통특기 2026.11.05 판부터 【해결하고자 하는 과제】는 【해결하려는 과제】다 — 워드 원고가 옛 이름이어도 새 이름으로 읽는다.
+#[test]
+fn old_problem_heading_reads_as_the_new_one() {
+    let xml = DOCUMENT_XML.replace(
+        "<w:p><w:r><w:t>시험</w:t></w:r></w:p>",
+        "<w:p><w:r><w:t>【해결하고자 </w:t></w:r><w:r><w:t>하는 과제】</w:t></w:r></w:p><w:p><w:r><w:t>과제 문단이다.</w:t></w:r></w:p>",
+    );
+    let mut parts = valid_parts();
+    parts[1] = ("word/document.xml", xml.as_bytes());
+    let file = write_docx(&parts);
+    let document = inspect_docx_path(file.path()).unwrap().document;
+    let heading = &document.paragraphs[0];
+    assert_eq!(heading.marker.as_deref(), Some("【해결하려는 과제】"));
+    assert_eq!(heading.text, "【해결하려는 과제】");
+    assert!(
+        matches!(&heading.inlines[..], [HmlInline::Text { text, .. }] if text == "【해결하려는 과제】")
+    );
+    assert_eq!(document.sections[0].title, "【해결하려는 과제】");
+    assert_eq!(document.paragraphs[1].text, "과제 문단이다.");
+}
+
 #[test]
 fn paragraph_normalization_preserves_markers_runs_images_and_source_page_breaks() {
     let parts = vec![
