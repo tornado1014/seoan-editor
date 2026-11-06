@@ -9,7 +9,7 @@ use tauri::menu::{Menu, MenuBuilder, MenuItem, Submenu, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
 /// 「도구」 메뉴 — 화면 `TOOLS` 이름과 같아야 한다(화면 테스트가 대조한다).
-pub const TOOLS: [&str; 8] = [
+pub const TOOLS: [&str; 9] = [
     "청구항 번호 다시 매기기…",
     "도면 번호 다시 매기기…",
     "부호 목록",
@@ -18,6 +18,7 @@ pub const TOOLS: [&str; 8] = [
     "다음 고친 곳 (⌘])",
     "앞 고친 곳 (⌘[)",
     "보정 전후 대비표…",
+    "보정서 상태…",
 ];
 
 /// 이름 끝 단축키 표기: 맥 표기(⌘ ⇧ ⌥ ⌃)로 쓰고 윈도에서는 Ctrl · Alt · Shift 로(화면 `keys.ts` 와 같은 규칙).
@@ -128,7 +129,8 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .item(&action("amend-marks", "보정 표시")?)
         .item(&action("basis", "보정 근거…")?)
         .item(&action("amend", "보정서 만들기…")?)
-        .item(&item("tool:보정 전후 대비표…", "보정 전후 대비표…")?);
+        .item(&item("tool:보정 전후 대비표…", "보정 전후 대비표…")?)
+        .item(&item("tool:보정서 상태…", "보정서 상태…")?);
     let window = SubmenuBuilder::new(app, "창")
         .minimize_with_text("최소화")
         .maximize_with_text("확대/축소")

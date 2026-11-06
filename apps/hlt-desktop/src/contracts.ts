@@ -286,6 +286,17 @@ export interface AmendmentDoneDto {
 export const editorExportAmendment = () => invoke<AmendmentDoneDto | null>('editor_export_amendment');
 /** 보정 전후 대비표(워드): 저장한 자리 · 고르기를 취소하면 `null`. */
 export const editorExportComparisonTable = () => invoke<string | null>('editor_export_comparison_table');
+/** 최종본에 든 보정서(xresult 차례 · 제출/제외). */
+export interface FinAmendmentStatusDto {
+  name: string;
+  date: string;
+  submitted: boolean;
+}
+export type AmendmentStateDto = 'submitted' | 'excluded' | 'deleted';
+export const editorFinAmendments = () => invoke<FinAmendmentStatusDto[]>('editor_fin_amendments');
+/** 보정서 상태 바꾸기 → 다시 연 최종본 화면 · 저장 묻기를 취소하면 `null`. */
+export const editorSetFinAmendments = (states: [string, AmendmentStateDto][]) =>
+  invoke<EditorViewDto | null>('editor_set_fin_amendments', { states });
 /** OA 검토보고서(docx)에서 읽은 보정안 · 상세설명 오기 후보 · 도면 할 일. */
 export type ProposedClaimDto = { number: string; before: string[]; after: string[] };
 export type DescriptionNoteDto = { paragraphs: string[]; wrong: string; right: string | null; sentence: string; positional: boolean };

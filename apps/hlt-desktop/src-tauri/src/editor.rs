@@ -2304,6 +2304,50 @@ pub async fn editor_export_amendment(
     }))
 }
 
+/// 이 탭이 최종본(.fin)으로 연 문서면 그 fin(아니면 `amendment_needs_final`).
+fn opened_fin(state: &State<'_, EditorState>, window: &Window) -> Result<PathBuf, CoreError> {
+    state
+        .slot(window.label())
+        .lock()
+        .ok()
+        .and_then(|slot| slot.source.clone())
+        .filter(|path| {
+            path.extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case("fin"))
+        })
+        .ok_or_else(|| refused("fin_states_need_final"))
+}
+
+/// 보정서 상태(통특기 최종본 불러오기 「상태 변경」): 연 최종본에 든 보정서 · 제출/제외.
+#[tauri::command]
+pub async fn editor_fin_amendments(
+    window: Window,
+    state: State<'_, EditorState>,
+) -> Result<Vec<hlt_core::FinAmendmentStatus>, CoreError> {
+    hlt_core::fin_amendments(&opened_fin(&state, &window)?)
+}
+
+/// 보정서 상태 바꾸기: 고친 것이 있으면 저장을 묻고(취소 = `None`) · 이전 판을 남긴 뒤 최종본을 그 자리에서 바꾸고 다시 연다
+/// (기준이 바뀌었으니 화면도 새 기준으로).
+#[tauri::command]
+pub async fn editor_set_fin_amendments(
+    window: Window,
+    app: AppHandle,
+    state: State<'_, EditorState>,
+    states: Vec<(String, hlt_core::AmendmentState)>,
+) -> Result<Option<EditorViewDto>, CoreError> {
+    let fin = opened_fin(&state, &window)?;
+    if !confirm_discard(&app, &window, &state)? {
+        return Ok(None);
+    }
+    let bytes = hlt_core::set_fin_amendment_states(&fin, &states)?;
+    keep_history(&app, &fin);
+    write_replacing(&fin, &bytes)
+        .map_err(|_| CoreError::new(ErrorCode::IoError, "fin_amendments", false))?;
+    open_path(&state, &window, fin).await.map(Some)
+}
+
 /// 보정 전후 대비표(워드): 연 상태(최종본 · 보정서 기준)에 견준 바뀐 항목 · 보정 전 · 보정 후. 저장 자리를 묻는다.
 /// 견줄 것이 없으면 `amendment_table_empty` · 고르기를 취소하면 `None`.
 #[tauri::command]

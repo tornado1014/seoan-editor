@@ -1209,7 +1209,10 @@ fn read_final_fin<R: std::io::Read + std::io::Seek>(
                 stored.insert(entry.name().to_string(), bytes);
             }
         }
-        apply_amendment(&mut before, &xml)?;
+        // 「제외」(상태 0) 보정서는 기준에 넣지 않는다(통특기 「상태 변경」 · 실물 최종본 325 제출 · 2 제외) — 그림은 번호를 잇느라 둔다.
+        if amendment_submitted(value) {
+            apply_amendment(&mut before, &xml)?;
+        }
     }
     Ok(FinalFin {
         names,
@@ -1558,6 +1561,147 @@ pub fn export_amendment_from_fin(
         amended,
         deleted,
     })
+}
+
+/// xresult `AMD00n=이름,날짜,상태` 의 값이 「제출」인가(상태 `0` = 제외 · 그 밖은 제출로 본다).
+fn amendment_submitted(value: &str) -> bool {
+    value.rsplit(',').next().map(str::trim) != Some("0")
+}
+
+/// 최종본에 든 보정서 하나(xresult 차례).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FinAmendmentStatus {
+    pub name: String,
+    pub date: String,
+    pub submitted: bool,
+}
+
+/// 보정서 상태 바꾸기(통특기 최종본 불러오기 「상태 변경」): 제출 · 제외 · 삭제(최종본에서 완전히 지운다).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AmendmentState {
+    Submitted,
+    Excluded,
+    Deleted,
+}
+
+fn fin_xresult(path: &Path) -> Result<String, CoreError> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).map_err(|_| fin_error("fin_open"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|_| fin_error("fin_zip"))?;
+    let mut entry = archive
+        .by_name("xresult.inf")
+        .map_err(|_| fin_error("fin_xresult"))?;
+    let mut raw = Vec::new();
+    entry
+        .read_to_end(&mut raw)
+        .map_err(|_| fin_error("fin_read"))?;
+    Ok(EUC_KR.decode(&raw).0.into_owned())
+}
+
+fn amendment_lines(xresult: &str) -> Vec<String> {
+    xresult
+        .lines()
+        .filter(|line| line.starts_with("AMD") && !line.starts_with("AMDCNT="))
+        .filter_map(|line| {
+            line.split_once('=')
+                .map(|(_, value)| value.trim().to_string())
+        })
+        .collect()
+}
+
+/// 최종본에 든 보정서(xresult 차례 · 이름 · 날짜 · 제출/제외).
+pub fn fin_amendments(path: &Path) -> Result<Vec<FinAmendmentStatus>, CoreError> {
+    Ok(amendment_lines(&fin_xresult(path)?)
+        .iter()
+        .map(|value| {
+            let mut fields = value.split(',');
+            FinAmendmentStatus {
+                name: fields.next().unwrap_or_default().to_string(),
+                date: fields.next().unwrap_or_default().to_string(),
+                submitted: amendment_submitted(value),
+            }
+        })
+        .collect())
+}
+
+/// 보정서 상태를 바꾼 새 최종본 바이트: 항목은 바이트 그대로 옮기고 「삭제」 보정서는 뺀다 ·
+/// xresult 는 [APPLICATION] 그대로 + [AMENDMENT] 를 다시 센다(상태 1 = 제출 · 0 = 제외). 목록에 없는 보정서는 그대로.
+pub fn set_fin_amendment_states(
+    path: &Path,
+    states: &[(String, AmendmentState)],
+) -> Result<Vec<u8>, CoreError> {
+    let xresult = fin_xresult(path)?;
+    let state_of = |name: &str| {
+        states
+            .iter()
+            .find(|(each, _)| each == name)
+            .map(|(_, state)| *state)
+    };
+    let mut kept = Vec::new();
+    let mut deleted = Vec::new();
+    for value in amendment_lines(&xresult) {
+        let mut fields: Vec<String> = value.split(',').map(str::to_string).collect();
+        let name = fields.first().cloned().unwrap_or_default();
+        match state_of(&name) {
+            Some(AmendmentState::Deleted) => deleted.push(name),
+            Some(state) => {
+                let status = if state == AmendmentState::Submitted {
+                    "1"
+                } else {
+                    "0"
+                };
+                match fields.get_mut(2) {
+                    Some(field) => *field = status.to_string(),
+                    None => fields.push(status.to_string()),
+                }
+                kept.push(fields.join(","));
+            }
+            None => kept.push(value),
+        }
+    }
+    let mut text = xresult
+        .split("[AMENDMENT]")
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    text.push_str(&format!("[AMENDMENT]\r\nAMDCNT={}\r\n", kept.len()));
+    for (index, value) in kept.iter().enumerate() {
+        text.push_str(&format!("AMD{:03}={value}\r\n", index + 1));
+    }
+    let (xresult_bytes, _, had_errors) = EUC_KR.encode(&text);
+    if had_errors {
+        return Err(fin_error("xresult_encoding"));
+    }
+    let file = std::fs::File::open(path).map_err(|_| fin_error("fin_open"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|_| fin_error("fin_zip"))?;
+    let mut buffer = Vec::new();
+    let mut entry_names = EntryNames::new();
+    {
+        let mut zip = ZipWriter::new(Cursor::new(&mut buffer));
+        for index in 0..archive.len() {
+            let entry = archive
+                .by_index_raw(index)
+                .map_err(|_| fin_error("fin_zip"))?;
+            let name = EUC_KR.decode(entry.name_raw()).0.into_owned();
+            if name == "xresult.inf" || deleted.contains(&name) {
+                continue;
+            }
+            let raw = entry_names.raw(entry.name_raw())?;
+            zip.raw_copy_file_rename(entry, raw)
+                .map_err(|_| fin_error("zip_copy"))?;
+        }
+        zip.start_file(
+            "xresult.inf",
+            SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+        )
+        .map_err(|_| fin_error("zip_start"))?;
+        zip.write_all(&xresult_bytes)
+            .map_err(|_| fin_error("zip_write"))?;
+        zip.finish().map_err(|_| fin_error("zip_finish"))?;
+    }
+    entry_names.patch(&mut buffer)?;
+    Ok(buffer)
 }
 
 #[cfg(test)]

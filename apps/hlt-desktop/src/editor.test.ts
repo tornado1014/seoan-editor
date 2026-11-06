@@ -155,6 +155,13 @@ beforeEach(() => {
         return amendAnswer;
       case 'editor_export_comparison_table':
         return '/d/x_대비표.docx';
+      case 'editor_fin_amendments':
+        return [
+          { name: 'a_1.dta', date: '2026-01-02', submitted: true },
+          { name: 'a_2.dta', date: '2026-03-04', submitted: false },
+        ];
+      case 'editor_set_fin_amendments':
+        return view(texts);
       case 'editor_batch_generate':
       case 'editor_batch_check':
         return batchAnswer;
@@ -1500,6 +1507,27 @@ describe('page editing', () => {
     root.querySelector<HTMLButtonElement>('[data-action="save"]')!.disabled = true;
     await send('action:save');
     expect(root.querySelector('.editor-status')!.textContent).toBe('「저장」: 문서를 먼저 여세요.');
+  });
+
+  test('보정서 상태: 목록 · 제출을 제외하면 요지 변경 경고 · 바꾼 것만 보낸다', async () => {
+    const root = await open();
+    handlers.get('menu-action')!({ payload: 'tool:보정서 상태…' });
+    await settle(10);
+    const box = root.querySelector<HTMLFormElement>('.amend-states')!;
+    expect(box.textContent).toContain('a_1.dta');
+    const selects = [...box.querySelectorAll<HTMLSelectElement>('select')];
+    expect(selects.map((select) => select.value)).toEqual(['submitted', 'excluded']);
+    selects[0].value = 'excluded';
+    selects[0].dispatchEvent(new Event('change'));
+    expect(box.querySelector('.amend-states-warning')!.textContent).toContain('요지 변경');
+    selects[1].value = 'deleted';
+    selects[1].dispatchEvent(new Event('change'));
+    expect(box.querySelector('.amend-states-warning')!.textContent).toContain('완전히 지웁니다');
+    box.requestSubmit();
+    await settle(10);
+    const sent = calls.find(([command]) => command === 'editor_set_fin_amendments')!;
+    expect(sent[1]).toEqual({ states: [['a_1.dta', 'excluded'], ['a_2.dta', 'deleted']] });
+    expect(root.querySelector('.editor-status')!.textContent).toContain('보정서 상태를 바꿨습니다(2건)');
   });
 
   test('메뉴 막대(Rust)의 이름 · 할 일이 화면과 맞다', async () => {

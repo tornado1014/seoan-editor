@@ -1726,3 +1726,93 @@ fn the_amendment_view_shows_what_the_dta_carries() {
         ]
     );
 }
+
+/// 보정서 상태(통특기 최종본 불러오기 「상태 변경」): 제외하면 기준에서 빠지고(다시 만들면 첫 보정서와 같은 내용 · 쌓이지 않는다) ·
+/// 삭제하면 dta 와 xresult 줄이 사라지고 · 다시 제출하면 반영된다.
+#[test]
+fn excluded_and_deleted_amendments_leave_the_baseline() {
+    use hlt_core::AmendmentState::{Deleted, Excluded, Submitted};
+    let temp = tempfile::tempdir().unwrap();
+    let fin = synthetic_fin(temp.path());
+    let amended_text = "본 발명은 보정한 글이다.";
+    let body_text = |fin: &std::path::Path| {
+        EditorSession::open(fin)
+            .unwrap()
+            .paragraphs()
+            .into_iter()
+            .map(|p| p.text)
+            .find(|text| text.starts_with("본 발명은"))
+            .unwrap()
+    };
+    let original_text = body_text(&fin);
+    let amend = |dta: &str| {
+        let mut session = EditorSession::open(&fin).unwrap();
+        let body = session
+            .paragraphs()
+            .into_iter()
+            .find(|p| p.text.starts_with("본 발명은"))
+            .unwrap()
+            .id;
+        session.replace_text(&body, amended_text).unwrap();
+        let after = session.materialize().unwrap();
+        let kipo = hlt_core::KipoExportOptions {
+            paragraph_numbers: session.paragraph_numbers(),
+            ..Default::default()
+        };
+        let export = hlt_core::export_amendment_from_fin(
+            &fin,
+            &after,
+            dta,
+            "2026-11-06",
+            &kipo,
+            &Default::default(),
+        )
+        .unwrap();
+        std::fs::write(&fin, &export.fin).unwrap();
+        hlt_core::amendment_items(&export.xml)
+    };
+    let set = |states: &[(&str, hlt_core::AmendmentState)]| {
+        let states: Vec<(String, hlt_core::AmendmentState)> = states
+            .iter()
+            .map(|(name, state)| (name.to_string(), *state))
+            .collect();
+        let bytes = hlt_core::set_fin_amendment_states(&fin, &states).unwrap();
+        std::fs::write(&fin, bytes).unwrap();
+    };
+    let listed = || {
+        hlt_core::fin_amendments(&fin)
+            .unwrap()
+            .into_iter()
+            .map(|each| (each.name, each.submitted))
+            .collect::<Vec<_>>()
+    };
+
+    let first = amend("spec_1.dta");
+    assert_eq!(listed(), [("spec_1.dta".to_string(), true)]);
+    assert_eq!(body_text(&fin), amended_text);
+
+    set(&[("spec_1.dta", Excluded)]);
+    assert_eq!(listed(), [("spec_1.dta".to_string(), false)]);
+    assert_eq!(
+        body_text(&fin),
+        original_text,
+        "제외한 보정서는 기준에 안 든다"
+    );
+    // 제외한 뒤 다시 만들면 첫 보정서와 같은 내용(쌓이면 「변경 없음」이 된다).
+    assert_eq!(amend("spec_2.dta"), first);
+
+    set(&[("spec_1.dta", Deleted)]);
+    assert_eq!(listed(), [("spec_2.dta".to_string(), true)]);
+    let names: Vec<String> = zip::ZipArchive::new(std::fs::File::open(&fin).unwrap())
+        .unwrap()
+        .file_names()
+        .map(str::to_string)
+        .collect();
+    assert!(!names.iter().any(|name| name == "spec_1.dta"), "{names:?}");
+    assert_eq!(body_text(&fin), amended_text);
+
+    set(&[("spec_2.dta", Excluded)]);
+    assert_eq!(body_text(&fin), original_text);
+    set(&[("spec_2.dta", Submitted)]);
+    assert_eq!(body_text(&fin), amended_text, "다시 제출하면 반영된다");
+}

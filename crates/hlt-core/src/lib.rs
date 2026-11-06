@@ -95,12 +95,13 @@ pub use editor::{
 };
 pub use error::{CoreError, ErrorCode};
 pub use export_fin::{
-    AMENDABLE, AmendmentEntry, AmendmentExport, AmendmentOptions, ElementKey, FinAmendment,
-    FinAmendmentExport, FinExport, FinExportOptions, amendable_elements, apply_amendment,
-    build_amendment_dta, build_amendment_dta_with_images, build_amendment_xml, build_fin,
-    build_hlz, build_xresult, diff_elements, diff_elements_named, dta_version,
-    export_amendment_from_fin, export_amendment_path, export_fin_path, final_version_from_fin,
-    invention_titles, original_version_from_fin, sha256_hex,
+    AMENDABLE, AmendmentEntry, AmendmentExport, AmendmentOptions, AmendmentState, ElementKey,
+    FinAmendment, FinAmendmentExport, FinAmendmentStatus, FinExport, FinExportOptions,
+    amendable_elements, apply_amendment, build_amendment_dta, build_amendment_dta_with_images,
+    build_amendment_xml, build_fin, build_hlz, build_xresult, diff_elements, diff_elements_named,
+    dta_version, export_amendment_from_fin, export_amendment_path, export_fin_path, fin_amendments,
+    final_version_from_fin, invention_titles, original_version_from_fin, set_fin_amendment_states,
+    sha256_hex,
 };
 pub use export_kipo::{
     KipoExport, KipoExportImage, KipoExportOptions, display_units_to_mm,

@@ -270,7 +270,9 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 .editor-error { flex-basis: 100%; color: var(--error); background: var(--error-soft); border: 1px solid var(--error-line); border-radius: var(--r-control); padding: 3px 9px; cursor: pointer; white-space: pre-wrap; font-size: 12px; }
 .citation-ask ul { margin: 6px 0; padding-left: 18px; max-height: 40vh; overflow: auto; }
 .citation-ask .citation-go { margin-right: 4px; }
-
+.amend-states { flex-direction: column; align-items: stretch; max-width: min(640px, 92vw); }
+.amend-states table { border-collapse: collapse; } .amend-states th, .amend-states td { padding: 3px 8px; text-align: left; border-bottom: 1px solid var(--line); }
+.amend-states p { margin: 0; } .amend-states-warning { color: var(--error); }
 /* 작은 물음 창(가기 · 지우기 · 점검 등): 화면 위쪽 가운데에 내려앉는 종이 한 장. */
 .item-ask { position: fixed; left: 50%; top: 120px; transform: translateX(-50%); z-index: 20; display: flex; gap: 8px; align-items: center; padding: 14px 18px; background: var(--surface); border: 0; border-radius: var(--r-box); box-shadow: var(--lift-2); font-size: 13px; }
 .item-ask > strong { font-size: 13px; font-weight: 600; }

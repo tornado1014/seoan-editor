@@ -25,6 +25,9 @@ import {
   type CellPositionDto,
   editorExportAmendment,
   editorExportComparisonTable,
+  editorFinAmendments,
+  editorSetFinAmendments,
+  type AmendmentStateDto,
   editorReadReview,
   editorAmendmentBasis,
   editorAmendmentMarks,
@@ -3314,7 +3317,74 @@ export function mountEditor(root: HTMLElement): void {
     { label: osKeys('다음 고친 곳 (⌘])'), run: () => void jumpEdit(true) },
     { label: osKeys('앞 고친 곳 (⌘[)'), run: () => void jumpEdit(false) },
     { label: '보정 전후 대비표…', run: () => void comparisonTable() },
+    { label: '보정서 상태…', run: () => void amendmentStates() },
   ];
+
+  /** 보정서 상태(통특기 최종본 불러오기 「상태 변경」): 보정서마다 제출 · 제외 · 삭제 → 최종본을 바꾸고 다시 연다. */
+  async function amendmentStates() {
+    let list;
+    try {
+      list = await editorFinAmendments();
+    } catch (error) {
+      fail('보정서 상태', error);
+      return;
+    }
+    if (list.length === 0) {
+      say('이 최종본에는 보정서가 없습니다.');
+      return;
+    }
+    const box = document.createElement('form');
+    box.className = 'item-ask amend-states';
+    const option = (value: AmendmentStateDto, label: string, selected: boolean) =>
+      `<option value="${value}"${selected ? ' selected' : ''}>${label}</option>`;
+    box.innerHTML = `<strong>보정서 상태 — ${list.length}건</strong>
+      <p>다시 만들 보정서는 앞서 만든 것을 「제외」나 「삭제」로 바꾼 뒤 만드세요.</p>
+      <table><thead><tr><th>보정서</th><th>날짜</th><th>상태</th></tr></thead><tbody>${list
+        .map(
+          (item, index) => `<tr><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.date)}</td><td><select data-index="${index}">${option('submitted', '제출', item.submitted)}${option('excluded', '제외', !item.submitted)}${option('deleted', '삭제', false)}</select></td></tr>`,
+        )
+        .join('')}</tbody></table>
+      <p class="amend-states-warning" aria-live="polite"></p>
+      <button type="submit">바꾸기</button><button type="button" class="item-cancel">취소</button>`;
+    const selects = [...box.querySelectorAll<HTMLSelectElement>('select')];
+    const warning = box.querySelector<HTMLParagraphElement>('.amend-states-warning')!;
+    const chosen = () => selects.map((select) => [list[Number(select.dataset.index)], select.value as AmendmentStateDto] as const);
+    const warn = () => {
+      const notes: string[] = [];
+      if (chosen().some(([item, state]) => item.submitted && state === 'excluded'))
+        notes.push('이미 제출한 보정서를 제외하고 보정서를 만들어 제출하면 요지 변경의 원인이 될 수 있습니다.');
+      if (chosen().some(([, state]) => state === 'deleted')) notes.push('「삭제」한 보정서는 최종본에서 완전히 지웁니다(이전 판은 남깁니다).');
+      warning.textContent = notes.join(' ');
+    };
+    for (const select of selects) select.addEventListener('change', warn);
+    const close = () => {
+      box.remove();
+      input.focus({ preventScroll: true });
+    };
+    box.querySelector('.item-cancel')!.addEventListener('click', close);
+    box.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') close();
+    });
+    box.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const changed = chosen().filter(([item, state]) => state !== (item.submitted ? 'submitted' : 'excluded'));
+      close();
+      if (changed.length === 0) return;
+      try {
+        const opened = await editorSetFinAmendments(changed.map(([item, state]) => [item.name, state]));
+        if (opened) {
+          images.clear();
+          panel.hidden = true;
+          layout(opened, false);
+          say(`보정서 상태를 바꿨습니다(${changed.length}건). 최종본을 새 기준으로 다시 열었습니다.`);
+        }
+      } catch (error) {
+        fail('보정서 상태', error);
+      }
+    });
+    root.append(box);
+    selects[0].focus();
+  }
 
   async function comparisonTable() {
     try {
@@ -3733,7 +3803,7 @@ export function mountEditor(root: HTMLElement): void {
           const done = await editorExportAmendment();
           if (done) {
             stamp();
-            say(`보정서(${done.order}차) 생성작업을 완료하였습니다. 보정서 ${done.dta} · 최종본 갱신 ${done.fin}${done.view ? ` · 보기 ${done.view}` : ''}`);
+            say(`보정서(${done.order}차) 생성작업을 완료하였습니다. 보정서 ${done.dta} · 최종본 갱신 ${done.fin}${done.view ? ` · 보기 ${done.view}` : ''} · 다시 만들려면 「보정서 상태…」에서 이 보정서를 제외하거나 삭제하세요`);
           } else say('');
         } catch (error) {
           fail('보정서', error);
@@ -4001,6 +4071,7 @@ function describe(error: unknown): string {
       'table_skipped:no_change': '바뀐 것이 없습니다',
       amendment_empty: '변경된 내용이 없습니다',
       amendment_needs_final: '최종본(.fin)으로 연 문서나 저장한 문서파일(.HLT)에서 보정서를 만듭니다',
+      fin_states_need_final: '보정서 상태는 최종본(.fin)으로 연 문서에서 바꿉니다',
       amendment_table_empty: '견줄 보정 전 상태가 없거나 바뀐 곳이 없습니다(최종본으로 연 문서에서 고친 뒤 쓰세요)',
       item_missing: '그 번호의 식별항목이 없습니다',
       open_elsewhere: '그 파일은 다른 탭에 열려 있습니다 — 그 탭에서 저장하거나 닫은 뒤 하세요',
