@@ -188,7 +188,7 @@ export const TOURS: Tour[] = [
     id: 'recovery',
     group: '파일',
     title: '자동 저장 · 복구',
-    summary: '앱이 비정상으로 끝나도 고친 것을 살린다',
+    summary: '앱이 비정상으로 끝나도 고친 것을 살립니다',
     steps: [
       { target: '.editor-status', title: '자동 저장', text: '고친 뒤 2분 동안 손을 멈추면 복구본을 따로 둡니다(원래 파일은 그대로). 저장하거나 닫으면 지웁니다.' },
       { target: '[data-action="save"]', title: '다음 실행에 복구', text: '앱이 비정상으로 끝났다면 다음에 켤 때 「복구할까요?」를 묻습니다. 복구한 문서는 저장할 때 이름을 묻습니다.' },
@@ -198,7 +198,7 @@ export const TOURS: Tour[] = [
     id: 'history',
     group: '파일',
     title: '이전 판 · 바뀐 파일 알림',
-    summary: '저장이 덮은 판을 다시 열고, 다른 곳에서 고친 파일을 말없이 덮지 않는다',
+    summary: '저장이 덮은 판을 다시 열고, 다른 곳에서 고친 파일을 말없이 덮지 않습니다',
     steps: [
       { target: '[data-action="save"]', title: '덮기 전 판을 남김', text: '저장할 때마다 덮이기 직전의 파일을 따로 남깁니다(파일마다 최근 10개 · 30일 — 「설정」에서 바꿈). 저장한 뒤에는 쓴 파일을 다시 읽어 화면과 같은지 확인합니다.' },
       { target: '[data-action="open"]', title: '이전 판 열기', text: '메뉴 「파일 › 이전 판…」에서 때를 골라 「열기」를 누르면 새 탭에 이름 없는 문서로 열립니다. 원본은 그대로이고, 저장하면 이름을 묻습니다.' },

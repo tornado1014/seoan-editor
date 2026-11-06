@@ -1682,7 +1682,7 @@ describe('page editing', () => {
     await settle(10);
     expect(calls.filter(([c]) => c === 'editor_export_fin').length).toBe(2);
     // 대표도 없음은 창을 띄우지 않고 만든 뒤 알림만.
-    submitAnswer = [{ kind: 'representative_missing', paragraph_id: null, detail: '【대표도】가 없다' }];
+    submitAnswer = [{ kind: 'representative_missing', paragraph_id: null, detail: '【대표도】가 없습니다' }];
     await make();
     expect(root.querySelector('.submit-ask')).toBeNull();
     expect(calls.filter(([c]) => c === 'editor_export_fin').length).toBe(3);

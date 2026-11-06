@@ -1141,7 +1141,7 @@ fn applies_a_review_report_proposal() {
         failed.claims_failed,
         [(
             "1".to_string(),
-            "보정 전 문언이 최종본과 다르다".to_string()
+            "보정 전 문언이 최종본과 다릅니다".to_string()
         )]
     );
     let outcome = session

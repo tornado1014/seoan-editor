@@ -318,14 +318,14 @@ fn submission_checks_name_a_missing_or_wrong_sequence_file() {
     std::fs::write(&seq, "<110> x\n").unwrap();
     assert_eq!(
         sequence_issues(&session),
-        ["「seq.xml」 — ST.26(XML) 서열목록이 아니다"]
+        ["「seq.xml」 — ST.26(XML) 서열목록이 아닙니다"]
     );
     std::fs::remove_file(&seq).unwrap();
     assert_eq!(
         sequence_issues(&session),
-        ["「seq.xml」 — 파일이 없다(옮겼거나 지웠다)"]
+        ["「seq.xml」 — 파일이 없습니다(옮겼거나 지웠습니다)"]
     );
     session.replace_text(&link, "").unwrap();
     assert_eq!(sequence_issues(&session).len(), 1);
-    assert!(sequence_issues(&session)[0].contains("첨부 줄이 없다"));
+    assert!(sequence_issues(&session)[0].contains("첨부 줄이 없습니다"));
 }

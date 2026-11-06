@@ -180,7 +180,7 @@ fn structure_issues(paragraphs: &[EditorParagraph]) -> Vec<SubmitIssue> {
                 out.push(issue(
                     SubmitKind::AbstractLong,
                     Some(paragraph),
-                    format!("{count}자(공백 빼고) — 권장 {ABSTRACT_LIMIT}자를 넘는다(넘어도 접수는 된다)"),
+                    format!("{count}자(공백 빼고) — 권장 {ABSTRACT_LIMIT}자를 넘습니다(넘어도 접수는 됩니다)"),
                 ));
             }
         }
@@ -208,7 +208,7 @@ fn structure_issues(paragraphs: &[EditorParagraph]) -> Vec<SubmitIssue> {
             None => out.push(issue(
                 SubmitKind::RepresentativeMissing,
                 None,
-                "【대표도】가 없다".into(),
+                "【대표도】가 없습니다".into(),
             )),
             Some(&(at, _)) => {
                 let text = body(at)
@@ -221,8 +221,8 @@ fn structure_issues(paragraphs: &[EditorParagraph]) -> Vec<SubmitIssue> {
                 let detail = match named {
                     _ if text == "없음" => None,
                     Some(number) if figures.contains(number) => None,
-                    Some(number) => Some(format!("「도 {number}」 — 그런 도면이 없다")),
-                    None => Some(format!("「{text}」 — 「도 N」이 아니다")),
+                    Some(number) => Some(format!("「도 {number}」 — 그런 도면이 없습니다")),
+                    None => Some(format!("「{text}」 — 「도 N」이 아닙니다")),
                 };
                 if let Some(detail) = detail {
                     out.push(issue(
@@ -257,7 +257,7 @@ fn sequence_file(paragraphs: &[EditorParagraph]) -> Vec<SubmitIssue> {
     else {
         return vec![issue(
             &paragraphs[at],
-            "【서열목록】 아래 첨부 줄이 없다 — 「서열목록 넣기…」로 파일을 고르세요".into(),
+            "【서열목록】 아래 첨부 줄이 없습니다 — 「서열목록 넣기…」로 파일을 고르세요".into(),
         )];
     };
     let name = std::path::Path::new(path)
@@ -271,12 +271,12 @@ fn sequence_file(paragraphs: &[EditorParagraph]) -> Vec<SubmitIssue> {
         {
             vec![issue(
                 line,
-                format!("「{name}」 — ST.26(XML) 서열목록이 아니다"),
+                format!("「{name}」 — ST.26(XML) 서열목록이 아닙니다"),
             )]
         }
         Err(_) => vec![issue(
             line,
-            format!("「{name}」 — 파일이 없다(옮겼거나 지웠다)"),
+            format!("「{name}」 — 파일이 없습니다(옮겼거나 지웠습니다)"),
         )],
     }
 }
@@ -424,10 +424,10 @@ fn citation_detail(issue: &CitationIssue) -> String {
         CitationKind::MisReference => "자기 항 · 뒤 항 · 없는 항을 인용",
         CitationKind::Removed => "지운 · 없는 청구항을 인용",
         CitationKind::DuplicateMultiple => "다중 인용 항을 다시 다중 인용(중복 다중참조)",
-        CitationKind::NoAlternative => "「내지」 범위 뒤에 「어느」가 없다(택일어 미사용)",
+        CitationKind::NoAlternative => "「내지」 범위 뒤에 「어느」가 없습니다(택일어 미사용)",
         CitationKind::RangeMisReference => "범위 안에 자기 항 · 뒤 항 · 없는 항",
-        CitationKind::AndCitation => "「및 · 과 · 와」로 묶어 인용(택일적이 아니다)",
-        CitationKind::RangeNoAlternative => "범위 인용 뒤에 「어느」가 없다",
+        CitationKind::AndCitation => "「및 · 과 · 와」로 묶어 인용(택일적이 아닙니다)",
+        CitationKind::RangeNoAlternative => "범위 인용 뒤에 「어느」가 없습니다",
     };
     format!("청구항 {}: {what}({cited})", issue.claim)
 }
@@ -1210,7 +1210,7 @@ mod tests {
                 (SubmitKind::Representative, Some("p15")),
             ]
         );
-        assert!(issues[4].detail.contains("그런 도면이 없다"));
+        assert!(issues[4].detail.contains("그런 도면이 없습니다"));
         // 대표도가 없으면 문서 전체의 알림(막지 않는다) · 「없음」이나 있는 도면이면 괜찮다 · 400자는 괜찮다.
         let base = |representative: Option<&str>| {
             let mut rows = vec![("【요약】", None), ("가가가", None)];
@@ -1232,7 +1232,7 @@ mod tests {
         assert!(base(Some("없음")).is_empty());
         assert_eq!(
             base(Some("그림 1"))[0].detail,
-            "「그림 1」 — 「도 N」이 아니다"
+            "「그림 1」 — 「도 N」이 아닙니다"
         );
         let ok = "가".repeat(400);
         assert!(structure_issues(&doc(&[("【요약】", None), (ok.as_str(), None)])).is_empty());
@@ -1499,7 +1499,7 @@ mod tests {
                 .filter(|i| i.kind == SubmitKind::SequenceFile)
                 .map(|i| i.detail.as_str())
                 .collect::<Vec<_>>(),
-            ["「seq.xml」 — 파일이 없다(옮겼거나 지웠다)"]
+            ["「seq.xml」 — 파일이 없습니다(옮겼거나 지웠습니다)"]
         );
     }
 

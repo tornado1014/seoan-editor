@@ -128,7 +128,7 @@ fn offer_recovery(app: &tauri::AppHandle) {
     app.clone()
         .dialog()
         .message(format!(
-            "지난번에 저장하지 않고 끝난 문서가 {}개 있습니다. 복구할까요?\n복구한 문서는 원래 파일에 덮지 않습니다(저장할 때 이름을 묻는다).\n\n{}",
+            "지난번에 저장하지 않고 끝난 문서가 {}개 있습니다. 복구할까요?\n복구한 문서는 원래 파일에 덮지 않습니다(저장할 때 이름을 묻습니다).\n\n{}",
             entries.len(),
             names.join("\n")
         ))

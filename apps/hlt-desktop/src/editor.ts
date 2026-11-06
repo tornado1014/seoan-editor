@@ -232,18 +232,18 @@ export function mountEditor(root: HTMLElement): void {
     <div class="editor">
       <div class="editor-toolbar" role="toolbar">
         <div class="tb-group" role="group" aria-label="파일">
-          <button type="button" data-action="open" title="열기 (⌘O) — HLT · 제출파일(.fin · .hlz)을 연다 · 최근 문서는 메뉴 「파일」">${icon('open')}<span>열기</span></button>
+          <button type="button" data-action="open" title="열기 (⌘O) — HLT · 제출파일(.fin · .hlz)을 엽니다 · 최근 문서는 메뉴 「파일」">${icon('open')}<span>열기</span></button>
           <button type="button" data-action="new-menu" title="새로 만들기 — 새 의견서 · 워드/XML/HML로 HLT 만들기 · 새 탭(⌘T)">${icon('fileNew')}<span>새로 만들기 ▾</span></button>
           <button type="button" data-action="save" disabled title="저장 — 연 HLT 에 덮어쓰기 (⌘S)">${icon('save')}<span>저장</span></button>
           <button type="button" data-action="save-as" disabled title="다른 이름으로 저장 (⇧⌘S)">${icon('saveAs')}</button>
-          <button type="button" data-action="close-document" disabled title="문서 닫기 — 저장하지 않은 고침이 있으면 묻는다">${icon('close')}<span>닫기</span></button>
+          <button type="button" data-action="close-document" disabled title="문서 닫기 — 저장하지 않은 고침이 있으면 묻습니다">${icon('close')}<span>닫기</span></button>
         </div>
         <div class="tb-hidden" hidden>
-          <button type="button" data-action="new-opinion" title="새 의견서 — 빈 의견서(【의견내용】)를 새로 만든다">${icon('opinion')}<span>새 의견서</span></button>
-          <button type="button" data-action="import" title="워드/XML로 HLT 만들기 — 워드 · KIPO XML · HML 을 불러와 새 HLT 로 만든다">${icon('import')}<span>워드/XML로 HLT 만들기</span></button>
+          <button type="button" data-action="new-opinion" title="새 의견서 — 빈 의견서(【의견내용】)를 새로 만듭니다">${icon('opinion')}<span>새 의견서</span></button>
+          <button type="button" data-action="import" title="워드/XML로 HLT 만들기 — 워드 · KIPO XML · HML 을 불러와 새 HLT 로 만듭니다">${icon('import')}<span>워드/XML로 HLT 만들기</span></button>
           <button type="button" data-action="new-tab" title="새 탭 (⌘T · ⌘N)">${icon('tab')}<span>새 탭</span></button>
           <button type="button" data-action="open-read-only" title="읽기 전용으로 열기 — 원본을 실수로 고치지 않게(사본은 「다른 이름으로 저장」)"><span>읽기 전용으로 열기</span></button>
-          <button type="button" data-action="history" disabled title="이전 판 — 저장할 때 덮인 판을 골라 새 탭에서 연다(최근 판 · 지난 날수는 설정)"><span>이전 판</span></button>
+          <button type="button" data-action="history" disabled title="이전 판 — 저장할 때 덮인 판을 골라 새 탭에서 엽니다(최근 판 · 지난 날수는 설정)"><span>이전 판</span></button>
           <button type="button" data-action="settings" title="설정 (⌘,) — 자동 저장 간격 · 이전 판 보관 · 문서 배율 · 문단부호 기본"><span>설정</span></button>
         </div>
         <div class="tb-group" role="group" aria-label="편집">
@@ -269,35 +269,35 @@ export function mountEditor(root: HTMLElement): void {
           <button type="button" data-action="math" disabled title="수식 넣기(LaTeX)">${icon('math')}<span>수식</span></button>
           <button type="button" data-action="chem" disabled title="화학식 넣기(구조식)">${icon('chem')}<span>화학식</span></button>
           <button type="button" data-action="table" disabled title="표 넣기(커서 문단 아래 · 고치기는 표 칸 위 우클릭) · 쪽나눔은 ⌘Enter">${icon('table')}<span>표</span></button>
-          <button type="button" data-action="snippets" disabled title="상용구 — 자주 쓰는 문구를 골라 커서 자리에 넣는다 · 만들기 · 고치기 · 지우기 · ⌘K 로 이름을 쳐서 넣기">${icon('snippet')}<span>상용구</span></button>
-          <button type="button" data-action="sequence-list" disabled title="서열목록 넣기 — ST.26(XML) 파일을 골라 발명의 설명 끝에 【서열목록】 · 첨부 줄을 넣는다(파일은 제출파일을 만들 때 함께 싣는다)">${icon('sequence')}<span>서열목록</span></button>
+          <button type="button" data-action="snippets" disabled title="상용구 — 자주 쓰는 문구를 골라 커서 자리에 넣습니다 · 만들기 · 고치기 · 지우기 · ⌘K 로 이름을 쳐서 넣기">${icon('snippet')}<span>상용구</span></button>
+          <button type="button" data-action="sequence-list" disabled title="서열목록 넣기 — ST.26(XML) 파일을 골라 발명의 설명 끝에 【서열목록】 · 첨부 줄을 넣습니다(파일은 제출파일을 만들 때 함께 싣습니다)">${icon('sequence')}<span>서열목록</span></button>
         </div>
         <div class="tb-group" role="group" aria-label="보기">
-          <button type="button" data-action="marks" aria-pressed="true" title="문단부호 보기 — 문단 끝 ↵ 를 보이거나 숨긴다(화면에만)">${icon('marks')}<span>문단부호</span></button>
-          <button type="button" data-action="source" disabled title="원문 나란히 — 영문 원문(.docx)을 오른쪽에 두고 식별번호 · 청구항 번호로 함께 움직인다(다시 누르면 닫기)">${icon('columns')}<span>원문 나란히</span></button>
+          <button type="button" data-action="marks" aria-pressed="true" title="문단부호 보기 — 문단 끝 ↵ 를 보이거나 숨깁니다(화면에만)">${icon('marks')}<span>문단부호</span></button>
+          <button type="button" data-action="source" disabled title="원문 나란히 — 영문 원문(.docx)을 오른쪽에 두고 식별번호 · 청구항 번호로 함께 움직입니다(다시 누르면 닫기)">${icon('columns')}<span>원문 나란히</span></button>
         </div>
         <div class="tb-group" role="group" aria-label="도구">
           <button type="button" data-action="tools" disabled title="도구 — 번호 다시 매기기 · 부호 목록 · 문서 통계 · 되풀이 문장 · 고친 곳 이동(⌘[ ⌘]) · 모든 명령은 ⌘K">${icon('wrench')}<span>도구 ▾</span></button>
           <button type="button" data-action="batch" title="일괄 처리 — 폴더 안 워드 · XML 을 HLT 로 · 폴더 안 문서마다 제출 전 점검">${icon('layers')}<span>일괄 처리 ▾</span></button>
         </div>
         <div class="tb-group" role="group" aria-label="보정(OA 대응)">
-          <button type="button" data-action="review" disabled title="검토보고서 불러오기 — OA 검토보고서(워드)의 보정안 · 오기 정정을 골라 편집기에 건다">${icon('import')}<span>검토보고서</span></button>
-          <button type="button" data-action="amend-marks" aria-pressed="false" disabled title="보정 표시 — 옆에서 고른 기준에 견준 바뀐 글(넣은 글 · 지운 자리 · 바뀐 문단)을 쪽 위에 보인다">${icon('diff')}<span>보정 표시</span></button>
+          <button type="button" data-action="review" disabled title="검토보고서 불러오기 — OA 검토보고서(워드)의 보정안 · 오기 정정을 골라 편집기에 겁니다">${icon('import')}<span>검토보고서</span></button>
+          <button type="button" data-action="amend-marks" aria-pressed="false" disabled title="보정 표시 — 옆에서 고른 기준에 견준 바뀐 글(넣은 글 · 지운 자리 · 바뀐 문단)을 쪽 위에 보입니다">${icon('diff')}<span>보정 표시</span></button>
           <select class="amend-base" aria-label="보정 표시 · 보정 근거의 기준" title="견줄 기준 — 연 뒤 고친 것 · 원출원(최종본 안 보정서까지) · 다른 파일">
             <option value="">연 뒤 고친 것</option>
             <option value="original">원출원</option>
             <option value="file">다른 파일…</option>
           </select>
           <button type="button" data-action="basis" disabled title="보정 근거 — 바뀐 청구항의 새 말이 있는 원출원 명세서 단락 · 의견서 인용 문장 초안">${icon('evidence')}<span>보정 근거</span></button>
-          <button type="button" data-action="amend" disabled title="보정서 만들기 — 청구항 인용을 먼저 점검하고 보정서(.dta) · 대비표(워드)를 만든다">${icon('amend')}<span>보정서</span></button>
+          <button type="button" data-action="amend" disabled title="보정서 만들기 — 청구항 인용을 먼저 점검하고 보정서(.dta) · 대비표(워드)를 만듭니다">${icon('amend')}<span>보정서</span></button>
         </div>
         <div class="tb-group" role="group" aria-label="내보내기">
           <button type="button" data-action="pdf" disabled title="PDF로 인쇄">${icon('print')}<span>PDF</span></button>
           <button type="button" data-action="docx" disabled title="Word로 저장(표제 포함 · 식별번호 없음)">${icon('word')}<span>Word</span></button>
-          <button type="button" data-action="fin" disabled title="제출파일 만들기(.hlz · .fin) — 만들기 전에 제출 전 점검을 보여 준다">${icon('send')}<span>제출파일</span></button>
+          <button type="button" data-action="fin" disabled title="제출파일 만들기(.hlz · .fin) — 만들기 전에 제출 전 점검을 보여 줍니다">${icon('send')}<span>제출파일</span></button>
         </div>
         <div class="tb-group" role="group" aria-label="도움말">
-          <button type="button" data-action="help" title="도움말 — 기능별 투어(화면 위에서 차례로 짚어 준다) · 단축키 모음">${icon('help')}<span>도움말</span></button>
+          <button type="button" data-action="help" title="도움말 — 기능별 투어(화면 위에서 차례로 짚어 줍니다) · 단축키 모음">${icon('help')}<span>도움말</span></button>
         </div>
         <span class="seal" aria-hidden="true">書案</span>
         <span class="editor-status" aria-live="polite"></span>
@@ -307,7 +307,7 @@ export function mountEditor(root: HTMLElement): void {
       <div class="find-bar" hidden>
         <label>찾을 글 <input class="find-text" type="text" placeholder="(비우면 서식만으로)"></label>
         <button type="button" class="find-option" data-option="case_insensitive" aria-pressed="false" title="대소문자 무시">Aa</button>
-        <button type="button" class="find-option" data-option="whole_word" aria-pressed="false" title="낱말 단위 — 뒤에 조사는 붙어도 된다(「기판」은 「기판은」 · 「기판의」에 걸리고 「기판부」에는 안 걸린다)">단어</button>
+        <button type="button" class="find-option" data-option="whole_word" aria-pressed="false" title="낱말 단위 — 뒤에 조사는 붙어도 됩니다(「기판」은 「기판은」 · 「기판의」에 걸리고 「기판부」에는 안 걸립니다)">단어</button>
         <button type="button" class="find-option" data-option="regex" aria-pressed="false" title="정규식(바꿀 글에 $1 · $2 …)">.*</button>
         <select class="find-range" aria-label="찾을 범위">
           <option value="">전체</option>
@@ -366,7 +366,7 @@ export function mountEditor(root: HTMLElement): void {
         <aside class="editor-panel" hidden>
           <p class="panel-title"></p>
           <div class="panel-text" contenteditable="plaintext-only" spellcheck="false"></div>
-          <p class="panel-hint">엔터 = 문단 나누기 · 「_」 = 그림 자리(지우면 그림이 빠진다)</p>
+          <p class="panel-hint">엔터 = 문단 나누기 · 「_」 = 그림 자리(지우면 그림이 빠집니다)</p>
           <div class="panel-actions">
             <button type="button" data-action="apply">적용</button>
             <button type="button" data-action="close">닫기</button>
@@ -720,7 +720,7 @@ export function mountEditor(root: HTMLElement): void {
     if (next.editable) autosaveTimer = window.setTimeout(() => void editorAutosave().catch(() => {}), autosaveMs);
     say(
       `${next.title} · ${next.page_count}쪽${
-        next.read_only ? ' · 읽기 전용(원본 보호) — 고치려면 「다른 이름으로 저장」으로 사본을 만드세요' : next.editable ? '' : ' · 보기 전용(이 서식은 고칠 수 없다)'
+        next.read_only ? ' · 읽기 전용(원본 보호) — 고치려면 「다른 이름으로 저장」으로 사본을 만드세요' : next.editable ? '' : ' · 보기 전용(이 서식은 고칠 수 없습니다)'
       }`,
     );
     enable();
@@ -950,7 +950,7 @@ export function mountEditor(root: HTMLElement): void {
   function watchPreparing(next: EditorViewDto) {
     window.clearTimeout(preparingTimer);
     if (!next.preparing) return;
-    say(`${next.title} · ${next.page_count}쪽 · 편집 준비 중(큰 문서는 수십 초) — 그동안 보기·찾기는 된다`);
+    say(`${next.title} · ${next.page_count}쪽 · 편집 준비 중(큰 문서는 수십 초) — 그동안 보기·찾기는 됩니다`);
     preparingTimer = window.setTimeout(async () => {
       try {
         const latest = await editorView();
@@ -2021,7 +2021,7 @@ export function mountEditor(root: HTMLElement): void {
           <input type="checkbox" data-c="${c}" data-p="${p}" data-h="${h}"${
             (h === 0 && (hit.exact || hit.score >= 0.8)) || (h === 1 && hit.exact) ? ' checked' : ''
           }>
-          <button type="button" class="basis-go" data-number="${hit.number}" title="그 단락으로 가기(창을 접는다)">【${hit.number}】</button>
+          <button type="button" class="basis-go" data-number="${hit.number}" title="그 단락으로 가기(창을 접습니다)">【${hit.number}】</button>
           <span class="basis-match ${hit.exact ? 'exact' : ''}">${hit.exact ? '통째로' : `낱말 ${Math.round(hit.score * 100)}%`}</span>
           <span class="basis-quote" title="${escape(hit.quote)}">${escape(hit.quote)}</span>
           <span class="basis-figures">${hit.figures.length ? `도 ${hit.figures.map(escape).join(', ')}` : ''}</span>
@@ -2218,10 +2218,10 @@ export function mountEditor(root: HTMLElement): void {
       mis_reference: (cited) => `자기 항 · 뒤 항 · 없는 항(${cited})을 인용`,
       removed: (cited) => `지운 청구항 ${cited}을(를) 인용`,
       duplicate_multiple: () => '다중 인용 항을 다시 다중 인용(중복 다중참조)',
-      no_alternative: () => '「내지」 범위 뒤에 「어느」가 없다(택일어 미사용)',
+      no_alternative: () => '「내지」 범위 뒤에 「어느」가 없습니다(택일어 미사용)',
       range_mis_reference: (cited) => `범위 안에 자기 항 · 뒤 항 · 없는 항(${cited})`,
-      and_citation: () => '「및 · 과 · 와」로 묶어 인용(택일적이 아니다)',
-      range_no_alternative: () => '범위 인용 뒤에 「어느」가 없다',
+      and_citation: () => '「및 · 과 · 와」로 묶어 인용(택일적이 아닙니다)',
+      range_no_alternative: () => '범위 인용 뒤에 「어느」가 없습니다',
     };
     const app = new Set<CitationIssueDto['kind']>(['removed', 'range_mis_reference', 'and_citation', 'range_no_alternative']);
     return new Promise((resolve) => {
@@ -2800,9 +2800,9 @@ export function mountEditor(root: HTMLElement): void {
     const shade = document.createElement('div');
     shade.className = 'basis-shade settings-shade';
     shade.innerHTML = `<form class="basis-ask settings-ask"><header><strong>설정</strong></header>
-      <label>자동 저장 간격 <input name="autosave" type="number" min="1" max="60" value="${current.autosave_minutes}"> 분 — 고친 뒤 손을 멈추면 복구본을 둔다</label>
+      <label>자동 저장 간격 <input name="autosave" type="number" min="1" max="60" value="${current.autosave_minutes}"> 분 — 고친 뒤 손을 멈추면 복구본을 둡니다</label>
       <label>이전 판 보관 <input name="keep" type="number" min="1" max="100" value="${current.history_keep}"> 개 — 파일마다 최근 판만</label>
-      <label>이전 판 보관 기간 <input name="days" type="number" min="1" max="365" value="${current.history_days}"> 일 — 지난 판은 지운다</label>
+      <label>이전 판 보관 기간 <input name="days" type="number" min="1" max="365" value="${current.history_days}"> 일 — 지난 판은 지웁니다</label>
       <label>문서 배율 <input name="zoom" type="number" min="50" max="200" step="10" value="${Math.round(current.zoom * 100)}"> % — ⌘+ · ⌘− · ⌘0</label>
       <label><input name="marks" type="checkbox"${current.marks_default ? ' checked' : ''}> 문단부호(↵)를 기본으로 보이기</label>
       <div class="settings-buttons"><button type="submit">저장</button><button type="button" class="settings-cancel">취소</button></div></form>`;

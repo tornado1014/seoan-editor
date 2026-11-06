@@ -1698,7 +1698,7 @@ impl EditorSession {
                 if tracked && compact(&current.concat()) != compact(&claim.before.concat()) {
                     outcome.claims_failed.push((
                         claim.number.clone(),
-                        "보정 전 문언이 최종본과 다르다".into(),
+                        "보정 전 문언이 최종본과 다릅니다".into(),
                     ));
                     continue;
                 }
@@ -1911,7 +1911,7 @@ impl EditorSession {
             issues.push(crate::SubmitIssue {
                 kind: crate::SubmitKind::SequenceFile,
                 paragraph_id: None,
-                detail: "연 제출파일에 서열목록이 있었는데 이 문서에는 【서열목록】이 없다 — 「서열목록 넣기…」로 다시 넣으세요".into(),
+                detail: "연 제출파일에 서열목록이 있었는데 이 문서에는 【서열목록】이 없습니다 — 「서열목록 넣기…」로 다시 넣으세요".into(),
             });
         }
         issues
