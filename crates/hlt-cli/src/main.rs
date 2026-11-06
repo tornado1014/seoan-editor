@@ -179,6 +179,9 @@ where
     E: Write,
 {
     let args: Vec<String> = args.into_iter().collect();
+    if args.first().is_some_and(|value| value == "version") && args.len() == 1 {
+        return run_version(stdout);
+    }
     if args
         .first()
         .is_some_and(|value| value == "export-amendment")
@@ -2269,6 +2272,26 @@ fn cell_format_edit_save_usage(writer: &mut impl Write) -> u8 {
         error_envelope("save-cell-formats-as-new", error);
     let _ = write_envelope(writer, &envelope);
     EXIT_USAGE
+}
+
+/// The source this binary was built from (see `build.rs`).
+#[derive(Serialize)]
+struct VersionResult {
+    package_version: &'static str,
+    git_tag: &'static str,
+    git_commit: &'static str,
+    dirty: bool,
+}
+
+fn run_version(stdout: &mut impl Write) -> u8 {
+    let result = VersionResult {
+        package_version: env!("CARGO_PKG_VERSION"),
+        git_tag: env!("HLT_GIT_TAG"),
+        git_commit: env!("HLT_GIT_COMMIT"),
+        dirty: env!("HLT_GIT_DIRTY") != "false",
+    };
+    let _ = write_envelope(stdout, &success_envelope("version", result));
+    EXIT_OK
 }
 
 fn success_envelope<T>(command: &str, result: T) -> CommandEnvelope<T> {
