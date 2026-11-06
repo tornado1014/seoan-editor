@@ -457,3 +457,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
   .nk-caret { animation: nk-blink 1.06s steps(1) infinite !important; }
   .seal.stamped { animation: stamp-still 2.2s linear forwards !important; }
 }
+.release-notes .batch-body h3 { margin: .8rem 0 .3rem; font-size: 15px; }
+.release-notes .batch-body h4 { margin: .6rem 0 .2rem; font-size: 14px; }
+.release-notes .batch-body ul { margin: .2rem 0 .4rem; padding-left: 1.2rem; }
+.release-notes .batch-body p, .release-notes .batch-body li { line-height: 1.55; }

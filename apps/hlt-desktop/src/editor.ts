@@ -8,6 +8,7 @@ import {
   editorImage,
   editorHistoryList,
   editorHistoryOpen,
+  takeUpdatedFrom,
   editorOpenReadOnly,
   settingsGet,
   settingsSet,
@@ -174,6 +175,52 @@ const TOUR_SEEN = 'seoan.tour.seen';
 
 /** 자동 저장: 마지막 고침 뒤 이만큼 손을 멈추면 복구본을 둔다(설정 「자동 저장 간격」의 기본값). */
 export const AUTOSAVE_MS = 120_000;
+
+type Release = { tag_name: string; body?: string | null; draft?: boolean; prerelease?: boolean };
+
+const RELEASES_URL = 'https://api.github.com/repos/tornado1014/seoan-editor/releases?per_page=30';
+
+/** `a` 가 `b` 보다 뒤 판인가(점으로 나눈 숫자를 차례로 견준다 · 앞의 v 는 뗀다). */
+function isNewer(a: string, b: string): boolean {
+  const parts = (v: string) => v.replace(/^v/, '').split('.').map(Number);
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d) return d > 0;
+  }
+  return false;
+}
+
+/** 릴리스 노트(`## 제목` · `- 항목` · 문단만 쓴다)를 HTML 로 — 글은 모두 이스케이프한다. */
+function notesHtml(body: string): string {
+  let html = '';
+  let list = false;
+  for (const raw of body.split(/\r?\n/)) {
+    const line = raw.trim();
+    const item = /^[-*]\s+(.*)$/.exec(line);
+    if (list && !item) {
+      html += '</ul>';
+      list = false;
+    }
+    if (!line) continue;
+    if (item) {
+      if (!list) html += '<ul>';
+      list = true;
+      html += `<li>${escapeHtml(item[1])}</li>`;
+    } else if (/^#{1,6}\s/.test(line)) html += `<h4>${escapeHtml(line.replace(/^#+\s+/, ''))}</h4>`;
+    else html += `<p>${escapeHtml(line)}</p>`;
+  }
+  return list ? `${html}</ul>` : html;
+}
+
+/** `from` 뒤부터 `to` 까지 판의 노트(새 판 먼저 · 초안 · 시험판 제외). 보일 것이 없으면 빈 글. */
+export function releaseNotesHtml(releases: Release[], from: string, to: string): string {
+  return releases
+    .filter((r) => !r.draft && !r.prerelease && isNewer(r.tag_name, from) && !isNewer(r.tag_name, to))
+    .sort((a, b) => (isNewer(a.tag_name, b.tag_name) ? -1 : 1))
+    .map((r) => `<h3>서안 ${escapeHtml(r.tag_name.replace(/^v/, ''))}</h3>${notesHtml(r.body ?? '')}`)
+    .join('');
+}
 
 /** 상태 줄은 한 줄이라 긴 경로가 정작 상태를 밀어낸다 — 경로는 파일 이름만 남긴다(전체는 마우스를 올리면). */
 export function shortenPaths(text: string): string {
@@ -3360,6 +3407,26 @@ export function mountEditor(root: HTMLElement): void {
     invite.querySelector('.tour-invite-close')!.addEventListener('click', done);
     root.append(invite);
   }
+
+  // 업데이트 뒤 첫 실행: 그 사이 판들의 릴리스 노트를 한 번 보인다(못 받으면 조용히 건너뛴다).
+  void (async () => {
+    const updated = await takeUpdatedFrom().catch(() => null);
+    if (!updated) return;
+    let html = '';
+    try {
+      const response = await fetch(RELEASES_URL, { headers: { Accept: 'application/vnd.github+json' } });
+      if (!response.ok) return;
+      html = releaseNotesHtml((await response.json()) as Release[], updated.from, updated.to);
+    } catch {
+      return;
+    }
+    if (!html) return;
+    const shade = document.createElement('div');
+    shade.className = 'basis-shade release-notes-shade';
+    shade.innerHTML = `<div class="basis-ask batch-ask release-notes"><header><strong>서안 ${escapeHtml(updated.to)} 새 기능</strong><button type="button" class="batch-close">닫기</button></header><div class="batch-body">${html}</div></div>`;
+    shade.querySelector('.batch-close')!.addEventListener('click', () => shade.remove());
+    root.append(shade);
+  })();
 
   void listen<string>('close-requested', async (event) => {
     if (event.payload !== myLabel) return;

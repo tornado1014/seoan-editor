@@ -2079,3 +2079,86 @@ describe('shortenPaths', () => {
     expect(root.querySelector('.batch-progress span')!.textContent).toBe('일괄 1/2 · a.HLT');
   });
 });
+
+describe('릴리스 노트', () => {
+  const RELEASES = [
+    { tag_name: 'v0.6.47', body: '## 다음 판\n- 아직' },
+    { tag_name: 'v0.6.46', body: '## 새 표제\n\n- 첫째 <b>항목</b>\n- 둘째\n\n맺는 문단' },
+    { tag_name: 'v0.6.45', body: '- 상태 알림' },
+    { tag_name: 'v0.6.44', body: '- 지난 판' },
+    { tag_name: 'v0.6.46-rc', body: '- 시험', prerelease: true },
+  ];
+
+  test('지난 판 뒤부터 지금 판까지만, 새 판 먼저 · 글은 이스케이프', async () => {
+    const { releaseNotesHtml } = await import('./editor');
+    const html = releaseNotesHtml(RELEASES, '0.6.44', '0.6.46');
+    expect(html).toBe(
+      '<h3>서안 0.6.46</h3><h4>새 표제</h4><ul><li>첫째 &lt;b&gt;항목&lt;/b&gt;</li><li>둘째</li></ul><p>맺는 문단</p>' +
+        '<h3>서안 0.6.45</h3><ul><li>상태 알림</li></ul>',
+    );
+    expect(releaseNotesHtml(RELEASES, '0.6.46', '0.6.46')).toBe('');
+    expect(releaseNotesHtml(RELEASES, '0.6.9', '0.6.10')).toBe('');
+  });
+
+  async function mountWith(updated: unknown, response: () => Promise<Response>) {
+    const base = vi.mocked(invoke).getMockImplementation()!;
+    vi.mocked(invoke).mockImplementation((async (command: string, args?: Record<string, unknown>) =>
+      command === 'take_updated_from' ? updated : base(command, args)) as never);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(response as never);
+    const root = await open();
+    await settle(10);
+    const fetched = fetchSpy.mock.calls.length;
+    fetchSpy.mockRestore();
+    return { root, fetched };
+  }
+
+  test('업데이트 뒤 첫 실행이면 창을 띄운다', async () => {
+    const { root } = await mountWith({ from: '0.6.44', to: '0.6.46' }, async () => new Response(JSON.stringify(RELEASES)));
+    const shade = root.querySelector('.release-notes-shade')!;
+    expect(shade.querySelector('header strong')!.textContent).toBe('서안 0.6.46 새 기능');
+    expect([...shade.querySelectorAll('h3')].map((h) => h.textContent)).toEqual(['서안 0.6.46', '서안 0.6.45']);
+    shade.querySelector<HTMLButtonElement>('.batch-close')!.click();
+    expect(root.querySelector('.release-notes-shade')).toBeNull();
+  });
+
+  test('업데이트가 아니거나 노트를 못 받으면 띄우지 않는다', async () => {
+    const quiet = await mountWith(null, async () => new Response(JSON.stringify(RELEASES)));
+    expect(quiet.root.querySelector('.release-notes-shade')).toBeNull();
+    expect(quiet.fetched).toBe(0);
+    const offline = await mountWith({ from: '0.6.44', to: '0.6.46' }, async () => {
+      throw new TypeError('offline');
+    });
+    expect(offline.root.querySelector('.release-notes-shade')).toBeNull();
+  });
+});
+
+describe('단축키 표기 — 윈도', () => {
+  test('툴바 · 단축키 모음 · 투어가 Ctrl 로 보인다', async () => {
+    const original = Object.getOwnPropertyDescriptor(Navigator.prototype, 'userAgent')!;
+    Object.defineProperty(navigator, 'userAgent', { value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) WebView2', configurable: true });
+    try {
+      const root = await open();
+      expect(root.querySelector('[data-action="save-as"]')!.getAttribute('title')).toBe('다른 이름으로 저장 (Ctrl+Shift+S)');
+      expect(root.textContent + [...root.querySelectorAll('[title]')].map((e) => e.getAttribute('title')).join('')).not.toMatch(/[⌘⇧]/);
+      handlers.get('menu-action')!({ payload: 'help:shortcuts' });
+      await settle(10);
+      const table = root.querySelector('.shortcut-shade')!.textContent!;
+      expect(table).toContain('Ctrl+Shift+Z');
+      expect(table).not.toMatch(/[⌘⇧]/);
+      handlers.get('menu-action')!({ payload: 'help:tours' });
+      await settle(10);
+      const help = root.querySelector('.help-shade')!.textContent!;
+      expect(help).toContain('Ctrl+] 다음');
+      expect(help).not.toMatch(/[⌘⇧]/);
+      root.querySelector<HTMLButtonElement>('.help-tour[data-tour="palette"]')?.click();
+      await settle(10);
+      const text = root.querySelector('.tour-text')?.textContent ?? '';
+      expect(text).toContain('Ctrl+K');
+    } finally {
+      delete (navigator as unknown as Record<string, unknown>).userAgent;
+      Object.defineProperty(Navigator.prototype, 'userAgent', original);
+    }
+    const mac = await open();
+    expect(mac.querySelector('[data-action="save-as"]')!.getAttribute('title')).toBe('다른 이름으로 저장 (⇧⌘S)');
+  });
+});

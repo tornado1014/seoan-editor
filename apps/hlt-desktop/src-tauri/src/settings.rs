@@ -75,6 +75,12 @@ impl Settings {
         self
     }
 
+    /// 판을 적고, 업데이트(지난 실행과 다른 판)였으면 지난 판을 돌려준다. 첫 설치는 `None`.
+    pub fn record_update(&mut self, current: &str) -> Option<String> {
+        let before = self.last_version.clone();
+        self.record_version(current).then_some(before).flatten()
+    }
+
     /// 이번 실행 판을 적는다 — 판이 바뀌었으면 지난 판을 「이전 판」으로 남긴다. 바뀌었으면 `true`.
     pub fn record_version(&mut self, current: &str) -> bool {
         if self.last_version.as_deref() == Some(current) {
@@ -214,5 +220,13 @@ mod tests {
         assert!(settings.record_version("0.6.31"));
         assert_eq!(settings.previous_version.as_deref(), Some("0.6.30"));
         assert_eq!(settings.last_version.as_deref(), Some("0.6.31"));
+    }
+
+    #[test]
+    fn only_an_update_reports_the_version_it_came_from() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.record_update("0.6.46"), None, "첫 설치");
+        assert_eq!(settings.record_update("0.6.46"), None, "같은 판");
+        assert_eq!(settings.record_update("0.6.47").as_deref(), Some("0.6.46"));
     }
 }

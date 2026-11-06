@@ -11,6 +11,21 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 #[derive(Default)]
 pub struct PendingUpdate(Mutex<Option<(Update, Vec<u8>)>>);
 
+/// 이번 실행이 업데이트 뒤 첫 실행이면 (지난 판, 지금 판). 첫 창이 한 번 가져가 릴리스 노트를 띄운다.
+#[derive(Default)]
+pub struct UpdatedFrom(pub Mutex<Option<Updated>>);
+
+#[derive(serde::Serialize, Clone)]
+pub struct Updated {
+    pub from: String,
+    pub to: String,
+}
+
+#[tauri::command]
+pub fn take_updated_from(state: tauri::State<'_, UpdatedFrom>) -> Option<Updated> {
+    state.0.lock().unwrap().take()
+}
+
 /// 새 판을 찾아 묻고 받는다. `manual` = 메뉴에서 불렀다(새 판 없음 · 실패도 알린다).
 pub async fn check(app: AppHandle, manual: bool) {
     if app.state::<PendingUpdate>().0.lock().unwrap().is_some() {

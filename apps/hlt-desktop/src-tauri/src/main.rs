@@ -296,6 +296,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::PendingUpdate::default())
+        .manage(update::UpdatedFrom::default())
         .manage(AppState::default())
         .manage(EditorState::default())
         // 윈도 · 리눅스: 탐색기에서 연 파일(.HLT · .fin · .hlz 더블클릭)은 실행 인자로 온다 — 첫 창이 가져간다.
@@ -416,6 +417,7 @@ fn main() {
             editor_open_read_only,
             editor_history_list,
             editor_history_open,
+            update::take_updated_from,
             settings::settings_get,
             settings::settings_set
         ])
@@ -473,9 +475,15 @@ fn main() {
                     recent::fill_menu(app, &recent::read(app).recent);
                     // 판 기록(「이전 판으로 되돌리기」의 대상) · 오래된 이전 판 치우기.
                     let version = app.package_info().version.to_string();
+                    let mut from = None;
                     let _ = settings::update(app, |settings| {
-                        settings.record_version(&version);
+                        from = settings.record_update(&version);
                     });
+                    *app.state::<update::UpdatedFrom>().0.lock().unwrap() =
+                        from.map(|from| update::Updated {
+                            from,
+                            to: version.clone(),
+                        });
                     if let Some(root) = history::root(app) {
                         history::prune_older_than(
                             &root,

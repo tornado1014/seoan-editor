@@ -412,6 +412,8 @@ export interface KeptVersionDto {
 }
 export const editorOpenReadOnly = () => invoke<EditorViewDto | null>('editor_open_read_only');
 export const editorHistoryList = () => invoke<KeptVersionDto[]>('editor_history_list');
+/** 업데이트 뒤 첫 실행이면 (지난 판, 지금 판) — 한 번만 준다. */
+export const takeUpdatedFrom = () => invoke<{ from: string; to: string } | null>('take_updated_from');
 export const editorHistoryOpen = (index: number) => invoke<EditorViewDto | null>('editor_history_open', { index });
 
 export interface SnippetDto {
