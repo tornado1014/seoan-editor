@@ -20,7 +20,6 @@ pub enum SpecKind {
 }
 
 /// 새문서 선택사항(통특기 체크 상자). 실용신안은 도면이 늘 있고 PCT 는 제출유예가 없다(통특기와 같다 — 무시한다).
-/// ponytail: 실용신안(문서 종류 142)은 서안이 아직 고쳐 굽지 못해 바탕 그대로만 — 제출유예 · 산업상 이용가능성은 거부한다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
 pub struct SpecOptions {
     pub drawings: bool,
@@ -47,9 +46,6 @@ pub fn save_new_specification(
         SpecKind::Utility => (UTILITY, 142),
         SpecKind::Pct => (PCT, 113),
     };
-    if kind == SpecKind::Utility && (deferred || options.industrial) {
-        return Err(new_error("utility_options"));
-    }
     std::fs::write(&form, bytes).map_err(|_| new_error("form"))?;
     if drawings && !deferred && !options.industrial {
         return crate::save::save_new_document_with_kind(

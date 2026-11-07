@@ -236,8 +236,9 @@ impl EditorSession {
                 dialect: GenerationDialect::PatentSpecificationKo,
                 profile: std::sync::Arc::new(crate::amendment_profile()),
             }),
-            // 의견서는 내장 틀이 없고 파일마다 모양 표가 다르다 — 그 파일 틀로 다시 굽는다(본문 규칙은 국내).
-            7 => crate::source_generation_profile(&first)
+            // 의견서 · 실용신안(142)은 내장 틀이 없다 — 그 파일 틀(헤더 · 모양 표 · 쪽 설정)로 다시 굽는다(본문 규칙은 국내).
+            // 실용신안은 표제만 「고안」일 뿐 국내 명세서와 같은 꼴이다(통특기 새문서 실측).
+            7 | 142 => crate::source_generation_profile(&first)
                 .ok()
                 .map(|profile| Recipe {
                     dialect: GenerationDialect::PatentSpecificationKo,
@@ -383,7 +384,7 @@ impl EditorSession {
         &self.versions[self.current].path
     }
 
-    /// 다시 굽기로 고칠 수 있는 문서인가(명세서 PCT 113 · 국내 140). 의견서·보정 명세서는 아직 못 고친다.
+    /// 다시 굽기로 고칠 수 있는 문서인가(명세서 PCT 113 · 국내 140 · 실용신안 142 · 의견서 7 · 보정 명세서).
     pub fn editable(&self) -> bool {
         self.dialect.is_some()
     }

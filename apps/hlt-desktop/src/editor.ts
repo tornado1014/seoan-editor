@@ -1819,8 +1819,7 @@ export function mountEditor(root: HTMLElement): void {
     });
   }
 
-  /** 새 명세서 창(통특기 새문서와 같은 선택사항): 실용신안은 도면이 늘 있고 서안이 아직 고쳐 굽지 못해 다른 선택사항을 끈다 ·
-   *  PCT 는 제출유예가 없다. 취소면 null. */
+  /** 새 명세서 창(통특기 새문서와 같은 선택사항): 실용신안은 도면이 늘 있고 · PCT 는 제출유예가 없다. 취소면 null. */
   function askSpecification(): Promise<{ kind: SpecKindDto; options: SpecOptionsDto } | null> {
     return new Promise((resolve) => {
       const box = document.createElement('form');
@@ -1838,9 +1837,8 @@ export function mountEditor(root: HTMLElement): void {
         const utility = kind.value === 'utility';
         check('drawings').disabled = utility;
         if (utility) check('drawings').checked = true;
-        check('deferred').disabled = utility || kind.value === 'pct';
-        check('industrial').disabled = utility;
-        for (const name of ['deferred', 'industrial']) if (check(name).disabled) check(name).checked = false;
+        check('deferred').disabled = kind.value === 'pct';
+        if (check('deferred').disabled) check('deferred').checked = false;
       };
       kind.addEventListener('change', sync);
       const done = (value: { kind: SpecKindDto; options: SpecOptionsDto } | null) => {

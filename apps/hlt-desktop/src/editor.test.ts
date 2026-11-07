@@ -539,7 +539,7 @@ describe('page editing', () => {
     });
   });
 
-  test('새 명세서: 종류 · 선택사항 창(실용신안 → 도면 고정 · 나머지 끔 · PCT → 유예 끔) → 명령 인자', async () => {
+  test('새 명세서: 종류 · 선택사항 창(실용신안 → 도면 고정 · PCT → 유예 끔) → 명령 인자', async () => {
     const root = await open();
     root.querySelector<HTMLButtonElement>('[data-action="new-spec"]')!.click();
     await settle(10);
@@ -550,7 +550,7 @@ describe('page editing', () => {
     check('deferred').checked = true;
     kind.value = 'utility';
     kind.dispatchEvent(new Event('change'));
-    expect([check('drawings').disabled, check('drawings').checked, check('deferred').disabled, check('deferred').checked]).toEqual([true, true, true, false]);
+    expect([check('drawings').disabled, check('drawings').checked, check('deferred').disabled, check('deferred').checked]).toEqual([true, true, false, true]);
     kind.value = 'pct';
     kind.dispatchEvent(new Event('change'));
     expect([check('drawings').disabled, check('deferred').disabled, check('industrial').disabled]).toEqual([false, true, false]);

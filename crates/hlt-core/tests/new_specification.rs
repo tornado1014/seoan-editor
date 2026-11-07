@@ -74,17 +74,21 @@ fn utility_keeps_drawings_and_pct_has_no_deferral() {
         "실용신안은 도면이 늘 있다"
     );
     assert!(utility.iter().any(|(t, ..)| t == "【고안의 명칭】"));
-    // 실용신안은 서안이 아직 고쳐 굽지 못한다 — 선택사항은 거부(조용히 무시하지 않는다).
-    let temp = tempfile::tempdir().unwrap();
-    let refused = save_new_specification(
-        &temp.path().join("u.HLT"),
-        SpecKind::Utility,
-        SpecOptions {
-            deferred: true,
-            ..Default::default()
-        },
-    );
-    assert!(refused.is_err());
+    // 실용신안도 선택사항은 특허와 같은 규칙(제출유예 → 청구범위 빠짐 · 산업 → 【부호의 설명】 앞 · 같은 정렬).
+    let options = SpecOptions {
+        deferred: true,
+        industrial: true,
+        ..Default::default()
+    };
+    let utility = made(SpecKind::Utility, options);
+    let texts: Vec<&str> = utility.iter().map(|(t, ..)| t.as_str()).collect();
+    assert!(!texts.contains(&"【청구범위】"));
+    let at = texts
+        .iter()
+        .position(|t| *t == "【산업상 이용가능성】")
+        .unwrap();
+    assert_eq!(texts[at + 2], "【부호의 설명】");
+    assert_eq!(utility[at].1, utility[at + 2].1, "다른 표제와 같은 정렬");
     let pct = made(
         SpecKind::Pct,
         SpecOptions {
@@ -130,4 +134,38 @@ fn new_specifications_pass_the_structure_checks() {
             .collect();
         assert!(codes.is_empty(), "{kind:?} {codes:?}");
     }
+}
+
+/// 실용신안(문서 종류 142)도 고쳐 굽는다: 글을 쓰고 저장해 다시 열면 그 글이 있고 종류는 그대로 142(실용신안)다.
+#[test]
+fn a_new_utility_model_specification_is_editable() {
+    let temp = tempfile::tempdir().unwrap();
+    let out = temp.path().join("실용.HLT");
+    save_new_specification(&out, SpecKind::Utility, SpecOptions::default()).unwrap();
+    let mut session = EditorSession::open(&out).unwrap();
+    assert!(session.editable(), "실용신안을 고칠 수 있다");
+    let paragraphs = session.paragraphs();
+    let at = paragraphs
+        .iter()
+        .position(|p| p.text.trim() == "【고안의 명칭】")
+        .unwrap();
+    let title = paragraphs[at + 1].id.clone();
+    session
+        .replace_text(&title, "시험 기구{TEST TOOL}")
+        .unwrap();
+    let saved = temp.path().join("실용2.HLT");
+    session.save_as(&saved).unwrap();
+    let reopened = EditorSession::open(&saved).unwrap();
+    assert_eq!(
+        reopened.document.summary.document_type_raw & 0x7fff,
+        142,
+        "종류가 실용신안으로 남는다"
+    );
+    assert!(
+        reopened
+            .paragraphs()
+            .iter()
+            .any(|p| p.text == "시험 기구{TEST TOOL}")
+    );
+    assert_eq!(shape(&saved).len(), shape(&out).len(), "문단 수가 그대로");
 }
