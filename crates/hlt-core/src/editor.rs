@@ -1222,15 +1222,83 @@ impl EditorSession {
         kind: &str,
         number: &str,
     ) -> Result<String, CoreError> {
-        if !is_item_heading(&format!("【{kind} {number}】")) {
+        self.insert_items(at, before, kind, &[number.to_string()])
+    }
+
+    /// 식별항목 여럿 넣기(통특기 「도(범위지정)」): 번호마다 표제 + 빈 본문 쌍을 차례로 — 되돌리기 한 번. 첫 빈 본문 id.
+    pub fn insert_items(
+        &mut self,
+        at: &str,
+        before: bool,
+        kind: &str,
+        numbers: &[String],
+    ) -> Result<String, CoreError> {
+        let texts: Vec<String> = numbers.iter().map(|n| format!("【{kind} {n}】")).collect();
+        if texts.is_empty() || !texts.iter().all(|text| is_item_heading(text)) {
             return Err(editor_error("item"));
         }
+        self.insert_heading_pairs(at, before, &format!("【{kind} "), &texts)
+    }
+
+    /// 표준식별항목 넣기(통특기 「표준식별항목」): 번호 없는 표제를 작성지침 차례 자리에 — 그보다 뒤 차례인 첫 표제 앞,
+    /// 없으면 문서 끝. 이미 있으면 `item_exists`. 「고안」 문서(【고안의 설명】)면 「발명」을 「고안」으로 적는다. 빈 본문 id.
+    pub fn insert_standard_heading(&mut self, name: &str) -> Result<String, CoreError> {
+        let rank = crate::kipo_rules::standard_rank(name).ok_or_else(|| editor_error("item"))?;
+        let paragraphs = self.paragraphs();
+        let headings: Vec<(&EditorParagraph, Option<usize>)> = paragraphs
+            .iter()
+            .filter_map(|p| {
+                crate::submit_check::heading(&p.text)
+                    .map(|h| (p, crate::kipo_rules::standard_rank(h)))
+            })
+            .collect();
+        if headings.iter().any(|(_, r)| *r == Some(rank)) {
+            return Err(editor_error("item_exists"));
+        }
+        let utility = headings
+            .iter()
+            .any(|(p, _)| p.text.trim() == "【고안의 설명】");
+        let written = if utility {
+            name.replace("발명", "고안")
+        } else {
+            name.to_string()
+        };
+        let (at, before) = match headings.iter().find(|(_, r)| r.is_some_and(|r| r > rank)) {
+            Some((p, _)) => (p.id.clone(), true),
+            None => (
+                paragraphs
+                    .last()
+                    .map(|p| p.id.clone())
+                    .ok_or_else(|| editor_error("paragraph"))?,
+                false,
+            ),
+        };
+        let text = format!("【{written}】");
+        self.insert_heading_pairs(&at, before, &text, std::slice::from_ref(&text))
+    }
+
+    /// `at` 문단 뒤(`before` 면 앞)에 표제(`texts`) + 빈 본문 쌍을 차례로 넣는다. 표제 모양은 `shape_prefix` 로 시작하는
+    /// 표제가 있으면 그것. 첫 빈 본문 id.
+    fn insert_heading_pairs(
+        &mut self,
+        at: &str,
+        before: bool,
+        shape_prefix: &str,
+        texts: &[String],
+    ) -> Result<String, CoreError> {
         let mut body_at = 0;
+        // 화면 맨 끝 빈 줄은 모델에 없다 — 그 뒤에 넣으면 모델 끝에 넣는다(「문서 끝」 · 【도면】 끝).
+        let at_end = !before && self.paragraphs().last().is_some_and(|p| p.id == at);
         self.edit_model(|model| {
             let index = model
                 .paragraphs
                 .iter()
                 .position(|paragraph| paragraph.id == at)
+                .or_else(|| {
+                    at_end
+                        .then(|| model.paragraphs.len().checked_sub(1))
+                        .flatten()
+                })
                 .ok_or_else(|| editor_error("paragraph"))?;
             let fresh = |suffix: &str| {
                 (0..)
@@ -1238,7 +1306,6 @@ impl EditorSession {
                     .find(|id| model.paragraphs.iter().all(|paragraph| &paragraph.id != id))
                     .expect("unbounded")
             };
-            let (heading_id, body_id) = (fresh("h"), fresh("b"));
             // 모양: 본문 = 가까운 본문 문단(커서가 표제 위여도 본문 모양) · 표제 = 같은 종류 표제가 있으면 그것, 없으면 가까운 앞 표제
             // (본문의 첫 줄 들여쓰기를 표제가 물려받지 않게).
             // 표제 = 【…】 한 줄(원본 HLT 에서 읽은 표제는 marker 가 없다 — 글로 알아본다).
@@ -1260,12 +1327,12 @@ impl EditorSession {
                 .find(|paragraph| is_body(paragraph))
                 .unwrap_or(&model.paragraphs[index])
                 .clone();
-            let prefix = format!("【{kind} ");
+            let prefix = shape_prefix;
             let heading_shape = model
                 .paragraphs
                 .iter()
                 .find(|paragraph| {
-                    is_heading(paragraph) && paragraph.text.trim().starts_with(&prefix)
+                    is_heading(paragraph) && paragraph.text.trim().starts_with(prefix)
                 })
                 .or_else(|| {
                     model.paragraphs[..=index]
@@ -1296,24 +1363,27 @@ impl EditorSession {
                 ..blank(heading_shape)
             };
             let base = blank(body_shape);
-            let text = format!("【{kind} {number}】");
-            let heading = crate::HmlParagraph {
-                id: heading_id,
-                marker: Some(text.clone()),
-                text: text.clone(),
-                inlines: vec![HmlInline::Text {
-                    text,
-                    formats: Vec::new(),
-                    size: None,
-                }],
-                ..heading_base
-            };
-            let body = crate::HmlParagraph {
-                id: body_id,
-                ..base
-            };
+            let mut pairs = Vec::new();
+            for (k, text) in texts.iter().enumerate() {
+                let heading = crate::HmlParagraph {
+                    id: fresh(&format!("h{k}")),
+                    marker: Some(text.clone()),
+                    text: text.clone(),
+                    inlines: vec![HmlInline::Text {
+                        text: text.clone(),
+                        formats: Vec::new(),
+                        size: None,
+                    }],
+                    ..heading_base.clone()
+                };
+                let body = crate::HmlParagraph {
+                    id: fresh(&format!("b{k}")),
+                    ..base.clone()
+                };
+                pairs.extend([heading, body]);
+            }
             let at = if before { index } else { index + 1 };
-            model.paragraphs.splice(at..at, [heading, body]);
+            model.paragraphs.splice(at..at, pairs);
             body_at = at + 1;
             Ok(())
         })?;
@@ -3531,7 +3601,16 @@ mod tests {
 
 /// 식별항목 표제(통특기 우클릭 「식별항목」 7종 + 영문 · 숫자 번호)인가.
 fn is_item_heading(text: &str) -> bool {
-    const KINDS: [&str; 7] = ["도", "표", "청구항", "수학식", "화학식", "반응식", "참고도"];
+    const KINDS: [&str; 8] = [
+        "도",
+        "표",
+        "청구항",
+        "수학식",
+        "화학식",
+        "반응식",
+        "참고도",
+        "실시예",
+    ];
     let Some(inner) = text
         .trim()
         .strip_prefix('【')

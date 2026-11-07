@@ -110,6 +110,16 @@ const LOOSE_MARKERS: [&str; 7] = [
     "청구의 범위",
 ];
 
+/// 번호 없는 표준 표제의 작성지침 차례(번호 표제 · 모르는 이름은 `None`). 「고안」 · 옛 이름도 받는다.
+pub(crate) fn standard_rank(name: &str) -> Option<usize> {
+    let name = normalize(name);
+    let (base, number) = split_number(&name);
+    if number.is_some() || NUMBERED.contains(&base) {
+        return None;
+    }
+    ORDER.iter().position(|o| *o == base)
+}
+
 fn normalize(name: &str) -> String {
     let name = name.trim().replace("고안", "발명");
     match name.as_str() {

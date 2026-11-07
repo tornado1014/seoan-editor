@@ -1422,7 +1422,7 @@ pub struct ItemInsertedDto {
     pub body: String,
 }
 
-/// 식별항목 넣기(우클릭 「식별항목」): 【종류 번호】 표제 + 빈 본문 문단.
+/// 식별항목 넣기(우클릭 「식별항목」 · 「도(범위지정)」): 번호마다 【종류 번호】 표제 + 빈 본문 문단(되돌리기 한 번).
 #[tauri::command]
 pub async fn editor_insert_item(
     window: Window,
@@ -1430,10 +1430,27 @@ pub async fn editor_insert_item(
     paragraph_id: String,
     before: bool,
     kind: String,
-    number: String,
+    numbers: Vec<String>,
 ) -> Result<ItemInsertedDto, CoreError> {
     with_session(&state, &window, |session| {
-        let body = session.insert_item(&paragraph_id, before, &kind, &number)?;
+        let body = session.insert_items(&paragraph_id, before, &kind, &numbers)?;
+        let title = title(session);
+        Ok(ItemInsertedDto {
+            view: view(session, title),
+            body,
+        })
+    })
+}
+
+/// 표준식별항목 넣기: 번호 없는 표제를 작성지침 차례 자리에 + 빈 본문 문단.
+#[tauri::command]
+pub async fn editor_insert_standard_heading(
+    window: Window,
+    state: State<'_, EditorState>,
+    name: String,
+) -> Result<ItemInsertedDto, CoreError> {
+    with_session(&state, &window, |session| {
+        let body = session.insert_standard_heading(&name)?;
         let title = title(session);
         Ok(ItemInsertedDto {
             view: view(session, title),

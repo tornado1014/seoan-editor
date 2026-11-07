@@ -70,6 +70,7 @@ import {
   editorNewOpinion,
   editorNewTab,
   editorInsertItem,
+  editorInsertStandardHeading,
   editorInsertSequenceListing,
   editorInsertPicture,
   editorResizeImage,
@@ -1716,26 +1717,143 @@ export function mountEditor(root: HTMLElement): void {
     const cell = (event.target as HTMLElement).closest<HTMLElement>('[data-cell]')?.dataset.cell ?? null;
     void contextMenu(cell, pictureAt(event)).catch((error) => fail('메뉴', error));
   });
-  /** 식별항목 넣기: 번호를 묻고(같은 종류 가장 큰 번호 + 1 을 채워 둔다) 커서 문단 아래(문단 맨 앞이면 위)에 표제 + 빈 문단. */
+  /** 【도면】 절의 마지막 문단(그 뒤에 새 【도 N】) — 【도면】이 없으면 null. */
+  function drawingsEnd(): string | null {
+    const list = view?.paragraphs ?? [];
+    const start = list.findIndex((paragraph) => paragraph.text.trim() === '【도면】');
+    if (start < 0) return null;
+    let end = start;
+    for (let i = start + 1; i < list.length; i += 1) {
+      const text = list[i].text.trim();
+      if (/^【[^】]*】$/.test(text) && !/^【도 [A-Za-z0-9]+】$/.test(text)) break;
+      end = i;
+    }
+    return list[end].id;
+  }
+
+  /** 식별항목 넣기(통특기 매뉴얼 4.5.3): 번호를 묻고(같은 종류 가장 큰 번호 + 1 을 채워 둔다) 커서 문단 아래(문단 맨 앞이면 위)에
+   *  표제 + 빈 문단. 「도」는 커서 앞 · 뒤 【도 #】 사이에 빈 번호가 있으면 그 번호로 커서 자리에, 없으면 다음 번호로 【도면】 맨 끝에. */
   async function insertItem(kind: string) {
     if (!caret || !canEdit() || inCell(caret.paragraph)) return;
-    const at = caret;
-    const numbers = (view?.paragraphs ?? [])
-      .map((paragraph) => paragraph.text.match(/^【(.+) ([A-Za-z0-9]+)】$/))
-      .filter((match) => match?.[1] === kind)
-      .map((match) => match![2]);
-    const suggested = String(Math.max(0, ...numbers.map((number) => parseInt(number, 10) || 0)) + 1);
+    const list = view?.paragraphs ?? [];
+    const found = list
+      .map((paragraph, index) => ({ index, match: paragraph.text.match(/^【(.+) ([A-Za-z0-9]+)】$/) }))
+      .filter(({ match }) => match?.[1] === kind)
+      .map(({ index, match }) => ({ index, number: match![2] }));
+    const numbers = found.map(({ number }) => number);
+    let at = caret.paragraph;
+    let before = caret.offset === 0 && charsOf(caret.paragraph).length > 0;
+    let suggested = String(Math.max(0, ...numbers.map((number) => parseInt(number, 10) || 0)) + 1);
+    if (kind === '도') {
+      const here = order(caret.paragraph);
+      const value = (number: string) => parseInt(number, 10);
+      const previous = found.filter(({ index }) => index <= here).at(-1);
+      const next = found.find(({ index }) => index > here);
+      const gap = previous && next && value(next.number) - value(previous.number) > 1;
+      if (gap) suggested = String(value(previous.number) + 1);
+      else {
+        const end = drawingsEnd();
+        if (end) [at, before] = [end, false];
+      }
+    }
     const number = await askNumber(kind, suggested);
     input.focus({ preventScroll: true });
     if (!number) return;
-    const before = at.offset === 0 && charsOf(at.paragraph).length > 0;
+    await insertItems(at, before, kind, [number], numbers);
+  }
+
+  async function insertItems(at: string, before: boolean, kind: string, wanted: string[], existing: string[]) {
     await structural('식별항목 넣기', async () => {
-      const result = await editorInsertItem(at.paragraph, before, kind, number);
+      const result = await editorInsertItem(at, before, kind, wanted);
       return { next: result.view, caret: { paragraph: result.body, offset: 0 } };
     });
-    if (numbers.includes(number)) {
-      warn(`【${kind} ${number}】이 이미 있습니다 — 같은 번호는 보정서 만들 때 통특기가 거절합니다(E-243)`);
+    const twice = wanted.filter((number) => existing.includes(number));
+    if (twice.length) {
+      warn(`【${kind} ${twice.join('】 · 【' + kind + ' ')}】이 이미 있습니다 — 같은 번호는 보정서 만들 때 통특기가 거절합니다(E-243)`);
     }
+  }
+
+  /** 도(범위지정): 「2-4」 · 「5, 7」 → 【도 2】 · 【도 3】 · 【도 4】를 【도면】 맨 끝(없으면 커서 아래)에 한 번에. */
+  async function insertFigureRange() {
+    if (!caret || !canEdit() || inCell(caret.paragraph)) return;
+    const existing = (view?.paragraphs ?? [])
+      .map((paragraph) => paragraph.text.match(/^【도 ([A-Za-z0-9]+)】$/)?.[1])
+      .filter((number): number is string => Boolean(number));
+    const next = Math.max(0, ...existing.map((number) => parseInt(number, 10) || 0)) + 1;
+    const numbers = await askFigureRange(`${next}-${next + 1}`);
+    input.focus({ preventScroll: true });
+    if (!numbers) return;
+    const end = drawingsEnd();
+    await insertItems(end ?? caret.paragraph, false, '도', numbers, existing);
+  }
+
+  function askFigureRange(value: string): Promise<string[] | null> {
+    return new Promise((resolve) => {
+      const box = document.createElement('form');
+      box.className = 'item-ask item-range';
+      box.innerHTML = `<label>【도 <input class="item-numbers" value="${value}" size="10" autocomplete="off" spellcheck="false">】</label>
+        <button type="submit">추가</button><button type="button" class="item-cancel">취소</button><span class="item-hint">예: 2-4, 7</span>`;
+      const field = box.querySelector<HTMLInputElement>('.item-numbers')!;
+      const done = (numbers: string[] | null) => {
+        box.remove();
+        resolve(numbers);
+      };
+      box.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const numbers = parseNumbers(field.value);
+        if (numbers) done(numbers);
+        else box.querySelector('.item-hint')!.textContent = '번호는 「2-4, 7」처럼 적습니다';
+      });
+      box.querySelector('.item-cancel')!.addEventListener('click', () => done(null));
+      box.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') done(null);
+      });
+      root.append(box);
+      field.focus();
+      field.select();
+    });
+  }
+
+  /** 표준식별항목: 문서에 아직 없는 번호 없는 표제를 골라 작성지침 차례 자리에 넣는다(커서와 무관 · 커서는 빈 본문으로). */
+  async function insertStandardHeading() {
+    if (!canEdit() || !view) return;
+    const present = new Set(view.paragraphs.map((paragraph) => standardName(paragraph.text.trim().replace(/^【|】$/g, ''))));
+    const missing = STANDARD_HEADINGS.filter((name) => !present.has(name));
+    if (missing.length === 0) {
+      warn('표준식별항목이 모두 있습니다');
+      return;
+    }
+    const name = await askStandardHeading(missing);
+    input.focus({ preventScroll: true });
+    if (!name) return;
+    await structural('표준식별항목 넣기', async () => {
+      const result = await editorInsertStandardHeading(name);
+      return { next: result.view, caret: { paragraph: result.body, offset: 0 } };
+    });
+  }
+
+  function askStandardHeading(names: string[]): Promise<string | null> {
+    return new Promise((resolve) => {
+      const box = document.createElement('form');
+      box.className = 'item-ask item-standard';
+      box.innerHTML = `<label>표준식별항목 <select>${names.map((name) => `<option value="${name}">【${name}】</option>`).join('')}</select></label>
+        <button type="submit">넣기</button><button type="button" class="item-cancel">취소</button><span class="item-hint">작성지침 차례 자리에 넣습니다</span>`;
+      const select = box.querySelector('select')!;
+      const done = (value: string | null) => {
+        box.remove();
+        resolve(value);
+      };
+      box.addEventListener('submit', (event) => {
+        event.preventDefault();
+        done(select.value);
+      });
+      box.querySelector('.item-cancel')!.addEventListener('click', () => done(null));
+      box.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') done(null);
+      });
+      root.append(box);
+      select.focus();
+    });
   }
 
   /** 서열목록 넣기: ST.26 파일을 고르면 【서열목록】 · 첨부 줄을 넣고 커서를 첨부 줄로(취소면 그대로). */
@@ -2473,7 +2591,12 @@ export function mountEditor(root: HTMLElement): void {
         {
           text: '식별항목',
           enabled: caret !== null && editable,
-          items: ITEM_KINDS.map((kind) => ({ text: kind, action: () => void insertItem(kind) })),
+          items: [
+            ...ITEM_KINDS.map((kind) => ({ text: kind, action: () => void insertItem(kind) })),
+            { item: 'Separator' },
+            { text: '도(범위지정)…', action: () => void insertFigureRange() },
+            { text: '표준식별항목…', action: () => void insertStandardHeading() },
+          ],
         },
         { text: '식별항목 삭제', enabled: editable, action: () => void removeItem() },
         {
@@ -3967,7 +4090,40 @@ const BOOK_ICON =
   '<svg class="tree-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.5 8 2l6 1.5v9L8 14l-6-1.5z" fill="#4f9aa8"/><path d="M8 2v12" stroke="#2c6470" stroke-width="1"/><path d="M3.5 4.6 7 3.8v8.3l-3.5.8z" fill="#e8f3f5"/><path d="M12.5 4.6 9 3.8v8.3l3.5.8z" fill="#d3e8ec"/></svg>';
 
 /** 통특기 우클릭 「식별항목」 종류(NKEditor.exe 리소스 차례). */
-const ITEM_KINDS = ['도', '표', '청구항', '수학식', '화학식', '반응식', '참고도'];
+const ITEM_KINDS = ['도', '표', '청구항', '수학식', '화학식', '반응식', '참고도', '실시예'];
+/** 표준식별항목(번호 없는 표제 · 작성지침 차례 — core `kipo_rules::ORDER` 와 같은 차례 · 【서열목록】은 「서열목록 넣기」로). */
+export const STANDARD_HEADINGS = [
+  '발명의 설명',
+  '발명의 명칭',
+  '기술분야',
+  '발명의 배경이 되는 기술',
+  '선행기술문헌',
+  '특허문헌',
+  '비특허문헌',
+  '발명의 내용',
+  '해결하려는 과제',
+  '과제의 해결 수단',
+  '발명의 효과',
+  '도면의 간단한 설명',
+  '발명을 실시하기 위한 구체적인 내용',
+  '산업상 이용가능성',
+  '부호의 설명',
+  '수탁번호',
+  '청구범위',
+  '요약서',
+  '요약',
+  '대표도',
+  '색인어',
+  '도면',
+];
+/** 표제 이름을 표준 이름으로(고안 → 발명 · 옛 이름 → 새 이름). */
+export function standardName(name: string): string {
+  const plain = name.replace(/고안/g, '발명');
+  return (
+    ({ 특허청구범위: '청구범위', 배경기술: '발명의 배경이 되는 기술', '해결하고자 하는 과제': '해결하려는 과제' } as Record<string, string>)[plain] ??
+    plain
+  );
+}
 const ITEM_HEADING = new RegExp(`^【(${ITEM_KINDS.join('|')}) [A-Za-z0-9]+】$`);
 
 /** 「3, 5-7」 → ['3', '5', '6', '7'] · 틀리면 null. 범위는 숫자만(번호 1000 개까지). */

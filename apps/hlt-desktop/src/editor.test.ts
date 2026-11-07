@@ -296,7 +296,14 @@ beforeEach(() => {
       case 'editor_insert_item': {
         const index = Number(String(args!.paragraphId).split(':')[1]);
         const at = args!.before ? index : index + 1;
-        texts.splice(at, 0, `【${args!.kind} ${args!.number}】`, '');
+        const pairs = (args!.numbers as string[]).flatMap((number) => [`【${args!.kind} ${number}】`, '']);
+        texts.splice(at, 0, ...pairs);
+        return { view: view(texts), body: `paragraph:${at + 1}` };
+      }
+      case 'editor_insert_standard_heading': {
+        const claims = texts.findIndex((text) => text === '【청구범위】');
+        const at = claims < 0 ? texts.length : claims;
+        texts.splice(at, 0, `【${args!.name}】`, '');
         return { view: view(texts), body: `paragraph:${at + 1}` };
       }
       case 'editor_close':
@@ -1945,7 +1952,9 @@ describe('page editing', () => {
     );
     await settle(10);
     const items = menus.at(-1)!.find((item) => item.text === '식별항목')!.items!;
-    expect(items.map((item) => item.text)).toEqual(['도', '표', '청구항', '수학식', '화학식', '반응식', '참고도']);
+    expect(items.map((item) => item.text ?? '-')).toEqual([
+      '도', '표', '청구항', '수학식', '화학식', '반응식', '참고도', '실시예', '-', '도(범위지정)…', '표준식별항목…',
+    ]);
     items.find((item) => item.text === '청구항')!.action!();
     await settle(10);
     const field = root.querySelector<HTMLInputElement>('.item-number')!;
@@ -1958,13 +1967,63 @@ describe('page editing', () => {
     await settle(30);
     expect(last('editor_insert_item')).toEqual([
       'editor_insert_item',
-      { paragraphId: 'paragraph:0', before: false, kind: '청구항', number: '1' },
+      { paragraphId: 'paragraph:0', before: false, kind: '청구항', numbers: ['1'] },
     ]);
     expect(texts).toEqual(['가나다', '【청구항 1】', '', '【청구항 1】', '라마']);
     expect(root.querySelector('.editor-error')!.textContent).toContain('E-243');
     type(root, '본문'); // 커서는 새 빈 문단에
     await settle(500);
     expect(texts[2]).toBe('본문');
+  });
+
+  test('식별항목 입력(매뉴얼 4.5.3): 도는 앞 · 뒤 사이 빈 번호면 커서 자리 · 없으면 【도면】 끝 · 도(범위지정) · 표준식별항목', async () => {
+    texts = ['【발명의 설명】', '가나다', '【청구범위】', '【청구항 1】', '라마', '【도면】', '【도 1】', '', '【도 3】', ''];
+    const root = await open();
+    const menu = async (y: number) => {
+      clickAt(root, 63, y);
+      root.querySelector('.nk-page')!.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 63 * SCALE, clientY: y * SCALE }),
+      );
+      await settle(10);
+      return menus.at(-1)!.find((item) => item.text === '식별항목')!.items!;
+    };
+    const lineY = (index: number) => 104 + 20 * index; // 한 줄 문단마다 20pt
+    // 【도 1】 아래(1 과 3 사이) → 2 를 커서 자리에.
+    (await menu(lineY(7))).find((item) => item.text === '도')!.action!();
+    await settle(10);
+    expect(root.querySelector<HTMLInputElement>('.item-number')!.value).toBe('2');
+    root.querySelector<HTMLFormElement>('.item-ask')!.requestSubmit();
+    await settle(30);
+    expect(last('editor_insert_item')![1]).toEqual(expect.objectContaining({ paragraphId: 'paragraph:7', numbers: ['2'] }));
+    // 빈 번호가 없는 자리(첫 문단) → 다음 번호(4)를 【도면】 끝에.
+    (await menu(lineY(1))).find((item) => item.text === '도')!.action!();
+    await settle(10);
+    expect(root.querySelector<HTMLInputElement>('.item-number')!.value).toBe('4');
+    root.querySelector<HTMLFormElement>('.item-ask')!.requestSubmit();
+    await settle(30);
+    expect(texts.slice(-2)).toEqual(['【도 4】', '']);
+    // 도(범위지정): 「5-6」 → 둘 다 【도면】 끝에 한 번에.
+    (await menu(lineY(1))).find((item) => item.text === '도(범위지정)…')!.action!();
+    await settle(10);
+    const range = root.querySelector<HTMLFormElement>('.item-range')!;
+    expect(range.querySelector<HTMLInputElement>('.item-numbers')!.value).toBe('5-6');
+    range.requestSubmit();
+    await settle(30);
+    expect(last('editor_insert_item')![1]).toEqual(expect.objectContaining({ kind: '도', numbers: ['5', '6'] }));
+    expect(texts.slice(-4)).toEqual(['【도 5】', '', '【도 6】', '']);
+    // 표준식별항목: 이미 있는 표제(발명의 설명 · 청구범위 · 도면)는 목록에 없다.
+    (await menu(lineY(1))).find((item) => item.text === '표준식별항목…')!.action!();
+    await settle(10);
+    const standard = root.querySelector<HTMLFormElement>('.item-standard')!;
+    const options = [...standard.querySelectorAll('option')].map((o) => o.value);
+    expect(options).not.toContain('발명의 설명');
+    expect(options).not.toContain('청구범위');
+    expect(options[0]).toBe('발명의 명칭');
+    standard.querySelector('select')!.value = '산업상 이용가능성';
+    standard.requestSubmit();
+    await settle(30);
+    expect(last('editor_insert_standard_heading')).toEqual(['editor_insert_standard_heading', { name: '산업상 이용가능성' }]);
+    expect(texts[texts.indexOf('【청구범위】') - 2]).toBe('【산업상 이용가능성】');
   });
 
   test('paragraph marks: on by default — ↵ at every paragraph end, gone when off, back when on', async () => {

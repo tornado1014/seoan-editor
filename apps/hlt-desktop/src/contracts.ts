@@ -238,8 +238,12 @@ export const editorPasteFormatted = (paragraphId: string, offset: number, runs: 
 export const editorFormattedHtml = (spans: [string, number, number][]) => invoke<string>('editor_formatted_html', { spans });
 export const editorDeleteRange = (fromId: string, fromOffset: number, toId: string, toOffset: number) =>
   invoke<EditorViewDto>('editor_delete_range', { fromId, fromOffset, toId, toOffset });
-export const editorInsertItem = (paragraphId: string, before: boolean, kind: string, number: string) =>
-  invoke<{ view: EditorViewDto; body: string }>('editor_insert_item', { paragraphId, before, kind, number });
+/** 식별항목 넣기: 번호마다 표제 + 빈 본문(body = 첫 빈 본문 · 되돌리기 한 번). */
+export const editorInsertItem = (paragraphId: string, before: boolean, kind: string, numbers: string[]) =>
+  invoke<{ view: EditorViewDto; body: string }>('editor_insert_item', { paragraphId, before, kind, numbers });
+/** 표준식별항목 넣기: 번호 없는 표제를 작성지침 차례 자리에(커서와 무관). */
+export const editorInsertStandardHeading = (name: string) =>
+  invoke<{ view: EditorViewDto; body: string }>('editor_insert_standard_heading', { name });
 /** 서열목록 넣기: 파일 고르기(취소면 null) → 【서열목록】 · 첨부 줄(body = 첨부 줄). */
 export const editorInsertSequenceListing = () =>
   invoke<{ view: EditorViewDto; body: string } | null>('editor_insert_sequence_listing');

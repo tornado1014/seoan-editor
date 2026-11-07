@@ -1841,3 +1841,63 @@ fn excluded_and_deleted_amendments_leave_the_baseline() {
     assert_eq!(xresult(&fin), xresult(&synthetic_fin(&fresh)));
     assert_eq!(body_text(&fin), original_text);
 }
+
+/// 식별항목 입력(통특기 매뉴얼 4.5.3): 도(범위지정)는 표제 + 빈 본문 쌍을 차례로 한 번에(되돌리기 한 번) ·
+/// 표준식별항목은 작성지침 차례 자리에(커서와 무관) · 이미 있으면 · 번호 표제면 거부 · 「실시예」 도 번호 표제다.
+#[test]
+fn inserts_a_figure_range_and_a_standard_heading_where_the_guide_puts_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let fin = synthetic_fin(temp.path());
+    let mut session = EditorSession::open(&fin).unwrap();
+    let headings = |session: &EditorSession| -> Vec<String> {
+        session
+            .paragraphs()
+            .iter()
+            .map(|p| p.text.trim().to_string())
+            .filter(|t| t.starts_with('【'))
+            .collect()
+    };
+    let start = headings(&session);
+    let last = session.paragraphs().last().unwrap().id.clone();
+    let body = session
+        .insert_items(&last, false, "도", &["3".into(), "4".into()])
+        .unwrap();
+    let after = headings(&session);
+    assert_eq!(&after[after.len() - 2..], ["【도 3】", "【도 4】"]);
+    let paragraphs = session.paragraphs();
+    let at = paragraphs.iter().position(|p| p.id == body).unwrap();
+    assert_eq!(paragraphs[at - 1].text, "【도 3】", "커서는 첫 빈 본문");
+    session.undo().unwrap();
+    assert_eq!(headings(&session), start, "되돌리기 한 번에 둘 다");
+
+    // 커서가 어디든 【산업상 이용가능성】은 【청구범위】 앞(그보다 뒤 차례인 첫 표제).
+    session
+        .insert_standard_heading("산업상 이용가능성")
+        .unwrap();
+    let after = headings(&session);
+    let at = after
+        .iter()
+        .position(|h| h == "【산업상 이용가능성】")
+        .unwrap();
+    assert_eq!(after[at + 1], "【청구범위】");
+    assert!(
+        session
+            .insert_standard_heading("산업상 이용가능성")
+            .is_err(),
+        "이미 있다"
+    );
+    assert!(session.insert_standard_heading("도").is_err(), "번호 표제");
+    assert!(
+        session.insert_standard_heading("그림").is_err(),
+        "모르는 표제"
+    );
+    let codes: Vec<_> = session
+        .submission_checks()
+        .into_iter()
+        .filter_map(|issue| issue.code)
+        .filter(|code| matches!(*code, "E-244" | "E-201" | "E-249"))
+        .collect();
+    assert!(codes.is_empty(), "넣은 자리가 작성지침 차례다: {codes:?}");
+    let first = session.paragraphs()[3].id.clone();
+    session.insert_item(&first, false, "실시예", "1").unwrap();
+}
