@@ -146,6 +146,12 @@ const SUBMIT_GROUPS: [SubmitIssueDto['kind'], string][] = [
   ['abstract_long', '요약 길이(권장 400자)'],
   ['spacing', '띄어쓰기(공백 두 칸 · 문장부호 앞 · 문단 끝 · 전각 공백)'],
   ['sequence_file', '서열목록 파일'],
+  ['title_format', '발명의 명칭 꼴(한글{English})'],
+  ['structure', '식별항목(짝 · 자리 · 번호 · 순서 · 필수)'],
+  ['heading_style', '식별항목 · 명칭에 글자 속성'],
+  ['image', '도면 · 대표도 그림'],
+  ['claim_body', '청구항 번호 · 내용'],
+  ['table', '표'],
 ];
 
 /** 표 → CSV(칸마다 따옴표 · 안의 따옴표는 둘로). */
@@ -2186,7 +2192,7 @@ export function mountEditor(root: HTMLElement): void {
             .filter(({ issue }) => issue.kind === kind)
             .map(
               ({ issue, index }) =>
-                `<li>${issue.paragraph_id ? `<button type="button" class="submit-go" data-index="${index}">가기</button> ` : ''}${escape(issue.detail)}</li>`,
+                `<li>${issue.paragraph_id ? `<button type="button" class="submit-go" data-index="${index}">가기</button> ` : ''}${issue.code ? `<code class="submit-code" title="통특기 매뉴얼 오류코드">${escape(issue.code)}</code> ` : ''}${escape(issue.detail)}</li>`,
             )
             .join('');
           const fix =

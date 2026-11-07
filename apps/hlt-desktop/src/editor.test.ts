@@ -1038,13 +1038,13 @@ describe('page editing', () => {
     expect(head[0]).toBe('파일');
     expect(head.slice(-2)).toEqual(['합계', '열지 못함']);
     const first = [...root.querySelectorAll('.batch-body tbody tr')][0];
-    expect([...first.querySelectorAll('td')].map((td) => td.textContent)).toEqual(['a.HLT', '0', '0', '0', '0', '0', '2', '1', '0', '0', '0', '0', '0', '0', '0', '3', '']);
+    expect([...first.querySelectorAll('td')].map((td) => td.textContent)).toEqual(['a.HLT', '0', '0', '0', '0', '0', '2', '1', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0', '3', '']);
     expect(root.querySelector('.editor-status')!.textContent).toBe('폴더 제출 전 점검 — 2개 파일 · 걸린 파일 1');
     q(root, '.batch-csv').click();
     await settle(10);
     const [, args] = last('editor_save_csv')!;
     expect((args as { name: string }).name).toBe('제출 전 점검.csv');
-    expect((args as { text: string }).text.split('\r\n')[1]).toBe('"a.HLT","0","0","0","0","0","2","1","0","0","0","0","0","0","0","3",""');
+    expect((args as { text: string }).text.split('\r\n')[1]).toBe('"a.HLT","0","0","0","0","0","2","1","0","0","0","0","0","0","0","0","0","0","0","0","0","3",""');
   });
 
   test('toCsv: 따옴표 · 쉼표 · 줄바꿈이 든 칸', () => {
@@ -1685,17 +1685,21 @@ describe('page editing', () => {
       { kind: 'unnumbered', paragraph_id: null, detail: '식별번호가 하나도 없습니다 — 「문단번호 넣기」를 누르세요' },
       { kind: 'sign_names', paragraph_id: 'paragraph:0', detail: '부호 10: 몸체(3) · 본체(1)' },
       { kind: 'sign_shared', paragraph_id: 'paragraph:0', detail: '「몸체」: 부호 10(4) · 20(1)' },
+      { kind: 'title_format', code: 'E-266', paragraph_id: 'paragraph:0', detail: '한글 명칭 오른쪽에 {영문 명칭}을 함께 씁니다' },
     ];
     await make();
     let box = root.querySelector<HTMLFormElement>('.submit-ask')!;
-    expect(box.textContent).toContain('제출 전 점검 — 4건');
+    expect(box.textContent).toContain('제출 전 점검 — 5건');
+    // 매뉴얼 오류코드가 있는 줄만 코드 칩을 단다.
+    expect([...box.querySelectorAll('.submit-code')].map((c) => c.textContent)).toEqual(['E-266']);
     expect([...box.querySelectorAll('legend')].map((l) => l.textContent)).toEqual([
       '빈 식별번호',
       '도면이 없는 「도 N」',
       '같은 부호 · 다른 이름(괄호 안 = 쓰인 수)',
       '같은 이름 · 다른 부호(한두 번만 다른 부호)',
+      '발명의 명칭 꼴(한글{English})',
     ]);
-    expect(box.querySelectorAll('.submit-go').length).toBe(3); // 문서 전체의 일은 「가기」가 없다
+    expect(box.querySelectorAll('.submit-go').length).toBe(4); // 문서 전체의 일은 「가기」가 없다
     box.querySelector<HTMLButtonElement>('.submit-go')!.click();
     expect(box.hidden).toBe(true);
     type(root, 'X');

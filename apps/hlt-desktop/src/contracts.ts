@@ -384,9 +384,15 @@ export type SubmitKindDto =
   | 'duplicate_heading'
   | 'claim_ending'
   | 'spacing'
-  | 'sequence_file';
-/** 제출 전 점검 한 줄(가 볼 문단 · 없으면 문서 전체의 일). */
-export type SubmitIssueDto = { kind: SubmitKindDto; paragraph_id: string | null; detail: string };
+  | 'sequence_file'
+  | 'title_format'
+  | 'structure'
+  | 'heading_style'
+  | 'image'
+  | 'claim_body'
+  | 'table';
+/** 제출 전 점검 한 줄(가 볼 문단 · 없으면 문서 전체의 일 · 통특기 매뉴얼 오류코드가 있으면 `code`). */
+export type SubmitIssueDto = { kind: SubmitKindDto; code?: string; paragraph_id: string | null; detail: string };
 export const editorSubmissionChecks = () => invoke<SubmitIssueDto[]>('editor_submission_checks');
 /** 보정 근거 후보: 보정 전 명세서 식별번호 문단 · 점수(통째로면 1) · 인용 문장 · 그 문단의 도면. */
 export type BasisHitDto = { number: string; score: number; exact: boolean; quote: string; figures: string[] };

@@ -1903,12 +1903,34 @@ impl EditorSession {
     pub fn submission_checks(&self) -> Vec<crate::SubmitIssue> {
         let paragraphs = self.paragraphs();
         let mut issues = crate::submission_checks(&paragraphs, &self.claim_citation_issues());
+        let images = self
+            .document
+            .images
+            .iter()
+            .map(|image| crate::CheckImage {
+                paragraph_id: image.paragraph_id.clone(),
+                in_cell: image.cell_id.is_some(),
+            })
+            .collect();
+        let objects = crate::CheckObjects {
+            images,
+            table_anchors: self
+                .document
+                .tables
+                .iter()
+                .filter_map(|table| table.anchor_paragraph_id.clone())
+                .collect(),
+            cell_texts: self.cell_texts().into_values().collect(),
+            from_final: self.from_final,
+        };
+        issues.extend(crate::format_checks(&paragraphs, &objects));
         if self.package_sequence
             && !paragraphs.iter().any(|p| {
                 p.text.trim().trim_start_matches('\u{c}') == crate::sequence_listing::HEADING
             })
         {
             issues.push(crate::SubmitIssue {
+ code: None,
                 kind: crate::SubmitKind::SequenceFile,
                 paragraph_id: None,
                 detail: "연 제출파일에 서열목록이 있었는데 이 문서에는 【서열목록】이 없습니다 — 「서열목록 넣기…」로 다시 넣으세요".into(),

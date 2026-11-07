@@ -38,11 +38,26 @@ pub enum SubmitKind {
     Spacing,
     /// 【서열목록】 아래 첨부 줄이 없거나 · 그 파일이 없거나 · ST.26(XML)이 아니다(제출파일을 못 만든다).
     SequenceFile,
+    /// 【발명의 명칭】 꼴(한 문단 · 한글{English} · 540바이트 — E-262~270 · E-300 · E-247).
+    TitleFormat,
+    /// 식별항목 짝 · 자리 · 번호 · 순서 · 필수 · 모르는 표제(E-2xx · S-010).
+    Structure,
+    /// 표제 · 명칭 · 색인어 · 대표도에 글자 속성(E-260 · E-261).
+    HeadingStyle,
+    /// 그림 크기 · 【도 N】 · 【대표도】 내용(E-218 · E-240 · E-242).
+    Image,
+    /// 청구범위 안 공통 표제 · 번호 차례 · 「삭제」(E-310 · E-252 · E-307).
+    ClaimBody,
+    /// 표 칸 안 【】 · 표 제목 · 그림 표(E-203 · E-215 · E-271).
+    Table,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SubmitIssue {
     pub kind: SubmitKind,
+    /// 통특기 매뉴얼 오류코드(E-266 등) — 같은 규칙이 있으면.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<&'static str>,
     /// 가 볼 문단(없으면 문서 전체의 일).
     pub paragraph_id: Option<String>,
     pub detail: String,
@@ -56,7 +71,7 @@ enum Section {
     Other,
 }
 
-fn heading(text: &str) -> Option<&str> {
+pub(crate) fn heading(text: &str) -> Option<&str> {
     let text = text.trim();
     text.strip_prefix('【')?
         .strip_suffix('】')
@@ -105,11 +120,21 @@ pub fn submission_checks(
             .find(|p| heading(&p.text) == Some(format!("청구항 {}", issue.claim).as_str()))
             .map(|p| p.id.clone());
         SubmitIssue {
+            code: None,
             kind: SubmitKind::Citation,
             paragraph_id: id,
             detail: citation_detail(issue),
         }
     }));
+    // 통특기 매뉴얼에 같은 규칙이 있는 종류는 그 오류코드를 단다.
+    for issue in &mut out {
+        issue.code = issue.code.or(match issue.kind {
+            SubmitKind::EmptyHeading => Some("E-248"),
+            SubmitKind::DuplicateHeading => Some("E-243"),
+            SubmitKind::Representative => Some("E-250"),
+            _ => None,
+        });
+    }
     out
 }
 
@@ -129,6 +154,7 @@ const CONTAINERS: [&str; 7] = [
 /// 모양 점검: 요약 길이 · 대표도 · 빈 표제 · 겹친 표제 · 청구항 끝 마침표.
 fn structure_issues(paragraphs: &[EditorParagraph]) -> Vec<SubmitIssue> {
     let issue = |kind, paragraph: Option<&EditorParagraph>, detail: String| SubmitIssue {
+        code: None,
         kind,
         paragraph_id: paragraph.map(|p| p.id.clone()),
         detail,
@@ -247,6 +273,7 @@ fn sequence_file(paragraphs: &[EditorParagraph]) -> Vec<SubmitIssue> {
         return Vec::new();
     };
     let issue = |paragraph: &EditorParagraph, detail: String| SubmitIssue {
+        code: None,
         kind: SubmitKind::SequenceFile,
         paragraph_id: Some(paragraph.id.clone()),
         detail,
@@ -404,6 +431,7 @@ fn spacing(paragraphs: &[EditorParagraph]) -> Vec<SubmitIssue> {
                 String::new()
             };
             out.push(SubmitIssue {
+                code: None,
                 kind: SubmitKind::Spacing,
                 paragraph_id: Some(paragraph.id.clone()),
                 detail: format!("{label}: 「{context}」{more}"),
@@ -478,6 +506,7 @@ fn unnumbered(description: &[&EditorParagraph]) -> Vec<SubmitIssue> {
             continue;
         }
         out.push(SubmitIssue {
+            code: None,
             kind: SubmitKind::Unnumbered,
             paragraph_id: Some(p.id.clone()),
             detail: format!("식별번호 없음: {}", preview(&p.text)),
@@ -535,6 +564,7 @@ fn figure_issues(
                 })
             {
                 out.push(SubmitIssue {
+                    code: None,
                     kind: SubmitKind::FigureMissing,
                     paragraph_id: Some(p.id.clone()),
                     detail: format!("「도 {name}」을 말하는데 【도 {name}】 도면이 없습니다"),
@@ -546,6 +576,7 @@ fn figure_issues(
     for (name, p) in &drawn {
         if !mentioned.iter().any(|mention| covers(mention, name)) {
             out.push(SubmitIssue {
+                code: None,
                 kind: SubmitKind::FigureUnmentioned,
                 paragraph_id: Some(p.id.clone()),
                 detail: format!("【도 {name}】을 본문에서 한 번도 말하지 않습니다"),
@@ -673,6 +704,7 @@ fn unused_signs(description: &[&EditorParagraph]) -> Vec<SubmitIssue> {
         .into_iter()
         .filter(|(sign, _)| !body.iter().any(|text| contains_sign(text, sign)))
         .map(|(sign, p)| SubmitIssue {
+            code: None,
             kind: SubmitKind::SignUnused,
             paragraph_id: Some(p.id.clone()),
             detail: format!("부호 {sign}: 본문에 한 번도 나오지 않습니다"),
@@ -892,6 +924,7 @@ fn sign_names(description: &[&EditorParagraph]) -> Vec<SubmitIssue> {
             .collect::<Vec<_>>()
             .join(" · ");
         out.push(SubmitIssue {
+            code: None,
             kind: SubmitKind::SignShared,
             paragraph_id: rare,
             detail: format!("「{name}」: 부호 {list}"),
@@ -929,6 +962,7 @@ fn sign_names(description: &[&EditorParagraph]) -> Vec<SubmitIssue> {
             .collect::<Vec<_>>()
             .join(" · ");
         out.push(SubmitIssue {
+            code: None,
             kind: SubmitKind::SignNames,
             paragraph_id: rare,
             detail: format!("부호 {sign}: {list}"),

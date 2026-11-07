@@ -221,6 +221,7 @@ fn submission_checks_on_submitted_finals() {
         .collect();
     entries.sort();
     let (mut files, mut failed) = (0, 0);
+    let mut coded = Vec::new();
     let mut by_kind = std::collections::BTreeMap::new();
     let mut files_hit = std::collections::BTreeMap::new();
     for path in &entries {
@@ -242,6 +243,20 @@ fn submission_checks_on_submitted_finals() {
         *by_kind
             .entry("고친 뒤 남은 공백 두 칸(표 칸)".into())
             .or_insert(0usize) += left;
+        // 통특기가 접수한 문서다 — 매뉴얼 오류코드 점검은 확인용(접수 실물이 있는 것)을 빼고 0 이어야 한다.
+        for issue in &issues {
+            if let Some(code) = issue.code
+                && !matches!(
+                    code,
+                    "E-248" | "E-243" | "E-250" | "E-266" | "E-249" | "E-271" | "E-215"
+                )
+            {
+                coded.push(format!(
+                    "{code} {}",
+                    path.file_name().unwrap().to_string_lossy()
+                ));
+            }
+        }
         let mut kinds = std::collections::BTreeSet::new();
         for issue in &issues {
             *by_kind.entry(format!("{:?}", issue.kind)).or_insert(0usize) += 1;
@@ -265,4 +280,5 @@ fn submission_checks_on_submitted_finals() {
         "최종본 {files} 건(못 연 것 {failed}) · 건수 {by_kind:?} · 걸린 파일 수 {files_hit:?}"
     );
     assert!(files > 0);
+    assert!(coded.is_empty(), "접수본에 걸린 매뉴얼 오류코드 {coded:?}");
 }

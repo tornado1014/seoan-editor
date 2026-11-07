@@ -289,6 +289,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 .review-ask legend { float: left; width: 100%; margin-bottom: 2px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .02em; padding: 0; }
 .review-ask legend + * { clear: both; }
 .review-ask label { display: block; padding: 2px 0; }
+.submit-code { font: 600 10px ui-monospace, monospace; color: var(--muted); border: .5px solid var(--line); border-radius: 4px; padding: 0 3px; }
 .review-ask ul { margin: 0; padding: 0; list-style: none; line-height: 1.7; }
 .review-ask li { padding: 2px 0; }
 /* 점검 · 보정안 창 뒤 책상을 살짝 어둡게(그림자 고리 — 클릭은 막지 않는다). */
