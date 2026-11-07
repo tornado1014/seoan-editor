@@ -257,6 +257,9 @@ beforeEach(() => {
       case 'editor_new_opinion':
         texts = ['【의견내용】', ''];
         return view(texts);
+      case 'editor_new_specification':
+        texts = ['【발명의 설명】', '【발명의 명칭】', ''];
+        return view(texts);
       case 'editor_save':
       case 'editor_save_as':
         if (saveError) throw saveError;
@@ -534,6 +537,32 @@ describe('page editing', () => {
       expect(texts).toEqual(['가나가나']);
       expect(label(root)).toBe('2곳 바꿈');
     });
+  });
+
+  test('새 명세서: 종류 · 선택사항 창(실용신안 → 도면 고정 · 나머지 끔 · PCT → 유예 끔) → 명령 인자', async () => {
+    const root = await open();
+    root.querySelector<HTMLButtonElement>('[data-action="new-spec"]')!.click();
+    await settle(10);
+    const box = root.querySelector<HTMLFormElement>('.spec-ask')!;
+    const kind = box.querySelector<HTMLSelectElement>('.spec-kind')!;
+    const check = (name: string) => box.querySelector<HTMLInputElement>(`.spec-${name}`)!;
+    expect(check('drawings').checked).toBe(true);
+    check('deferred').checked = true;
+    kind.value = 'utility';
+    kind.dispatchEvent(new Event('change'));
+    expect([check('drawings').disabled, check('drawings').checked, check('deferred').disabled, check('deferred').checked]).toEqual([true, true, true, false]);
+    kind.value = 'pct';
+    kind.dispatchEvent(new Event('change'));
+    expect([check('drawings').disabled, check('deferred').disabled, check('industrial').disabled]).toEqual([false, true, false]);
+    check('drawings').checked = false;
+    check('industrial').checked = true;
+    box.requestSubmit();
+    await settle(30);
+    expect(last('editor_new_specification')).toEqual([
+      'editor_new_specification',
+      { kind: 'pct', options: { drawings: false, deferred: false, industrial: true } },
+    ]);
+    expect(texts[1]).toBe('【발명의 명칭】');
   });
 
   test('new opinion opens a blank opinion with its one identification item', async () => {
@@ -1491,7 +1520,7 @@ describe('page editing', () => {
     q(root, '[data-action="new-menu"]').click();
     await settle(10);
     const items = menus[menus.length - 1] as unknown as { text: string; action: () => void }[];
-    expect(items.map((item) => item.text)).toEqual(['새 의견서', '워드/XML로 HLT 만들기…', '새 탭']);
+    expect(items.map((item) => item.text)).toEqual(['새 의견서', '새 명세서…', '워드/XML로 HLT 만들기…', '새 탭']);
   });
 
   test('메뉴 막대 → 화면: 툴바 단추 · 도구 · 도움말 · 꺼진 단추는 문서를 먼저', async () => {

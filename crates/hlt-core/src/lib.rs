@@ -32,6 +32,7 @@ mod import_opinion;
 mod inspect;
 mod kipo_rules;
 mod kipo_xml;
+mod new_specification;
 mod numbering;
 mod package;
 mod paginate;
@@ -183,6 +184,7 @@ pub use save::{
 };
 pub use schema::{PackageReport, SchemaReport, validate_kipo_package, validate_kipo_xml};
 pub use source_view::{SourceParagraph, paragraph_keys, source_keys, source_paragraphs};
+pub use new_specification::{SpecKind, SpecOptions, save_new_specification};
 pub use kipo_rules::{CheckImage, CheckObjects, format_checks};
 pub use submit_check::{
     SignRow, SubmitIssue, SubmitKind, double_space_fixes, sign_table, submission_checks,

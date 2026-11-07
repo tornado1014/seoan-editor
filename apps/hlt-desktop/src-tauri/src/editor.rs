@@ -934,6 +934,34 @@ pub async fn editor_new_opinion(
     open_path(&state, &window, output).await.map(Some)
 }
 
+/// 새 명세서(통특기 「국내출원 새문서」): 종류 + 선택사항으로 빈 명세서를 만들고 연다(이 탭에 문서가 있으면 새 탭).
+#[tauri::command]
+pub async fn editor_new_specification(
+    window: Window,
+    app: AppHandle,
+    state: State<'_, EditorState>,
+    kind: hlt_core::SpecKind,
+    options: hlt_core::SpecOptions,
+) -> Result<Option<EditorViewDto>, CoreError> {
+    let Some(output) = pick_save(&app, "명세서.HLT", "HLT") else {
+        return Ok(None);
+    };
+    refuse_if_open_elsewhere(&state, &window, &output)?;
+    let target = output.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        bake_replacing(&target, |staged| {
+            hlt_core::save_new_specification(staged, kind, options)
+        })
+    })
+    .await
+    .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "worker", false))??;
+    if state.has_document(window.label()) {
+        new_tab(&app, Some(window.label()), Some(output))?;
+        return Ok(None);
+    }
+    open_path(&state, &window, output).await.map(Some)
+}
+
 /// 닫기(⌘W · 창 닫기 단추 · 앱 끝내기): 화면이 친 글을 다 보낸 뒤 부른다. 고친 것이 있으면 저장을 묻는다.
 /// `false` = 취소(창을 두고 앱 끝내기도 멈춘다).
 #[tauri::command]

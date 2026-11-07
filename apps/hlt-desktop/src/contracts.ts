@@ -174,6 +174,11 @@ export const editorImportFinish = (choices: Record<string, string> | null) =>
 export const editorCp949Scan = (text: string) => invoke<Cp949FindingDto[]>('editor_cp949_scan', { text });
 /** 새 의견서: 빈 문서 + 【의견내용】 을 만들고 연다(이 탭에 문서가 있으면 새 탭 · `null`). */
 /** 새 의견서(`body` = 본문 글 · 줄 하나 = 문단 하나 — 없으면 빈 의견서). */
+/** 새 명세서(통특기 「국내출원 새문서」): 종류 + 선택사항(도면 포함 · 청구범위 제출유예 · 산업상 이용가능성). 취소면 null. */
+export type SpecKindDto = 'patent' | 'utility' | 'pct';
+export type SpecOptionsDto = { drawings: boolean; deferred: boolean; industrial: boolean };
+export const editorNewSpecification = (kind: SpecKindDto, options: SpecOptionsDto) =>
+  invoke<EditorViewDto | null>('editor_new_specification', { kind, options });
 export const editorNewOpinion = (body?: string) =>
   invoke<EditorViewDto | null>('editor_new_opinion', body === undefined ? undefined : { body });
 export const editorNewTab = () => invoke<void>('editor_new_tab');

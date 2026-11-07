@@ -245,7 +245,7 @@ pub fn save_new_opinion_as_new(
     save_new_document_with_kind(form.path(), output, options, Some(7))
 }
 
-fn save_new_document_with_kind(
+pub(crate) fn save_new_document_with_kind(
     template: &Path,
     output: &Path,
     options: WriteOptions,

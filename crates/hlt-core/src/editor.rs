@@ -1237,7 +1237,7 @@ impl EditorSession {
         if texts.is_empty() || !texts.iter().all(|text| is_item_heading(text)) {
             return Err(editor_error("item"));
         }
-        self.insert_heading_pairs(at, before, &format!("【{kind} "), &texts)
+        self.insert_heading_pairs(at, before, &format!("【{kind} "), &texts, true)
     }
 
     /// 표준식별항목 넣기(통특기 「표준식별항목」): 번호 없는 표제를 작성지침 차례 자리에 — 그보다 뒤 차례인 첫 표제 앞,
@@ -1274,7 +1274,53 @@ impl EditorSession {
             ),
         };
         let text = format!("【{written}】");
-        self.insert_heading_pairs(&at, before, &text, std::slice::from_ref(&text))
+        // 정렬은 옆 표제 모양 그대로(통특기 새문서 실측: 【산업상 이용가능성】도 다른 표제와 같은 기본 정렬).
+        self.insert_heading_pairs(&at, before, &text, std::slice::from_ref(&text), false)
+    }
+
+    /// 표제 빼기(새 명세서 선택사항 — 통특기 「도면 포함」 · 「청구범위 제출유예」): 이름이 `names` 인 표제(번호 표제는
+    /// 밑 이름으로 — 「도」 = 【도 N】)와 바로 뒤 빈 본문 한 문단을 뺀다(한 고침). 그 본문에 글 · 그림 · 표가 있으면 거부.
+    pub fn remove_headings(&mut self, names: &[&str]) -> Result<(), CoreError> {
+        self.edit_model(|model| {
+            let named = |paragraph: &crate::HmlParagraph| {
+                let text = paragraph.text.trim();
+                let inner = text
+                    .strip_prefix('【')
+                    .and_then(|rest| rest.strip_suffix('】'))
+                    .filter(|inner| !inner.contains('】'))?;
+                Some(names.iter().any(|name| {
+                    inner == *name
+                        || inner
+                            .strip_prefix(name)
+                            .is_some_and(|rest| rest.starts_with(' '))
+                }))
+            };
+            let mut kept = Vec::with_capacity(model.paragraphs.len());
+            let mut body_of_removed = false;
+            for paragraph in std::mem::take(&mut model.paragraphs) {
+                match named(&paragraph) {
+                    Some(true) => {
+                        body_of_removed = true;
+                        continue;
+                    }
+                    Some(false) => body_of_removed = false,
+                    None if body_of_removed => {
+                        body_of_removed = false;
+                        if !paragraph.text.trim().is_empty()
+                            || !paragraph.image_ids.is_empty()
+                            || paragraph.table_id.is_some()
+                        {
+                            return Err(editor_error("heading_body"));
+                        }
+                        continue;
+                    }
+                    None => {}
+                }
+                kept.push(paragraph);
+            }
+            model.paragraphs = kept;
+            Ok(())
+        })
     }
 
     /// `at` 문단 뒤(`before` 면 앞)에 표제(`texts`) + 빈 본문 쌍을 차례로 넣는다. 표제 모양은 `shape_prefix` 로 시작하는
@@ -1285,6 +1331,7 @@ impl EditorSession {
         before: bool,
         shape_prefix: &str,
         texts: &[String],
+        left: bool,
     ) -> Result<String, CoreError> {
         let mut body_at = 0;
         // 화면 맨 끝 빈 줄은 모델에 없다 — 그 뒤에 넣으면 모델 끝에 넣는다(「문서 끝」 · 【도면】 끝).
@@ -1359,7 +1406,9 @@ impl EditorSession {
             // 식별항목 표제는 들여쓰지 않는다(생성기는 절 닻 표제만 들여쓰기 0 으로 맞춘다 — 새 표제는 닻이 아니라 값을 직접 준다).
             let heading_base = crate::HmlParagraph {
                 indent_raw: 0,
-                align: "left".into(),
+                // 표준 표제는 양쪽(통특기 새문서 실측: 다른 절 표제와 같은 기본 정렬 — 모델의 절 닻 표제 정렬은 생성기가 정해
+                // 그 값을 베끼면 왼쪽이 된다).
+                align: if left { "left" } else { "justified" }.into(),
                 ..blank(heading_shape)
             };
             let base = blank(body_shape);
@@ -1367,7 +1416,8 @@ impl EditorSession {
             for (k, text) in texts.iter().enumerate() {
                 let heading = crate::HmlParagraph {
                     id: fresh(&format!("h{k}")),
-                    marker: Some(text.clone()),
+                    // 표준 표제는 원본에서 읽은 표제처럼 marker 없이(있으면 생성기가 식별항목 표제 모양 = 왼쪽으로 굽는다).
+                    marker: left.then(|| text.clone()),
                     text: text.clone(),
                     inlines: vec![HmlInline::Text {
                         text: text.clone(),

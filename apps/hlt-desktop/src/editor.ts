@@ -68,6 +68,9 @@ import {
   editorCp949Scan,
   type Cp949FindingDto,
   editorNewOpinion,
+  editorNewSpecification,
+  type SpecKindDto,
+  type SpecOptionsDto,
   editorNewTab,
   editorInsertItem,
   editorInsertStandardHeading,
@@ -298,6 +301,7 @@ export function mountEditor(root: HTMLElement): void {
         </div>
         <div class="tb-hidden" hidden>
           <button type="button" data-action="new-opinion" title="새 의견서 — 빈 의견서(【의견내용】)를 새로 만듭니다">${icon('opinion')}<span>새 의견서</span></button>
+          <button type="button" data-action="new-spec" title="새 명세서 — 특허 · 실용신안 · PCT 국내진입 빈 명세서(통특기 새문서와 같은 꼴)">${icon('fileNew')}<span>새 명세서</span></button>
           <button type="button" data-action="import" title="워드/XML로 HLT 만들기 — 워드 · KIPO XML · HML 을 불러와 새 HLT 로 만듭니다">${icon('import')}<span>워드/XML로 HLT 만들기</span></button>
           <button type="button" data-action="new-tab" title="새 탭 (⌘T · ⌘N)">${icon('tab')}<span>새 탭</span></button>
           <button type="button" data-action="open-read-only" title="읽기 전용으로 열기 — 원본을 실수로 고치지 않게(사본은 「다른 이름으로 저장」)"><span>읽기 전용으로 열기</span></button>
@@ -412,6 +416,7 @@ export function mountEditor(root: HTMLElement): void {
             <button type="button" class="desk-go primary" data-start="open">${icon('open')}<span>열기</span><kbd>⌘O</kbd></button>
             <button type="button" class="desk-go" data-start="import">${icon('import')}<span>워드/XML로 HLT 만들기</span></button>
             <button type="button" class="desk-go" data-start="new-opinion">${icon('opinion')}<span>새 의견서</span></button>
+            <button type="button" class="desk-go" data-start="new-spec">${icon('fileNew')}<span>새 명세서</span></button>
             <p class="desk-hint">HLT · 제출파일(.fin · .hlz)을 엽니다. 모든 명령은 <kbd>⌘K</kbd>, 기능 투어는 「도움말」에 있습니다.</p>
           </div>
         </section>
@@ -1811,6 +1816,50 @@ export function mountEditor(root: HTMLElement): void {
       root.append(box);
       field.focus();
       field.select();
+    });
+  }
+
+  /** 새 명세서 창(통특기 새문서와 같은 선택사항): 실용신안은 도면이 늘 있고 서안이 아직 고쳐 굽지 못해 다른 선택사항을 끈다 ·
+   *  PCT 는 제출유예가 없다. 취소면 null. */
+  function askSpecification(): Promise<{ kind: SpecKindDto; options: SpecOptionsDto } | null> {
+    return new Promise((resolve) => {
+      const box = document.createElement('form');
+      box.className = 'item-ask spec-ask';
+      box.innerHTML = `<label>종류 <select class="spec-kind">
+          <option value="patent">특허명세서</option><option value="utility">실용신안명세서</option><option value="pct">PCT특허 국내진입명세서</option>
+        </select></label>
+        <label><input type="checkbox" class="spec-drawings" checked> 도면 포함</label>
+        <label><input type="checkbox" class="spec-deferred"> 특허청구범위 제출유예</label>
+        <label><input type="checkbox" class="spec-industrial"> 산업상 이용 가능성</label>
+        <button type="submit">만들기</button><button type="button" class="item-cancel">취소</button>`;
+      const kind = box.querySelector<HTMLSelectElement>('.spec-kind')!;
+      const check = (name: string) => box.querySelector<HTMLInputElement>(`.spec-${name}`)!;
+      const sync = () => {
+        const utility = kind.value === 'utility';
+        check('drawings').disabled = utility;
+        if (utility) check('drawings').checked = true;
+        check('deferred').disabled = utility || kind.value === 'pct';
+        check('industrial').disabled = utility;
+        for (const name of ['deferred', 'industrial']) if (check(name).disabled) check(name).checked = false;
+      };
+      kind.addEventListener('change', sync);
+      const done = (value: { kind: SpecKindDto; options: SpecOptionsDto } | null) => {
+        box.remove();
+        resolve(value);
+      };
+      box.addEventListener('submit', (event) => {
+        event.preventDefault();
+        done({
+          kind: kind.value as SpecKindDto,
+          options: { drawings: check('drawings').checked, deferred: check('deferred').checked, industrial: check('industrial').checked },
+        });
+      });
+      box.querySelector('.item-cancel')!.addEventListener('click', () => done(null));
+      box.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') done(null);
+      });
+      root.append(box);
+      kind.focus();
     });
   }
 
@@ -3734,6 +3783,22 @@ export function mountEditor(root: HTMLElement): void {
         }
         break;
       }
+      case 'new-spec': {
+        const asked = await askSpecification();
+        if (!asked) break;
+        say('명세서 만드는 중…');
+        try {
+          const opened = await editorNewSpecification(asked.kind, asked.options);
+          if (opened) {
+            images.clear();
+            panel.hidden = true;
+            layout(opened, false);
+          } else say('');
+        } catch (error) {
+          fail('새 명세서', error);
+        }
+        break;
+      }
       case 'new-opinion': {
         say('의견서 만드는 중…');
         try {
@@ -3769,6 +3834,7 @@ export function mountEditor(root: HTMLElement): void {
         const menu = await Menu.new({
           items: [
             { text: '새 의견서', action: () => q<HTMLButtonElement>('[data-action="new-opinion"]').click() },
+            { text: '새 명세서…', action: () => q<HTMLButtonElement>('[data-action="new-spec"]').click() },
             { text: '워드/XML로 HLT 만들기…', action: () => q<HTMLButtonElement>('[data-action="import"]').click() },
             { text: '새 탭', accelerator: 'CmdOrCtrl+T', action: () => q<HTMLButtonElement>('[data-action="new-tab"]').click() },
           ],
