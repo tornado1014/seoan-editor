@@ -2483,6 +2483,49 @@ struct FinExportResult {
     figure_count: String,
     image_count: String,
     amendment_count: String,
+    /// `--allow-missing-heading` 로 사유를 받고 지나간 필수 표제.
+    allowed_missing: Vec<AllowedMissing>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct AllowedMissing {
+    heading: String,
+    reason: String,
+}
+
+/// 제출파일 관문: 빠진 필수 표제(E-245)가 사유와 함께 허용되지 않았으면 거부한다. 통과하면 (허용한 것, E-249 경고).
+/// 사고(2026-11-09): 【발명의 내용】 36문단이 상류에서 조용히 빠진 HLT 로 제출파일이 그대로 만들어졌다.
+fn required_heading_gate(
+    input: &Path,
+    allow: &[AllowedMissing],
+) -> Result<(Vec<AllowedMissing>, Vec<String>), CoreError> {
+    let session = hlt_core::EditorSession::open(input)?;
+    let missing = hlt_core::missing_required_headings(&session.paragraphs());
+    let refused: Vec<&str> = missing
+        .iter()
+        .copied()
+        .filter(|name| !allow.iter().any(|a| a.heading == *name))
+        .collect();
+    if !refused.is_empty() {
+        let mut error = CoreError::new(ErrorCode::StructureInvalid, "export_fin", false);
+        error
+            .details
+            .insert("reason".into(), "required_heading_missing".into());
+        error.details.insert("missing".into(), refused.join(","));
+        return Err(error);
+    }
+    let allowed = allow
+        .iter()
+        .filter(|a| missing.contains(&a.heading.as_str()))
+        .cloned()
+        .collect();
+    let warnings = session
+        .submission_checks()
+        .into_iter()
+        .filter(|issue| issue.code == Some("E-249"))
+        .map(|issue| format!("E-249 {}", issue.detail))
+        .collect();
+    Ok((allowed, warnings))
 }
 
 /// 제출 직전 KIPO 스키마 문(P4-1). `schema_dir` 가 없으면 열어 둔다 — KIPO 스키마는 저장소 밖 자산이라 경로로 받는다.
@@ -2687,7 +2730,7 @@ fn write_output(path: &Path, bytes: &[u8], overwrite: bool) -> std::io::Result<(
 fn export_fin_usage<O: Write>(stdout: &mut O) -> u8 {
     let _ = writeln!(
         stdout,
-        "usage: hlt-cli export-fin <input.HLT> <absent-output.fin> --hlz-name <name.hlz> --app-date <YYYY-MM-DD> --app-time <stamp> [--image-time <YYYY:MM:DD HH:MM:SS>] [--schema-dir <Epasl/INCLUDE/Schema>] [--document-id <id>] [--page-count <n>] [--amendment <name.dta>=<amendment.xml>=<YYYY-MM-DD>]... [--overwrite]"
+        "usage: hlt-cli export-fin <input.HLT> <absent-output.fin> --hlz-name <name.hlz> --app-date <YYYY-MM-DD> --app-time <stamp> [--image-time <YYYY:MM:DD HH:MM:SS>] [--schema-dir <Epasl/INCLUDE/Schema>] [--document-id <id>] [--page-count <n>] [--amendment <name.dta>=<amendment.xml>=<YYYY-MM-DD>]... [--allow-missing-heading <표제>=<사유>]... [--overwrite]"
     );
     EXIT_USAGE
 }
@@ -2707,6 +2750,7 @@ fn run_export_fin<O: Write, E: Write>(args: &[String], stdout: &mut O, _stderr: 
         amendments: Vec::new(),
     };
     let mut schema_dir: Option<String> = None;
+    let mut allow: Vec<AllowedMissing> = Vec::new();
     let mut index = 3_usize;
     while index < args.len() {
         let Some(value) = args.get(index + 1) else {
@@ -2742,6 +2786,17 @@ fn run_export_fin<O: Write, E: Write>(args: &[String], stdout: &mut O, _stderr: 
                 });
             }
             "--schema-dir" => schema_dir = Some(value.clone()),
+            "--allow-missing-heading" => match value.split_once('=') {
+                Some((heading, reason))
+                    if !heading.trim().is_empty() && !reason.trim().is_empty() =>
+                {
+                    allow.push(AllowedMissing {
+                        heading: heading.trim().to_string(),
+                        reason: reason.trim().to_string(),
+                    })
+                }
+                _ => return export_fin_usage(stdout),
+            },
             _ => return export_fin_usage(stdout),
         }
         index += 2;
@@ -2760,6 +2815,14 @@ fn run_export_fin<O: Write, E: Write>(args: &[String], stdout: &mut O, _stderr: 
         let _ = write_envelope(stdout, &envelope);
         return EXIT_VERIFY_FAILED;
     }
+    let (allowed_missing, gate_warnings) = match required_heading_gate(input_path, &allow) {
+        Ok(value) => value,
+        Err(error) => {
+            let envelope: CommandEnvelope<FinExportResult> = error_envelope("export-fin", error);
+            let _ = write_envelope(stdout, &envelope);
+            return EXIT_VERIFY_FAILED;
+        }
+    };
     let export = match hlt_core::export_fin_path(input_path, &kipo, &fin) {
         Ok(value) => value,
         Err(error) => {
@@ -2794,8 +2857,10 @@ fn run_export_fin<O: Write, E: Write>(args: &[String], stdout: &mut O, _stderr: 
         figure_count: export.figure_count.to_string(),
         image_count: export.image_count.to_string(),
         amendment_count: fin.amendments.len().to_string(),
+        allowed_missing,
     };
-    let envelope = success_envelope("export-fin", result);
+    let mut envelope = success_envelope("export-fin", result);
+    envelope.warnings = gate_warnings;
     if write_envelope(stdout, &envelope).is_err() {
         return EXIT_VERIFY_FAILED;
     }

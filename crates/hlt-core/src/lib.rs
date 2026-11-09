@@ -157,7 +157,9 @@ pub use import_opinion::{
     AmendmentItem, amendment_hlt_from_items, amendment_items, opinion_hlt_from_text,
 };
 pub use inspect::{HltImagePayload, InspectDocument, InspectOptions, inspect_path};
+pub use kipo_rules::{CheckImage, CheckObjects, format_checks, missing_required_headings};
 pub use kipo_xml::{KipoXmlDialect, KipoXmlDocument, inspect_kipo_xml_path};
+pub use new_specification::{SpecKind, SpecOptions, save_new_specification};
 pub use numbering::{number_paragraphs_as_new, plan_paragraph_numbers};
 pub use package::{hlt_from_original_fin, hlt_from_package};
 pub use paginate::{page_count, page_layout};
@@ -184,8 +186,6 @@ pub use save::{
 };
 pub use schema::{PackageReport, SchemaReport, validate_kipo_package, validate_kipo_xml};
 pub use source_view::{SourceParagraph, paragraph_keys, source_keys, source_paragraphs};
-pub use new_specification::{SpecKind, SpecOptions, save_new_specification};
-pub use kipo_rules::{CheckImage, CheckObjects, format_checks};
 pub use submit_check::{
     SignRow, SubmitIssue, SubmitKind, double_space_fixes, sign_table, submission_checks,
 };

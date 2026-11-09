@@ -204,6 +204,33 @@ fn preview(text: &str) -> String {
     out
 }
 
+/// 문서에 있는 표제 이름(정규화 · 번호 뗀 것). 빈 이름 · 따옴표 이름은 뺀다(E-211 · E-233 이 따로 건다).
+fn present_bases(headings: &[(usize, String)]) -> BTreeSet<String> {
+    headings
+        .iter()
+        .map(|(_, raw)| raw)
+        .filter(|raw| !raw.trim().is_empty() && !raw.contains(['\'', '"', '‘', '’', '“', '”']))
+        .map(|raw| split_number(&normalize(raw)).0.to_string())
+        .collect()
+}
+
+/// 빠진 필수 표제(E-245) — 국내 명세서 꼴일 때만. 제출파일 관문(`hlt-cli export-fin`)과 점검 목록이 같이 쓴다.
+pub fn missing_required_headings(paragraphs: &[EditorParagraph]) -> Vec<&'static str> {
+    if kind(paragraphs) != Some(Kind::Domestic) {
+        return Vec::new();
+    }
+    let headings: Vec<(usize, String)> = paragraphs
+        .iter()
+        .enumerate()
+        .filter_map(|(at, p)| heading(&p.text).map(|name| (at, name.to_string())))
+        .collect();
+    let present = present_bases(&headings);
+    REQUIRED
+        .into_iter()
+        .filter(|name| !present.contains(*name))
+        .collect()
+}
+
 /// 서식 · 구조 점검(명세서가 아니면 빈 목록).
 pub fn format_checks(paragraphs: &[EditorParagraph], objects: &CheckObjects) -> Vec<SubmitIssue> {
     let Some(kind) = kind(paragraphs) else {
@@ -300,7 +327,7 @@ pub fn format_checks(paragraphs: &[EditorParagraph], objects: &CheckObjects) -> 
 
     // 2. 번호 · 순서 · 묶음 · 필수 · 모르는 표제 · 【도 N】 뒤 빈 문단.
     let mut rank_seen = 0usize;
-    let mut present = BTreeSet::new();
+    let present = present_bases(&headings);
     let mut in_claims = false;
     let mut last_claim: Option<u64> = None;
     for &(at, ref raw) in &headings {
@@ -311,7 +338,6 @@ pub fn format_checks(paragraphs: &[EditorParagraph], objects: &CheckObjects) -> 
         }
         let name = normalize(raw);
         let (base, number) = split_number(&name);
-        present.insert(base.to_string());
         match (base, number) {
             ("실시예", _) => {}
             (b, None) if NUMBERED.contains(&b) => push(
@@ -497,17 +523,15 @@ pub fn format_checks(paragraphs: &[EditorParagraph], objects: &CheckObjects) -> 
             }
         }
     }
+    for name in missing_required_headings(paragraphs) {
+        push(
+            SubmitKind::Structure,
+            "E-245",
+            None,
+            format!("【{name}】이 없습니다"),
+        );
+    }
     if kind == Kind::Domestic {
-        for name in REQUIRED {
-            if !present.contains(name) {
-                push(
-                    SubmitKind::Structure,
-                    "E-245",
-                    None,
-                    format!("【{name}】이 없습니다"),
-                );
-            }
-        }
         if present.contains("청구범위") && !present.contains("청구항") {
             push(
                 SubmitKind::Structure,

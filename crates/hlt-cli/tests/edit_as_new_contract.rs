@@ -99,6 +99,12 @@ fn writes_the_amendment_from_the_same_session() {
         "2026-10-22",
         "--app-time",
         "1761100000",
+        "--allow-missing-heading",
+        "발명의 배경이 되는 기술=보정서 시험용 최소 명세서",
+        "--allow-missing-heading",
+        "발명의 내용=보정서 시험용 최소 명세서",
+        "--allow-missing-heading",
+        "발명을 실시하기 위한 구체적인 내용=보정서 시험용 최소 명세서",
     ]);
     let session = hlt_core::EditorSession::open(std::path::Path::new(&path("spec.fin"))).unwrap();
     let body = session
@@ -180,6 +186,12 @@ fn applies_a_review_report_and_writes_the_amendment() {
         "2026-10-22",
         "--app-time",
         "1761100000",
+        "--allow-missing-heading",
+        "발명의 배경이 되는 기술=보정서 시험용 최소 명세서",
+        "--allow-missing-heading",
+        "발명의 내용=보정서 시험용 최소 명세서",
+        "--allow-missing-heading",
+        "발명을 실시하기 위한 구체적인 내용=보정서 시험용 최소 명세서",
     ]);
     let p = |runs: &str| format!("<w:p>{runs}</w:p>");
     let r = |text: &str| format!("<w:r><w:t>{text}</w:t></w:r>");
@@ -313,6 +325,12 @@ fn opens_an_attached_final_with_the_amendment_beside_it() {
         "2026-10-22",
         "--app-time",
         "1761100000",
+        "--allow-missing-heading",
+        "발명의 배경이 되는 기술=보정서 시험용 최소 명세서",
+        "--allow-missing-heading",
+        "발명의 내용=보정서 시험용 최소 명세서",
+        "--allow-missing-heading",
+        "발명을 실시하기 위한 구체적인 내용=보정서 시험용 최소 명세서",
     ]);
     // 1차 보정(문단 하나를 나눔) → spec_1차.fin(안에 spec_1.dta).
     let edit = |fin: &str, out: &str, dta: &str, from: &str, to: &str| {
