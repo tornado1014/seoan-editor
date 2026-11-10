@@ -141,14 +141,14 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 /* 빈 책상에서는 구조 창이 접혀 있으니 왼쪽 끝에서. */
 .editor:has(.desk-empty:not([hidden])) .editor-status { left: 1rem; }
 .editor:has(.desk-empty:not([hidden])) .seal { left: 1.35rem; }
-.editor-body { position: relative; flex: 1; display: grid; grid-template-columns: 17.5rem 1fr auto auto; min-height: 0; background: var(--desk); }
+.editor-body { position: relative; flex: 1; display: grid; grid-template-columns: 17.5rem 1fr auto auto; grid-template-rows: minmax(0, 1fr); min-height: 0; background: var(--desk); }
 /* 원문과 나란히 보기: 문서 오른쪽 칸(문서 폭의 절반쯤). */
-.editor-source { position: relative; width: min(38vw, 42rem); display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--surface); }
+.editor-source { position: relative; width: min(38vw, 42rem); display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--surface); }
 .editor-source[hidden] { display: none; }
 .source-head { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .5rem; padding: .35rem .9rem; border-bottom: 1px solid var(--line); font-size: 12px; }
 .source-head .source-title { flex: 1 1 100%; font-weight: 600; }
 .source-head .source-warn { flex: 1 1 100%; color: var(--warning, #a15c00); }
-.source-body { position: relative; flex: 1; overflow: auto; padding: .5rem .9rem; font-family: "Times New Roman", serif; font-size: 14px; line-height: 1.55; user-select: text; }
+.source-body { position: relative; flex: 1; min-height: 0; overflow: auto; padding: .5rem .9rem; font-family: "Times New Roman", serif; font-size: 14px; line-height: 1.55; user-select: text; }
 .source-body p { margin: 0 0 .6rem; padding: .15rem .3rem; border-radius: 4px; border: 1px solid transparent; }
 .source-body [data-s] { cursor: pointer; border-radius: 3px; }
 .source-body [data-s]:hover { background: var(--accent-soft); }
@@ -178,7 +178,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 .tree-icon { width: 15px; height: 15px; flex: none; }
 
 /* 책상과 종이: 위에서 빛이 드는 책상 · 종이는 가장자리 한 줄과 부드러운 그림자로 놓인다. */
-.editor-pages { overflow: auto; background: var(--desk); padding: 2rem 1.5rem 3.5rem; display: flex; flex-direction: column; align-items: center; gap: 1.6rem; }
+.editor-pages { overflow: auto; background: var(--desk); padding: 2rem 1.5rem 3.5rem; display: flex; flex-direction: column; align-items: flex-start; gap: 1.6rem; }
 .editor-center { position: relative; grid-column: 2; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .editor-center > .editor-pages { flex: 1; min-height: 0; }
 /* 고정 창: 쪽 위의 읽기 전용 두 번째 보기 — 높이는 설정(손잡이로 끌어 바꿈). */
@@ -192,7 +192,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 .pinned-object { color: var(--faint); }
 .pinned-grip { flex: none; height: 6px; margin-top: -3px; cursor: row-resize; z-index: 2; touch-action: none; }
 .pinned-grip:hover { background: var(--accent-soft); }
-.nk-page { position: relative; background: #fff; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .1), 0 1px 2px rgba(0, 0, 0, .06), 0 12px 32px rgba(0, 0, 0, .08); flex: none; }
+.nk-page { position: relative; margin-inline: auto; background: #fff; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .1), 0 1px 2px rgba(0, 0, 0, .06), 0 12px 32px rgba(0, 0, 0, .08); flex: none; }
 .nk-underline { position: absolute; background: #000; pointer-events: none; }
 .nk-glyph { position: absolute; font-family: BatangChe, "바탕체", AppleMyungjo, serif; line-height: 1; white-space: pre; color: #000; }
 .nk-image { position: absolute; }
@@ -465,7 +465,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 .snippet-form label { display: flex; flex-direction: column; gap: .25rem; }
 
 /* 문서 배율(− 100% +): 책상 오른쪽 아래에 떠 있다. */
-.zoom-box { position: absolute; grid-column: 2; grid-row: 1; align-self: end; justify-self: end; margin: 0 1.3rem .9rem 0; z-index: 5; display: inline-flex; align-items: center; gap: 1px; padding: 2px; border: 0; border-radius: var(--r-box); background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: var(--lift-1); backdrop-filter: blur(6px); }
+.zoom-box { position: absolute; right: 1.3rem; bottom: .9rem; z-index: 5; display: inline-flex; align-items: center; gap: 1px; padding: 2px; border: 0; border-radius: var(--r-box); background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: var(--lift-1); backdrop-filter: blur(6px); }
 .zoom-box button { display: inline-flex; align-items: center; justify-content: center; min-width: 1.8rem; height: 1.7rem; padding: 0 .3rem; border: 0; border-radius: var(--r-control); background: transparent; color: var(--ink); font-size: 12px; cursor: pointer; font-variant-numeric: tabular-nums; }
 .zoom-box button:hover { background: var(--sunken); color: var(--accent); }
 

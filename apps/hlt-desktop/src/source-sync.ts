@@ -79,7 +79,9 @@ export function createSourceSync(o: {
     for (const pair of a.pairs) if (!firstPair.has(pair.target_id)) firstPair.set(pair.target_id, pair);
   };
   let shown = false;
-  let lastKey = '';
+  /** 커서 따라가기(`follow`)와 맨 위 따라가기(`followTop`)의 열쇠는 따로 — 쪽을 다시 그려 불린 `follow` 가 `followTop` 이 옮긴 자리를 되끌지 않게. */
+  let caretKey = '';
+  let topKey = '';
   /** 고친 뒤 새 정렬이 올 때까지 참 — 옛 범위가 새 글 위에 앉으니 칠하지 않는다. */
   let stale = false;
 
@@ -131,7 +133,8 @@ export function createSourceSync(o: {
   /** 고쳤다 — 새 정렬(`update`)이 올 때까지 칠한 것을 거둔다(칸 글은 그대로). */
   function invalidate() {
     stale = true;
-    lastKey = '';
+    caretKey = '';
+    topKey = '';
     clear();
     o.markTarget(null, 'sentence');
   }
@@ -147,8 +150,9 @@ export function createSourceSync(o: {
       clear();
       const near = caret ? earlier(caret.paragraph) : null;
       const key = near ? `near:${near.dataset.p}` : '';
-      if (near && key !== lastKey) o.pane.scrollTop = near.offsetTop;
-      lastKey = key;
+      if (near && key !== caretKey) o.pane.scrollTop = near.offsetTop;
+      if (key !== caretKey) topKey = ''; // 창이 커서 때문에 움직였으니 맨 위 따라가기도 다시 판단
+      caretKey = key;
       return;
     }
     const paragraph = o.pane.querySelector<HTMLElement>(`p[data-p="${pair.source_paragraph}"]`);
@@ -160,8 +164,9 @@ export function createSourceSync(o: {
       clear();
       element.classList.add(sentence ? 'current' : 'current-para');
     }
-    if (key !== lastKey) reveal(element);
-    lastKey = key;
+    if (key !== caretKey) reveal(element); // 강조는 위에서 다시 얹었다 — 스크롤만 커서 자리가 바뀌었을 때
+    if (key !== caretKey) topKey = '';
+    caretKey = key;
   }
 
   async function pinHere(sentence: HTMLElement | null, paragraphIndex: number) {
@@ -223,7 +228,8 @@ export function createSourceSync(o: {
   return {
     open(a: AlignmentDto) {
       shown = true;
-      lastKey = '';
+      caretKey = '';
+      topKey = '';
       stale = false;
       alignment = a;
       indexPairs(a);
@@ -239,8 +245,8 @@ export function createSourceSync(o: {
       if (!shown || !id || o.caretVisible?.()) return;
       const near = earlier(id);
       const key = near ? `top:${near.dataset.p}` : '';
-      if (near && key !== lastKey) o.pane.scrollTop = near.offsetTop;
-      lastKey = key;
+      if (near && key !== topKey) o.pane.scrollTop = near.offsetTop;
+      topKey = key;
     },
     /** 고쳤다 — 새 정렬(`update`)이 올 때까지 칠한 것을 거둔다(칸 글은 그대로). */
     invalidate,
@@ -249,7 +255,8 @@ export function createSourceSync(o: {
       stale = false;
       alignment = null;
       firstPair = new Map();
-      lastKey = '';
+      caretKey = '';
+      topKey = '';
       o.pane.replaceChildren();
       o.markTarget(null, 'sentence');
     },

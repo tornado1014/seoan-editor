@@ -165,6 +165,23 @@ describe('원문 창', () => {
     expect(visible.pane.scrollTop).toBe(7);
   });
 
+  test('R-4a: followTop 으로 내려간 뒤 커서가 그대로인 follow() 는 스크롤하지 않고 강조만 유지 · 커서가 바뀌면 그 문장으로 간다', () => {
+    vi.spyOn(HTMLElement.prototype, 'offsetTop', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.dataset.s === '1' ? 500 : this.dataset.p === '1' ? 900 : 0;
+    });
+    const { pane, state, sync } = make({ caret: { paragraph: 'p:0', offset: 5 } });
+    sync.open(alignment());
+    expect(pane.scrollTop).toBe(500);
+    sync.followTop('p:1'); // 커서가 안 보임 → 맨 위 문단 쪽으로
+    expect(pane.scrollTop).toBe(900);
+    sync.follow(); // 쪽을 다시 그려서 불린 follow — 커서는 그대로
+    expect(pane.scrollTop).toBe(900);
+    expect(span(pane, 0, 1).classList.contains('current')).toBe(true);
+    state.caret = { paragraph: 'p:0', offset: 1 };
+    sync.follow();
+    expect(pane.scrollTop).toBe(0);
+  });
+
   test('짝 없는 원문 문장을 누르면 ⌥클릭 안내', () => {
     const { pane, sync, log } = make();
     sync.open(alignment());

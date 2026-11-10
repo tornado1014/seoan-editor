@@ -435,6 +435,11 @@ export function mountEditor(root: HTMLElement): void {
           <div class="pinned-grip" hidden role="separator" aria-orientation="horizontal" title="끌어서 고정 창 높이를 바꿉니다"></div>
           <div class="editor-pages" tabindex="0"></div>
           <button type="button" class="live-strip" hidden title="제출 전 점검 목록을 엽니다(문서는 바뀌지 않습니다)"></button>
+          <div class="zoom-box" role="group" aria-label="문서 배율">
+            <button type="button" data-action="zoom-out" title="문서 축소 (⌘−) " aria-label="문서 축소">${icon('zoomOut')}</button>
+            <button type="button" data-action="zoom-reset" class="zoom-level" title="문서 실제 크기 (⌘0) — 지금 문서 배율" aria-label="문서 실제 크기">100%</button>
+            <button type="button" data-action="zoom-in" title="문서 확대 (⌘+) " aria-label="문서 확대">${icon('zoomIn')}</button>
+          </div>
         </div>
         <section class="desk-empty" aria-labelledby="desk-title">
           <h1 id="desk-title" class="desk-mark" lang="ko-Hani" aria-label="서안">書案</h1>
@@ -447,11 +452,6 @@ export function mountEditor(root: HTMLElement): void {
             <p class="desk-hint">HLT · 제출파일(.fin · .hlz)을 엽니다. 모든 명령은 <kbd>⌘K</kbd>, 기능 투어는 「도움말」에 있습니다.</p>
           </div>
         </section>
-        <div class="zoom-box" role="group" aria-label="문서 배율">
-          <button type="button" data-action="zoom-out" title="문서 축소 (⌘−) " aria-label="문서 축소">${icon('zoomOut')}</button>
-          <button type="button" data-action="zoom-reset" class="zoom-level" title="문서 실제 크기 (⌘0) — 지금 문서 배율" aria-label="문서 실제 크기">100%</button>
-          <button type="button" data-action="zoom-in" title="문서 확대 (⌘+) " aria-label="문서 확대">${icon('zoomIn')}</button>
-        </div>
         <aside class="editor-source" hidden aria-label="원문"><div class="source-head"></div><div class="source-body"></div></aside>
         <aside class="editor-panel" hidden>
           <p class="panel-title"></p>
@@ -632,6 +632,8 @@ export function mountEditor(root: HTMLElement): void {
     drawTargetMark(host);
     paint();
     markCurrent();
+    // 커서가 안 보이는 채 새 쪽이 그려졌다 — 스크롤 직후엔 맨 위 문단을 못 정했을 수 있으니 한 번 더(원문 창만 움직이니 다시 그려지지 않는다).
+    if (sourceSync.shown) sourceSync.followTop(topParagraph());
   }
 
   /** 식별번호(최종본을 연 문서): 통특기처럼 문단 첫 줄 왼쪽 여백에 [0001](본문 왼쪽 끝 바로 앞에 오른쪽 맞춤). */

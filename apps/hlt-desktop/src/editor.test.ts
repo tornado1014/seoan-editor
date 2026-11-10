@@ -1427,6 +1427,39 @@ describe('page editing', () => {
     offsetTop.mockRestore();
   });
 
+  test('R-4b: 쪽이 그려진 뒤에도 커서가 안 보이면 맨 위 문단의 원문 자리로 한 번 더 따라간다', async () => {
+    settingsAnswer = { autosave_minutes: 5, history_keep: 10, history_days: 30, zoom: 1, marks_default: false, pinned_on: false, pinned_height: 220, snippets: [] }; // 배율 저장이 되어야 쪽이 다시 그려진다
+    texts = ['가나다. 라마.', '바사.'];
+    const base = xliffSource().alignment;
+    sourceAnswer = withAlignment({ pairs: [...base.pairs, { target_id: 'paragraph:1', target_sentence: null, source_paragraph: 1, source_sentence: null, grade: 'paragraph' }] });
+    const root = await open();
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    const body = root.querySelector<HTMLElement>('.source-body')!;
+    const offsetTop = vi.spyOn(HTMLElement.prototype, 'offsetTop', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.dataset.p === '1' ? 300 : 0;
+    });
+    const pagesRoot = root.querySelector<HTMLElement>('.editor-pages')!;
+    pagesRoot.getBoundingClientRect = () => ({ top: 0, bottom: 800 }) as DOMRect;
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return (this.classList.contains('nk-page') ? { top: -120 * 1.3, bottom: 900 } : { top: 0, bottom: 800 }) as DOMRect; // 새로 만든 쪽 상자에도 걸리게 원형에
+    });
+    expect(body.scrollTop).toBe(0);
+    q(root, '[data-action="zoom-in"]').click(); // 쪽을 다시 그린다(스크롤 이벤트 없이)
+    await settle(50);
+    expect(body.scrollTop).toBe(300);
+    rect.mockRestore();
+    offsetTop.mockRestore();
+  });
+
+  test('R-3: 배율 상자는 가운데 칸 안에 있다(점검 띠와 같은 부모)', async () => {
+    const root = await open();
+    const zoom = root.querySelector('.zoom-box')!;
+    expect(zoom.parentElement).toBe(root.querySelector('.editor-center'));
+    expect(zoom.parentElement).toBe(strip(root).parentElement);
+    await settle(500);
+  });
+
   test('원문 열기가 실패하면 까닭을 알린다 · 읽는 중에는 안내를 보인다', async () => {
     sourceLoadError = { code: 'verification_failed', phase: 'source' };
     sourceRemembered = '/d/a.xlf';
