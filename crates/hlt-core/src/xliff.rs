@@ -2,7 +2,6 @@
 //! 세그먼트 짝은 CAT 이 낸 근거라 숫자 검문을 거치지 않는다. 대신 틀린 짝은 짝이 없는 것보다 나쁘다 —
 //! 글자 그대로 같은 것만 맞추고, 안 맞은 세그먼트는 앞뒤가 확실할 때만 끼운다.
 
-use std::collections::HashMap;
 use std::path::Path;
 
 use quick_xml::{Reader, events::Event};
@@ -10,7 +9,8 @@ use quick_xml::{Reader, events::Event};
 use crate::align::{target_claims, target_sentence_ranges};
 use crate::error::io_error;
 use crate::{
-    Alignment, CoreError, EditorParagraph, ErrorCode, Grade, Pair, Pin, SourcePara, paragraph_keys,
+    Alignment, CoreError, EditorParagraph, ErrorCode, Grade, Lang, Pair, Pin, SourcePara,
+    paragraph_keys, sentences,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,6 +166,15 @@ fn seg_marks<'a>(node: &'a Node, out: &mut Vec<&'a Node>) {
 }
 
 fn unit_segments(tu: &Node, group: Option<String>, out: &mut Vec<Segment>) {
+    let before = out.len();
+    unit_segments_raw(tu, group, out);
+    // 잠긴 · 번역 대상이 아닌 단위는 원문 창에만 싣는다 — target 을 비워 짝에서 뺀다.
+    if tu.attr("locked") == Some("true") || tu.attr("translate") == Some("no") {
+        out[before..].iter_mut().for_each(|s| s.target.clear());
+    }
+}
+
+fn unit_segments_raw(tu: &Node, group: Option<String>, out: &mut Vec<Segment>) {
     // 표준대로 분할본(`seg-source`)이 있으면 그것을 쓴다.
     let Some(source) = tu.child("seg-source").or_else(|| tu.child("source")) else {
         return;
@@ -236,6 +245,15 @@ fn walk(node: &Node, groups: &mut Vec<String>, counter: &mut u32, out: &mut Vec<
     }
 }
 
+/// Phrase(mxliff) 글 속 태그 자리표: `{1}` · 짝 `{b>` `<b}` `{i>` `<i}` `{u>` `<u}` `{bu>` `{^>` `{1>` `<1}` …(실물 구조 확인).
+/// 태그만 떼고 사이 글은 남긴다. 세그먼트 쪽에만 적용한다 — 문서 글은 건드리지 않는다.
+fn strip_placeholders(text: &str) -> String {
+    static TAG: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"\{[0-9]+\}|\{[A-Za-z0-9^]{1,3}>|<[A-Za-z0-9^]{1,3}\}").expect("정규식")
+    });
+    collapse(&TAG.replace_all(text, " "))
+}
+
 /// XLIFF 1.2 계열(.xlf · .xliff · .txlf · .mxliff): `trans-unit` 의 `source` / `target` 글(인라인 태그는 글만 ·
 /// `mrk mtype="seg"` 가 있으면 그것이 세그먼트). 글은 공백을 하나로 모으고 앞뒤를 다듬어 싣는다.
 pub fn read_xliff(path: &Path) -> Result<Vec<Segment>, CoreError> {
@@ -270,6 +288,15 @@ pub fn read_xliff(path: &Path) -> Result<Vec<Segment>, CoreError> {
     }
     let mut out = Vec::new();
     walk(&root, &mut Vec::new(), &mut 0, &mut out);
+    if path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("mxliff"))
+    {
+        for s in &mut out {
+            s.source = strip_placeholders(&s.source);
+            s.target = strip_placeholders(&s.target);
+        }
+    }
     if out.is_empty() {
         return Err(error(
             ErrorCode::StructureInvalid,
@@ -285,61 +312,86 @@ fn norm(text: &str) -> Vec<char> {
     collapse(text).chars().collect()
 }
 
-/// 문서 문단 하나의 정규화 글 + 문장마다 정규화 글 안 `[시작, 끝)`.
+/// 문서 문단 하나: 원래 글자 · 정규화 글 · 정규화 글자 → 원래 글자 자리.
 struct DocPara {
-    text: Vec<char>,
-    sentences: Vec<(usize, usize)>,
+    target: usize,
+    chars: Vec<char>,
+    norm: Vec<char>,
+    map: Vec<u32>,
 }
 
-fn doc_para(text: &str, ranges: &[(u32, u32)]) -> DocPara {
+fn doc_para(target: usize, text: &str) -> DocPara {
     let chars: Vec<char> = text.chars().collect();
-    let (mut out, mut at, mut gap) = (Vec::new(), vec![0; chars.len() + 1], false);
+    let (mut norm, mut map, mut gap) = (Vec::new(), Vec::new(), None);
     for (i, &c) in chars.iter().enumerate() {
         if c.is_whitespace() {
-            gap = true;
+            gap.get_or_insert(i as u32);
             continue;
         }
-        if gap && !out.is_empty() {
-            out.push(' ');
+        if let Some(g) = gap.take()
+            && !norm.is_empty()
+        {
+            norm.push(' ');
+            map.push(g);
         }
-        gap = false;
-        at[i] = out.len();
-        out.push(c);
+        norm.push(c);
+        map.push(i as u32);
     }
-    // 문장은 앞뒤 공백을 뗀 범위라 첫 글자 · 마지막 글자는 공백이 아니다.
-    let sentences = ranges
-        .iter()
-        .map(|&(s, e)| (at[s as usize], at[e as usize - 1] + 1))
-        .collect();
     DocPara {
-        text: out,
-        sentences,
+        target,
+        chars,
+        norm,
+        map,
     }
 }
 
-/// 문서 `(문단, 문장)` 자리 `from` 부터 처음 나오는, 문장 경계에 딱 맞는 같은 글: `(문단, 첫 문장, 끝 문장)`.
-fn find(doc: &[DocPara], needle: &[char], from: (usize, usize)) -> Option<(usize, usize, usize)> {
-    for (p, para) in doc.iter().enumerate().skip(from.0) {
-        let first = if p == from.0 { from.1 } else { 0 };
-        for (i, &(start, _)) in para.sentences.iter().enumerate().skip(first) {
-            if para.text[start..].starts_with(needle) {
-                let end = start + needle.len();
-                if let Some(j) = para.sentences[i..].iter().position(|s| s.1 == end) {
-                    return Some((p, i, i + j));
-                }
-            }
-        }
+impl DocPara {
+    /// 정규화 `[s, e)`(앞뒤 공백 없음) → 원래 글자 `[시작, 끝)`.
+    fn orig(&self, s: usize, e: usize) -> (u32, u32) {
+        (self.map[s], self.map[e - 1] + 1)
     }
-    None
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum State {
-    /// 맞추지 않는다(원문이 비었거나 `target` 이 비었거나 원문과 같다).
-    Skip,
-    Open,
-    /// 문서 문단 · 문서 문단 안 (끝난 뒤) 문장 차례.
-    Hit(usize, u32),
+struct Cursor {
+    d: usize,
+    o: usize,
+}
+
+/// 공백을 건너뛰고, 문단 끝이면 글이 있는 다음 문단 처음으로.
+fn settle(docs: &[DocPara], cur: &mut Cursor) {
+    while let Some(p) = docs.get(cur.d) {
+        while p.norm.get(cur.o) == Some(&' ') {
+            cur.o += 1;
+        }
+        if cur.o < p.norm.len() {
+            return;
+        }
+        *cur = Cursor { d: cur.d + 1, o: 0 };
+    }
+}
+
+/// 현재 문단과 그 뒤 2문단 안에서만(글 있는 문단 기준) 처음 나오는 자리.
+const LOOKAHEAD_PARAGRAPHS: usize = 3;
+/// 이보다 짧은 글은 커서 자리가 아니면 찾지 않는다(짧은 되풀이 문장에 낚이지 않게).
+const MIN_SEARCH_CHARS: usize = 10;
+
+fn search(docs: &[DocPara], cur: Cursor, needle: &[char]) -> Option<Cursor> {
+    let last = (cur.d + LOOKAHEAD_PARAGRAPHS).min(docs.len());
+    (cur.d..last).find_map(|d| {
+        let from = if d == cur.d { cur.o } else { 0 };
+        docs[d].norm[from..]
+            .windows(needle.len())
+            .position(|w| w == needle)
+            .map(|i| Cursor { d, o: from + i })
+    })
+}
+
+#[derive(Clone, Copy)]
+struct Hit {
+    d: usize,
+    start: usize,
+    end: usize,
 }
 
 #[derive(PartialEq)]
@@ -349,72 +401,125 @@ enum Key {
     Alone(usize),
 }
 
-/// 세그먼트를 문서 문장에 붙잡는다: 글자 그대로 같은 것만, 차례를 지켜 앞에서부터(되풀이 문장은 차례로).
-/// 안 맞은 세그먼트는 앞뒤 맞은 세그먼트가 같은 문서 문단에 있을 때만 끼운다 — 빈 칸 수가 같으면 문장 짝, 다르면
-/// (모두 같은 원문 문단이면) 그 문단 짝 하나. 앞뒤가 다른 문단이면 짝 없음. `pins` 는 쓸 수 없으면 `dropped_pins` 로 돌려준다.
+/// 커서와 맞은 자리 사이 틈(한 문단 안): 틈에 낀 안 맞은 세그먼트들.
+struct Gap {
+    d: usize,
+    start: usize,
+    end: usize,
+    run: Vec<usize>,
+    prev: Option<usize>,
+    next: usize,
+}
+
+/// 세그먼트를 문서 글에 붙잡는다 — 문장 가르기와 무관하게 문서 글을 차례로 먹어 가며(커서), 세그먼트 경계가
+/// 곧 서안의 문장이다. 정규화한 `target` 이 커서 자리의 글과 같으면 맞음. 아니면 글이 10자 이상일 때만 현재 문단과
+/// 뒤 2문단 안에서 찾는다(틈이 생긴다). 틈 한 문단 안에서 안 맞은 세그먼트 수 = 틈을 `sentences` 로 가른 조각 수면
+/// 문장 짝, 다르면 그 문단 짝 하나(이웃의 문장 짝은 그대로). 틈이 문단을 넘으면 짝 없음. 맞은 세그먼트가 하나도 없는
+/// 묶음이 p−1 · p+1 문단에 맞은 묶음 사이에 있으면 문단 p 와 문단 짝. `target` 이 비었거나 잠긴 세그먼트는 짝도 틈
+/// 셈도 없다. 원문과 같은 `target` 은 커서 자리에 있을 때만 짝(아니면 조용히 건너뜀).
+/// 계산량: 세그먼트마다 커서 비교 O(글자) + 최대 3문단 훑기 — 문서 길이에 선형(앞보기 상한 고정).
+/// `pins` 는 쓸 수 없으면 `dropped_pins` 로 돌려준다.
 pub fn align_xliff(target: &[EditorParagraph], segments: &[Segment], pins: &[Pin]) -> Alignment {
     let tclaim = target_claims(target, &paragraph_keys(target));
     let tsent0 = target_sentence_ranges(target, &tclaim);
-    let doc: Vec<DocPara> = (0..target.len())
-        .map(|i| doc_para(&target[i].text, &tsent0[i]))
+    let docs: Vec<DocPara> = (0..target.len())
+        .filter(|&i| !tsent0[i].is_empty())
+        .map(|i| doc_para(i, &target[i].text))
         .collect();
     let n = segments.len();
     let src: Vec<String> = segments.iter().map(|s| collapse(&s.source)).collect();
     let tgt: Vec<Vec<char>> = segments.iter().map(|s| norm(&s.target)).collect();
 
-    // 1. 맞추기. ponytail: 한 걸음 앞보기만 — 더 먼 꼬임은 못 본다(그땐 안 맞은 쪽으로 남아 안전하다).
-    let mut state: Vec<State> = (0..n)
-        .map(|k| {
-            let skip = src[k].is_empty()
-                || tgt[k].is_empty()
-                || tgt[k] == src[k].chars().collect::<Vec<_>>();
-            if skip { State::Skip } else { State::Open }
-        })
-        .collect();
-    let mut spans: Vec<Option<(usize, usize, usize)>> = vec![None; n];
-    let order: Vec<usize> = (0..n).filter(|&k| state[k] == State::Open).collect();
-    let mut cur = (0, 0);
-    for (at, &k) in order.iter().enumerate() {
-        let Some(hit) = find(&doc, &tgt[k], cur) else {
+    // 1. 맞추기.
+    let mut hits: Vec<Option<Hit>> = vec![None; n];
+    let mut gaps: Vec<Gap> = Vec::new();
+    let (mut cur, mut run, mut last_hit) = (Cursor { d: 0, o: 0 }, Vec::<usize>::new(), None);
+    for k in (0..n).filter(|&k| !src[k].is_empty() && !tgt[k].is_empty()) {
+        settle(&docs, &mut cur);
+        let equal = tgt[k] == src[k].chars().collect::<Vec<_>>();
+        let found = if docs
+            .get(cur.d)
+            .is_some_and(|p| p.norm[cur.o..].starts_with(&tgt[k]))
+        {
+            Some(cur)
+        } else if !equal && tgt[k].len() >= MIN_SEARCH_CHARS {
+            search(&docs, cur, &tgt[k])
+        } else {
+            None
+        };
+        let Some(at) = found else {
+            if !equal {
+                run.push(k);
+            }
             continue;
         };
-        let later = order.get(at + 1).and_then(|&k2| find(&doc, &tgt[k2], cur));
-        if later.is_some_and(|l| (l.0, l.1) < (hit.0, hit.1)) {
-            continue; // 다음 세그먼트가 더 앞에서 나온다 — 이 맞춤은 먼 곳 우연의 일치다.
+        if !run.is_empty() && at != cur && at.d == cur.d {
+            let mut end = at.o;
+            while docs[at.d].norm[end - 1] == ' ' {
+                end -= 1;
+            }
+            gaps.push(Gap {
+                d: at.d,
+                start: cur.o,
+                end,
+                run: std::mem::take(&mut run),
+                prev: last_hit,
+                next: k,
+            });
         }
-        spans[k] = Some(hit);
-        cur = (hit.0, hit.2 + 1);
+        run.clear();
+        let end = at.o + tgt[k].len();
+        hits[k] = Some(Hit {
+            d: at.d,
+            start: at.o,
+            end,
+        });
+        cur = Cursor { d: at.d, o: end };
+        last_hit = Some(k);
     }
 
-    // 2. 문서 문장 범위: 맞은 세그먼트는 세그먼트 경계, 나머지는 문장 가르기 그대로.
-    let mut starts: HashMap<(usize, usize), usize> = HashMap::new();
-    for s in spans.iter().flatten() {
-        starts.insert((s.0, s.1), s.2);
+    // 2. 문서 문장 범위: 맞은 세그먼트 범위 · 안 덮인 글은 `sentences` 로.
+    let mut by_doc: Vec<Vec<Hit>> = vec![Vec::new(); docs.len()];
+    for h in hits.iter().flatten() {
+        by_doc[h.d].push(*h);
     }
+    let fill = |d: usize, a: u32, b: u32, out: &mut Vec<(u32, u32)>| {
+        if a < b {
+            let part: String = docs[d].chars[a as usize..b as usize].iter().collect();
+            let claim = tclaim[docs[d].target].is_some();
+            out.extend(
+                sentences(&part, Lang::Ko, claim)
+                    .into_iter()
+                    .map(|(s, e)| (a + s, a + e)),
+            );
+        }
+    };
     let mut final_ranges: Vec<Vec<(u32, u32)>> = vec![Vec::new(); target.len()];
-    let mut final_at: HashMap<(usize, usize), u32> = HashMap::new();
-    for p in 0..target.len() {
-        let mut i = 0;
-        while i < tsent0[p].len() {
-            let j = starts.get(&(p, i)).map_or(i, |&j| j);
-            final_at.insert((p, i), final_ranges[p].len() as u32);
-            final_ranges[p].push((tsent0[p][i].0, tsent0[p][j].1));
-            i = j + 1;
+    for (d, p) in docs.iter().enumerate() {
+        let (mut at, mut out) = (0, Vec::new());
+        for h in &by_doc[d] {
+            let (s, e) = p.orig(h.start, h.end);
+            fill(d, at, s, &mut out);
+            out.push((s, e));
+            at = e;
         }
+        fill(d, at, p.chars.len() as u32, &mut out);
+        final_ranges[p.target] = out;
     }
-    for k in 0..n {
-        if let Some(s) = spans[k] {
-            state[k] = State::Hit(s.0, final_at[&(s.0, s.1)]);
-        }
-    }
+    let index_of = |d: usize, start: u32| {
+        final_ranges[docs[d].target]
+            .binary_search_by_key(&start, |r| r.0)
+            .expect("문장 범위의 시작")
+    };
 
     // 3. 원문 창 문단.
+    let hit_doc = |k: usize| hits[k].map(|h| h.d);
     let prev_hit: Vec<Option<usize>> = {
         let mut last = None;
         (0..n)
             .map(|k| {
                 let r = last;
-                if matches!(state[k], State::Hit(..)) {
+                if hits[k].is_some() {
                     last = Some(k);
                 }
                 r
@@ -425,25 +530,18 @@ pub fn align_xliff(target: &[EditorParagraph], segments: &[Segment], pins: &[Pin
     let mut last = None;
     for k in (0..n).rev() {
         next_hit[k] = last;
-        if matches!(state[k], State::Hit(..)) {
+        if hits[k].is_some() {
             last = Some(k);
         }
     }
-    let hit_para = |k: usize| match state[k] {
-        State::Hit(p, _) => Some(p),
-        _ => None,
-    };
     let key = |k: usize| -> Key {
         if let Some(g) = &segments[k].group {
             return Key::Group(g.clone());
         }
-        if let State::Hit(p, _) = state[k] {
-            return Key::Doc(p);
+        if let Some(h) = hits[k] {
+            return Key::Doc(h.d);
         }
-        match (
-            prev_hit[k].and_then(hit_para),
-            next_hit[k].and_then(hit_para),
-        ) {
+        match (prev_hit[k].and_then(hit_doc), next_hit[k].and_then(hit_doc)) {
             (Some(a), Some(b)) if a == b => Key::Doc(a),
             _ => Key::Alone(k),
         }
@@ -473,7 +571,7 @@ pub fn align_xliff(target: &[EditorParagraph], segments: &[Segment], pins: &[Pin
         at_source[k] = Some((index, para.sentences.len() as u32 - 1));
     }
 
-    // 4. 짝: 맞은 것 → 끼운 것 → 문단 짝으로 내린 것.
+    // 4. 짝. 둘째 칸은 같은 문단 안 차례 열쇠(문단 짝 = 0, 문장 짝 = 문장 번호 + 1).
     let pair = |t: usize, ts: u32, k: usize| {
         let (sp, ss) = at_source[k].expect("원문이 있는 세그먼트만 맞춘다");
         Pair {
@@ -484,62 +582,66 @@ pub fn align_xliff(target: &[EditorParagraph], segments: &[Segment], pins: &[Pin
             grade: Grade::Sentence,
         }
     };
+    let paragraph_pair = |t: usize, sp: u32| Pair {
+        target_id: target[t].id.clone(),
+        target_sentence: None,
+        source_paragraph: sp,
+        source_sentence: None,
+        grade: Grade::Paragraph,
+    };
     let mut pairs: Vec<(usize, u32, Pair)> = Vec::new();
-    let mut downgrade: HashMap<usize, Vec<usize>> = HashMap::new();
-    let mut run: Vec<usize> = Vec::new();
-    let mut last_hit: Option<usize> = None;
-    for k in 0..n {
-        match state[k] {
-            State::Skip => {}
-            State::Open => run.push(k),
-            State::Hit(t, ts) => {
-                pairs.push((t, ts, pair(t, ts, k)));
-                if let (Some(p), false) = (last_hit, run.is_empty())
-                    && let State::Hit(pt, pts) = state[p]
-                    && pt == t
-                {
-                    let gap = (ts - pts - 1) as usize;
-                    if gap == run.len() {
-                        for (j, &r) in run.iter().enumerate() {
-                            let at = pts + 1 + j as u32;
-                            pairs.push((t, at, pair(t, at, r)));
-                        }
-                    } else {
-                        downgrade.entry(t).or_default().extend(run.iter().copied());
-                    }
-                }
-                run.clear();
-                last_hit = Some(k);
-            }
+    for (k, h) in hits.iter().enumerate() {
+        if let Some(h) = *h {
+            let ts = index_of(h.d, docs[h.d].orig(h.start, h.end).0) as u32;
+            let t = docs[h.d].target;
+            pairs.push((t, ts + 1, pair(t, ts, k)));
         }
     }
-    for (t, runs) in downgrade {
-        let mut owners: Vec<u32> = runs
+    for gap in &gaps {
+        let p = &docs[gap.d];
+        let (a, b) = p.orig(gap.start, gap.end);
+        let mut pieces = Vec::new();
+        fill(gap.d, a, b, &mut pieces);
+        if pieces.len() == gap.run.len() {
+            for (&k, piece) in gap.run.iter().zip(&pieces) {
+                let ts = index_of(gap.d, piece.0) as u32;
+                pairs.push((p.target, ts + 1, pair(p.target, ts, k)));
+            }
+            continue;
+        }
+        let mut owners: Vec<u32> = gap
+            .run
             .iter()
             .filter_map(|&k| at_source[k])
             .map(|a| a.0)
             .collect();
-        owners.extend(
-            (0..n)
-                .filter(|&k| hit_para(k) == Some(t))
-                .filter_map(|k| at_source[k])
-                .map(|a| a.0),
-        );
         owners.sort_unstable();
         owners.dedup();
-        if let [only] = owners[..] {
-            pairs.retain(|p| p.0 != t);
-            pairs.push((
-                t,
-                0,
-                Pair {
-                    target_id: target[t].id.clone(),
-                    target_sentence: None,
-                    source_paragraph: only,
-                    source_sentence: None,
-                    grade: Grade::Paragraph,
-                },
-            ));
+        let neighbour = |k: Option<usize>| k.and_then(|k| at_source[k]).map(|a| a.0);
+        if let [only] = owners[..]
+            && (neighbour(gap.prev) == Some(only) || neighbour(Some(gap.next)) == Some(only))
+            && !pairs.iter().any(|q| q.0 == p.target && q.1 == 0)
+        {
+            pairs.push((p.target, 0, paragraph_pair(p.target, only)));
+        }
+    }
+    // 맞은 세그먼트가 없는 묶음이 맞은 이웃 묶음 사이(문단 p−1 · p+1)에 있으면 문단 짝.
+    let span_of = |i: usize| {
+        let ds: Vec<usize> = (0..n)
+            .filter(|&k| at_source[k].is_some_and(|a| a.0 as usize == i))
+            .filter_map(hit_doc)
+            .collect();
+        ds.first().copied().zip(ds.last().copied())
+    };
+    for (i, key) in source_keys.iter().enumerate().skip(1) {
+        if i + 1 >= source.len() || !matches!(key, Key::Group(_)) || span_of(i).is_some() {
+            continue;
+        }
+        if let (Some((_, a)), Some((b, _))) = (span_of(i - 1), span_of(i + 1))
+            && b == a + 2
+        {
+            let t = docs[a + 1].target;
+            pairs.push((t, 0, paragraph_pair(t, i as u32)));
         }
     }
 
@@ -574,7 +676,7 @@ pub fn align_xliff(target: &[EditorParagraph], segments: &[Segment], pins: &[Pin
         match t.filter(|_| usable) {
             Some(t) => pairs.push((
                 t,
-                pin.target_sentence,
+                pin.target_sentence + 1,
                 Pair {
                     target_id: pin.target_id.clone(),
                     target_sentence: Some(pin.target_sentence),
