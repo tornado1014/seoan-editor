@@ -1311,7 +1311,15 @@ pub async fn editor_open_pending(
         .ok()
         .and_then(|mut pending| pending.remove(window.label()));
     match path {
-        Some(path) => open_path(&state, &window, path).await,
+        Some(path) => {
+            let opened = open_path(&state, &window, path).await?;
+            // 큰 문서 「취소」: 이 문서만 열려고 만든 빈 탭이 남지 않게(다른 창이 있을 때만 닫는다).
+            let windows = window.app_handle().webview_windows().len();
+            if crate::large_prompt::should_close_empty_tab(opened.is_none(), windows) {
+                let _ = window.close();
+            }
+            Ok(opened)
+        }
         None => Ok(None),
     }
 }
@@ -1329,7 +1337,7 @@ async fn open_path(
     let opened = path.clone();
     let app = window.app_handle().clone();
     let session = tauri::async_runtime::spawn_blocking(move || {
-        crate::large_prompt::open_or_ask(&app, || EditorSession::open(&opened))
+        crate::large_prompt::open_or_ask(&app, &opened.clone(), || EditorSession::open(&opened))
     })
     .await
     .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "worker", false))??;
@@ -1792,7 +1800,7 @@ pub async fn editor_compare_pick(
         return Ok(None);
     };
     // 큰 문서면 묻는다 — 「취소」면 기준을 바꾸지 않고 `null`.
-    let asked = crate::large_prompt::open_or_ask(&app, || {
+    let asked = crate::large_prompt::open_or_ask(&app, &path, || {
         with_session(&state, &window, |session| session.compare_with(&path))
     })?;
     if asked.is_none() {
@@ -1823,7 +1831,7 @@ pub async fn editor_compare_history(
         .into_iter()
         .nth(index)
         .ok_or_else(|| refused("history_none"))?;
-    let asked = crate::large_prompt::open_or_ask(&app, || {
+    let asked = crate::large_prompt::open_or_ask(&app, &kept.path, || {
         with_session(&state, &window, |session| session.compare_with(&kept.path))
     })?;
     if asked.is_none() {

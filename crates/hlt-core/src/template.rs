@@ -113,6 +113,15 @@ pub struct DocumentRegions {
 ///   받고, 그 밖의 바이트가 붙으면 거부한다.
 /// - 무압축(0x17 = 0): 헤더 뒤 끝까지가 해제본이고 꼬리가 없다(`PctPatE`·`PctPatED`) — 무결성을 대조할 수 없다.
 pub fn inflate_hlt(path: &Path) -> Result<(Header, Vec<u8>), CoreError> {
+    inflate_hlt_capped(path, crate::VerifyOptions::default().max_inflated_bytes)
+}
+
+/// `inflate_hlt` 에 해제 상한을 준 판 — 넘으면 `SizeLimitExceeded`(Vec 이 끝없이 자라지 않게).
+pub(crate) fn inflate_hlt_capped(
+    path: &Path,
+    max_inflated_bytes: u64,
+) -> Result<(Header, Vec<u8>), CoreError> {
+    let too_large = || error(ErrorCode::SizeLimitExceeded, "template_inflate");
     let bytes = std::fs::read(path).map_err(|_| error(ErrorCode::IoError, "template_open"))?;
     let header: Header = bytes
         .get(..HLT_HEADER_LEN as usize)
@@ -121,13 +130,18 @@ pub fn inflate_hlt(path: &Path) -> Result<(Header, Vec<u8>), CoreError> {
         .ok_or_else(|| error(ErrorCode::HeaderInvalid, "template_header"))?;
     let stream = &bytes[HLT_HEADER_LEN as usize..];
     match header[COMPRESSED] {
+        0 if stream.len() as u64 > max_inflated_bytes => Err(too_large()),
         0 => Ok((header, stream.to_vec())),
         1 => {
             let mut decoder = DeflateDecoder::new(stream);
             let mut inflated = Vec::new();
-            decoder
+            (&mut decoder)
+                .take(max_inflated_bytes.saturating_add(1))
                 .read_to_end(&mut inflated)
                 .map_err(|_| error(ErrorCode::DeflateInvalid, "template_inflate"))?;
+            if inflated.len() as u64 > max_inflated_bytes {
+                return Err(too_large());
+            }
             let rest = &stream[decoder.total_in() as usize..];
             let footer = rest
                 .get(..8)
@@ -1170,4 +1184,35 @@ fn tagged_count(bytes: &[u8], at: usize, phase: &'static str) -> Result<usize, C
 
 fn error(code: ErrorCode, phase: &'static str) -> CoreError {
     CoreError::new(code, phase, false)
+}
+
+#[cfg(test)]
+mod cap_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn container(body: &[u8]) -> tempfile::NamedTempFile {
+        let mut bytes = vec![0_u8; HLT_HEADER_LEN as usize];
+        bytes[..HLT_MAGIC.len()].copy_from_slice(HLT_MAGIC);
+        bytes[COMPRESSED] = 1;
+        let mut encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(body).unwrap();
+        bytes.extend(encoder.finish().unwrap());
+        bytes.extend(crc32fast::hash(body).to_le_bytes());
+        bytes.extend((body.len() as u32).to_le_bytes());
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), bytes).unwrap();
+        file
+    }
+
+    #[test]
+    fn inflate_stops_at_the_cap_instead_of_growing_the_vec() {
+        let file = container(&[7_u8; 10_000]);
+        let error = inflate_hlt_capped(file.path(), 100).unwrap_err();
+        assert_eq!(error.code, ErrorCode::SizeLimitExceeded);
+        let (_, inflated) = inflate_hlt_capped(file.path(), 10_000).unwrap();
+        assert_eq!(inflated.len(), 10_000);
+        assert_eq!(inflate_hlt(file.path()).unwrap().1.len(), 10_000);
+    }
 }

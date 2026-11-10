@@ -1290,7 +1290,7 @@ pub(crate) fn with_computed_page_count(
 ) -> Result<KipoExportOptions, CoreError> {
     let mut options = options.clone();
     if options.page_count.is_none() {
-        let (_, inflated) = crate::inflate_hlt(path)?;
+        // 보호된 판독(큰 문서 확인 · 상한)을 먼저 거친다.
         let document = inspect_path(
             path,
             InspectOptions {
@@ -1298,6 +1298,7 @@ pub(crate) fn with_computed_page_count(
                 ..InspectOptions::default()
             },
         )?;
+        let (_, inflated) = crate::inflate_hlt(path)?;
         options.page_count = Some(crate::page_count(&document, &inflated) as u32);
     }
     Ok(options)

@@ -67,8 +67,8 @@ pub use baseline::docx_baseline;
 pub use batch::{BatchCheckRow, BatchRow, batch_generate_hlt, batch_submission_checks};
 pub use cancel::{
     CancellationToken, LARGE_THRESHOLD_BYTES, ProgressEvent, ProgressSink, ProgressTotals,
-    VerifyOptions, allow_large_default, large_threshold_default, set_allow_large,
-    take_large_document_bytes,
+    VerifyOptions, allow_large_default, allow_large_path, large_threshold_default, path_allowed,
+    set_allow_large,
 };
 pub use cell_format_edit::{
     CellFormatEdit, CellFormatEditDecision, CellFormatEditDecisionStatus, CellFormatEditPlan,

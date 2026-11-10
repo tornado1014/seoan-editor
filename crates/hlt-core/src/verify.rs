@@ -73,6 +73,11 @@ pub fn verify_path(path: &Path, options: VerifyOptions) -> Result<VerifyResult, 
         .unwrap_or("input.HLT")
         .to_string();
     let mut file = File::open(path).map_err(|error| io_error(&error, "open", &source))?;
+    // 이 경로를 사용자가 허락했다면(세션이 같은 파일을 다시 읽을 때) 옵션 없이도 큰 문서를 통과시킨다.
+    let options = VerifyOptions {
+        allow_large: options.allow_large || crate::path_allowed(path),
+        ..options
+    };
     verify_reader(&mut file, &source, options)
 }
 

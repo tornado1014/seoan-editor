@@ -188,12 +188,17 @@ where
     if flagged {
         hlt_core::set_allow_large(true);
     }
-    let code = run_command(args, stdout, stderr);
+    let mut tee = Tee {
+        inner: stdout,
+        seen: Vec::new(),
+    };
+    let code = run_command(args, &mut tee, stderr);
     if flagged {
         hlt_core::set_allow_large(false);
     }
+    // 큰 문서 거절 안내: 크기는 stdout 오류 봉투(`details.inflated_bytes`)에서 읽는다.
     if code != EXIT_OK
-        && let Some(bytes) = hlt_core::take_large_document_bytes()
+        && let Some(bytes) = tee.large_document_bytes()
     {
         let _ = writeln!(
             stderr,
@@ -202,6 +207,43 @@ where
         );
     }
     code
+}
+
+/// stdout 을 그대로 흘리며 내용을 모아 둔다(오류 봉투를 다시 읽기 위해).
+struct Tee<'a, O: Write> {
+    inner: &'a mut O,
+    seen: Vec<u8>,
+}
+
+impl<O: Write> Write for Tee<'_, O> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let written = self.inner.write(buf)?;
+        self.seen.extend_from_slice(&buf[..written]);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl<O: Write> Tee<'_, O> {
+    fn large_document_bytes(&self) -> Option<u64> {
+        self.seen.split(|byte| *byte == b'\n').find_map(|line| {
+            let envelope: serde_json::Value = serde_json::from_slice(line).ok()?;
+            let error = envelope.get("error")?;
+            (error.get("code")? == "large_document")
+                .then(|| {
+                    error
+                        .get("details")?
+                        .get("inflated_bytes")?
+                        .as_str()?
+                        .parse()
+                        .ok()
+                })
+                .flatten()
+        })
+    }
 }
 
 fn run_command<O, E>(args: Vec<String>, stdout: &mut O, stderr: &mut E) -> u8

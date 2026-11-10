@@ -53,6 +53,15 @@ fn name(path: &Path) -> String {
 }
 
 fn reason(error: &crate::CoreError) -> String {
+    if error.code == crate::ErrorCode::LargeDocument {
+        let gb = error
+            .details
+            .get("inflated_bytes")
+            .and_then(|bytes| bytes.parse::<f64>().ok())
+            .unwrap_or_default()
+            / 1_000_000_000.0;
+        return format!("풀면 {gb:.1}GB — 건너뜀");
+    }
     match error.details.get("reason").map(String::as_str) {
         // XML 은 그림을 옆 파일로 부른다(실물: XML 만 옮기면 이렇게 실패한다).
         Some("image_source") => "그림 파일을 찾지 못함(XML 옆에 그림 파일이 있어야 합니다)".into(),

@@ -169,12 +169,12 @@ pub fn save_generated_hlt_with_profile_as_new(
         .flush()
         .and_then(|_| temporary.as_file().sync_all())
         .map_err(|error| io_error(&error, "temp_sync", &output_source))?;
-    let mut verification = verify_path(temporary.path(), clone_verify_options(&options.verify))?;
+    let mut verification = verify_path(temporary.path(), written_verify_options(&options.verify))?;
     let inspected = inspect_path(
         temporary.path(),
         InspectOptions {
             max_inflated_bytes: options.verify.max_inflated_bytes,
-            allow_large: options.verify.allow_large,
+            allow_large: true,
             large_threshold_bytes: options.verify.large_threshold_bytes,
             ..InspectOptions::default()
         },
@@ -296,12 +296,12 @@ pub(crate) fn save_new_document_with_kind(
         .flush()
         .and_then(|_| temporary.as_file().sync_all())
         .map_err(|error| io_error(&error, "temp_sync", &output_source))?;
-    let mut verification = verify_path(temporary.path(), clone_verify_options(&options.verify))?;
+    let mut verification = verify_path(temporary.path(), written_verify_options(&options.verify))?;
     let inspected = inspect_path(
         temporary.path(),
         InspectOptions {
             max_inflated_bytes: options.verify.max_inflated_bytes,
-            allow_large: options.verify.allow_large,
+            allow_large: true,
             large_threshold_bytes: options.verify.large_threshold_bytes,
             ..InspectOptions::default()
         },
@@ -475,12 +475,12 @@ where
         .and_then(|_| temporary.as_file().sync_all())
         .map_err(|error| io_error(&error, "temp_sync", &output_source))?;
 
-    let mut output_verify = verify_path(temporary.path(), clone_verify_options(options))?;
+    let mut output_verify = verify_path(temporary.path(), written_verify_options(options))?;
     let output_document = inspect_path(
         temporary.path(),
         InspectOptions {
             max_inflated_bytes: options.max_inflated_bytes,
-            allow_large: options.allow_large,
+            allow_large: true,
             large_threshold_bytes: options.large_threshold_bytes,
             ..InspectOptions::default()
         },
@@ -678,6 +678,14 @@ fn publish_noclobber(temp: &Path, output: &Path, source: &str) -> Result<(), Cor
             io_error(&error, "publish", source)
         }
     })
+}
+
+/// 방금 우리가 쓴 임시 출력을 되읽는 옵션 — 큰 문서 확인은 뺀다(재료는 이미 통과했다 · 하드 상한은 그대로).
+fn written_verify_options(options: &VerifyOptions) -> VerifyOptions {
+    VerifyOptions {
+        allow_large: true,
+        ..clone_verify_options(options)
+    }
 }
 
 fn clone_verify_options(options: &VerifyOptions) -> VerifyOptions {

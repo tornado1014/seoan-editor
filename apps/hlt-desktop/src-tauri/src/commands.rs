@@ -109,13 +109,21 @@ pub async fn verify_file(
     let verification =
         tauri::async_runtime::spawn_blocking(move || verify_path(&path, options)).await;
     lock(&state.cancellations, "cancel")?.remove(&request_id);
-    verification.map_err(|error| {
-        let mut core_error = CoreError::new(ErrorCode::VerificationFailed, "worker", false);
-        core_error
-            .details
-            .insert("join_error".to_string(), error.to_string());
-        core_error
-    })?
+    verification
+        .map_err(|error| {
+            let mut core_error = CoreError::new(ErrorCode::VerificationFailed, "worker", false);
+            core_error
+                .details
+                .insert("join_error".to_string(), error.to_string());
+            core_error
+        })?
+        .map_err(|mut error| {
+            // 묻는 창이 없는 길 — 열기 안내 글로 바꾼다(화면은 이 글을 그대로 보인다).
+            if error.code == ErrorCode::LargeDocument {
+                error.message = crate::large_prompt::verify_message(&error);
+            }
+            error
+        })
 }
 
 #[tauri::command]

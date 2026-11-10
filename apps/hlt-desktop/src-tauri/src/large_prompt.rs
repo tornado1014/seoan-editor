@@ -4,14 +4,31 @@ use hlt_core::{CoreError, ErrorCode};
 use tauri::AppHandle;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
-/// 묻는 글 — 풀 크기(GB)는 오류가 실어 온 해제 바이트에서.
-pub fn question(error: &CoreError) -> String {
-    let gb = error
+fn gb(error: &CoreError) -> f64 {
+    error
         .details
         .get("inflated_bytes")
         .and_then(|bytes| bytes.parse::<f64>().ok())
         .unwrap_or_default()
-        / 1_000_000_000.0;
+        / 1_000_000_000.0
+}
+
+/// 검증 화면(`verify_file`)용 글 — 묻는 창이 없는 길이라 열기 안내만 한다.
+pub fn verify_message(error: &CoreError) -> String {
+    format!(
+        "이 문서는 풀면 {:.1}GB 입니다. 큰 문서는 「열기」로 열어 주세요.",
+        gb(error)
+    )
+}
+
+/// 열기를 취소했을 때 그 문서만 열려던 빈 탭을 닫는가(다른 창이 남아 있을 때만).
+pub fn should_close_empty_tab(cancelled: bool, windows: usize) -> bool {
+    cancelled && windows > 1
+}
+
+/// 묻는 글 — 풀 크기(GB)는 오류가 실어 온 해제 바이트에서.
+pub fn question(error: &CoreError) -> String {
+    let gb = gb(error);
     format!("이 문서는 풀면 {gb:.1}GB 입니다(디스크와 메모리를 그만큼 씁니다). 열까요?")
 }
 
@@ -46,16 +63,17 @@ pub fn ask_dialog(app: &AppHandle, error: &CoreError) -> bool {
         .blocking_show()
 }
 
-/// 열기를 시도하고, 큰 문서면 묻는다. 허락은 이 프로그램이 도는 동안 유지된다(세션이 문서를 다시 읽는다).
+/// 열기를 시도하고, 큰 문서면 묻는다. 허락은 이 문서(경로)만 · 이 프로그램이 도는 동안 유지된다(세션이 같은 문서를 다시 읽는다).
 /// 취소면 `Ok(None)`.
 pub fn open_or_ask<T>(
     app: &AppHandle,
+    path: &std::path::Path,
     open: impl FnMut() -> Result<T, CoreError>,
 ) -> Result<Option<T>, CoreError> {
     retry_if_large(
         open,
         |error| ask_dialog(app, error),
-        || hlt_core::set_allow_large(true),
+        || hlt_core::allow_large_path(path),
     )
 }
 
@@ -70,6 +88,21 @@ mod tests {
             .details
             .insert("inflated_bytes".into(), bytes.to_string());
         error
+    }
+
+    #[test]
+    fn verify_wording_has_no_buttons_to_press() {
+        assert_eq!(
+            verify_message(&large(3_400_000_000)),
+            "이 문서는 풀면 3.4GB 입니다. 큰 문서는 「열기」로 열어 주세요."
+        );
+    }
+
+    #[test]
+    fn a_cancelled_open_closes_the_empty_tab_only_when_another_window_remains() {
+        assert!(should_close_empty_tab(true, 2));
+        assert!(!should_close_empty_tab(true, 1), "마지막 창은 닫지 않는다");
+        assert!(!should_close_empty_tab(false, 2), "열렸으면 닫지 않는다");
     }
 
     #[test]

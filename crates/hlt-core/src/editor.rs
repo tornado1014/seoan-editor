@@ -204,6 +204,10 @@ impl EditorSession {
     pub fn open(source: &Path) -> Result<Self, CoreError> {
         let dir = tempfile::tempdir().map_err(|_| editor_error("workdir"))?;
         let first = dir.path().join("v0.HLT");
+        // 허락한 문서면 세션 사본 · 이후 판(이 폴더 아래 전부)도 허락한다 — 세션이 같은 문서를 다시 읽는다.
+        if crate::path_allowed(source) {
+            crate::allow_large_path(dir.path());
+        }
         // 제출파일(.fin 최종본 · .hlz)은 풀어서 HLT 로 굽고 연다.
         let package = source
             .extension()
@@ -2712,6 +2716,10 @@ impl EditorSession {
         };
         if file_digest(target)? != *expected {
             return Err(failed("bytes"));
+        }
+        // 방금 우리가 쓴 파일이다 — 허락한 세션의 새 이름 저장도 되읽는다.
+        if crate::path_allowed(self.path()) {
+            crate::allow_large_path(target);
         }
         crate::verify_path(target, crate::VerifyOptions::default())
             .map_err(|_| failed("structure"))?;
