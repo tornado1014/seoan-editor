@@ -177,3 +177,15 @@ fn a_word_baseline_does_not_report_figures_as_changed() {
         "{marks:?}"
     );
 }
+
+#[test]
+fn the_comparison_table_path_is_not_touched_by_similarity_pairing() {
+    // 대비표는 옛 그대로 — 기준이 없는 문서(`.fin` 이 아님)는 대비표가 없다(`None`). 한쪽만 번호일 때 옛 길의 「건드리지 않음」은
+    // `amend_marks` 단위 테스트가 못 박는다(문단번호 시험 틀은 `number_paragraphs` 가 거절해 여기서는 못 돌린다).
+    // 한쪽만 번호일 때의 글 닮음 짝짓기는 화면 비교(`amendment_marks_against_file`)만 쓴다.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("명세서.HLT");
+    save_new_specification(&path, SpecKind::Patent, SpecOptions::default()).unwrap();
+    let mut session = EditorSession::open(&path).unwrap();
+    assert_eq!(session.amendment_table(), None);
+}

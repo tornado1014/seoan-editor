@@ -239,14 +239,7 @@ pub(crate) fn description_body(paragraphs: &[EditorParagraph]) -> Vec<usize> {
 /// 짝(같은 글 · 바뀐 글)은 같은 번호(지금 판 차례 `0001`…), 지금 판에만 있는 문단도 그 차례 번호, 앞 판에만 있는 문단은
 /// `이전 0003`(앞 판 차례)을 단다. 어느 한쪽에 번호가 하나라도 있으면 그대로 둔다.
 pub fn number_unnumbered(before: &mut [EditorParagraph], now: &mut [EditorParagraph]) {
-    let (before_numbered, now_numbered) = (
-        before.iter().any(|p| p.number.is_some()),
-        now.iter().any(|p| p.number.is_some()),
-    );
-    if before_numbered != now_numbered {
-        return number_by_similarity(before, now, before_numbered);
-    }
-    if before_numbered {
+    if before.iter().chain(now.iter()).any(|p| p.number.is_some()) {
         return;
     }
     let (old, new) = (description_body(before), description_body(now));
@@ -294,15 +287,30 @@ pub fn number_unnumbered(before: &mut [EditorParagraph], now: &mut [EditorParagr
     }
 }
 
+/// 화면 비교(다른 파일 · 이전 판 · 워드)용: `number_unnumbered` 에 더해 **한쪽만** 번호가 있으면 글 닮음으로 짝짓는다.
+/// 대비표 길(`amendment_table`)은 이 함수를 쓰지 않고 `number_unnumbered` 그대로다.
+pub fn number_for_comparison(before: &mut [EditorParagraph], now: &mut [EditorParagraph]) {
+    let (before_numbered, now_numbered) = (
+        before.iter().any(|p| p.number.is_some()),
+        now.iter().any(|p| p.number.is_some()),
+    );
+    if before_numbered != now_numbered {
+        number_by_similarity(before, now, before_numbered);
+    } else {
+        number_unnumbered(before, now);
+    }
+}
+
 /// 한쪽만 식별번호가 있을 때(그냥 HLT ↔ 번호 붙은 워드·최종본): 번호 없는 쪽 상세설명 문단에, 글이 같거나 닮은(ratio ≥ 0.6)
 /// 번호 쪽 문단의 번호를 차례 보존으로 단다. 짝이 없으면 지금 판 `새 0007` · 앞 판 `이전 0007`(번호 없는 쪽 차례).
-/// ponytail: 바뀐 구간 안은 차례대로 훑는 탐욕 짝짓기 — 문단 순서가 뒤바뀐 큰 편집은 짝이 엇나갈 수 있다.
+/// ponytail: 바뀐 구간 안은 차례를 지키는 탐욕 짝짓기(최고 점수 · 모호하면 짝 없음) — 문단 순서가 뒤바뀐 큰 편집은 짝이 빠질 수 있다.
 fn number_by_similarity(
     before: &mut [EditorParagraph],
     now: &mut [EditorParagraph],
     before_numbered: bool,
 ) {
     const SIMILAR: f32 = 0.6;
+    const AMBIGUOUS: f32 = 0.05;
     let (numbered, plain) = if before_numbered {
         (&mut *before, &mut *now)
     } else {
@@ -331,17 +339,24 @@ fn number_by_similarity(
                 }
             }
             "replace" => {
+                // 차례를 지키며 가장 닮은 후보에 짝짓는다. 1등과 2등이 0.05 안이면 모호 — 틀린 짝보다 짝 없음이 낫다.
                 let mut next = op.second_start;
                 for i in op.first_start..op.first_end {
-                    let found = (next..op.second_end).find(|&j| {
-                        SequenceMatcher::new(
-                            &plain_texts[i].chars().collect::<Vec<_>>(),
-                            &numbered_texts[j].chars().collect::<Vec<_>>(),
-                        )
-                        .ratio()
-                            >= SIMILAR
-                    });
-                    if let Some(j) = found {
+                    let mine: Vec<char> = plain_texts[i].chars().collect();
+                    let mut scores: Vec<(f32, usize)> = (next..op.second_end)
+                        .map(|j| {
+                            let theirs: Vec<char> = numbered_texts[j].chars().collect();
+                            (SequenceMatcher::new(&mine, &theirs).ratio(), j)
+                        })
+                        .collect();
+                    scores.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+                    let Some(&(best, j)) = scores.first() else {
+                        continue;
+                    };
+                    let ambiguous = scores
+                        .get(1)
+                        .is_some_and(|second| best - second.0 < AMBIGUOUS);
+                    if best >= SIMILAR && !ambiguous {
                         paired[i] = Some(j);
                         next = j + 1;
                     }
@@ -1493,27 +1508,88 @@ mod tests {
         assert_eq!(numbers(&gone), [None, n("0001"), n("이전 0002"), n("0002")]);
         assert_eq!(amendment_marks(&gone, &kept).removed, ["【이전 0002】"]);
 
-        // 양쪽에 번호가 있으면(최종본 · 보정 명세서) 건드리지 않는다.
+        // 한쪽이라도 번호가 있으면(최종본 · 보정 명세서) 건드리지 않는다 — 대비표 길은 이 동작 그대로.
         let mut numbered = plain(&["【발명의 설명】", "가"]);
         numbered[1].number = n("0001");
-        let mut also = plain(&["【발명의 설명】", "가"]);
-        also[1].number = n("0009");
-        number_unnumbered(&mut numbered, &mut also);
-        assert_eq!(numbers(&numbered), [None, n("0001")]);
-        assert_eq!(numbers(&also), [None, n("0009")]);
-
-        // 한쪽만 번호가 있으면(번호 붙은 워드 · 최종본 ↔ 그냥 HLT) 글이 같거나 닮은 문단이 그 번호를 받는다.
-        let mut numbered = plain(&["【발명의 설명】", "가나다라마바", "사아자"]);
-        numbered[1].number = n("0001");
-        numbered[2].number = n("0002");
-        let mut other = plain(&[
-            "【발명의 설명】",
-            "가나다라마바 덧붙임",
-            "사아자",
-            "새 문단",
-        ]);
+        let mut other = plain(&["【발명의 설명】", "가"]);
         number_unnumbered(&mut numbered, &mut other);
-        assert_eq!(numbers(&other), [None, n("0001"), n("0002"), n("새 0003")]);
+        assert_eq!(numbers(&other), [None, None]);
+    }
+
+    fn numbered_plain(
+        numbered: &[(&str, &str)],
+        plain_texts: &[&str],
+    ) -> (Vec<EditorParagraph>, Vec<EditorParagraph>) {
+        let mut head = vec!["【발명의 설명】"];
+        head.extend(numbered.iter().map(|(_, text)| *text));
+        let mut before = plain(&head);
+        for (at, (number, _)) in numbered.iter().enumerate() {
+            before[at + 1].number = Some(number.to_string());
+        }
+        let mut now_texts = vec!["【발명의 설명】"];
+        now_texts.extend(plain_texts);
+        (before, plain(&now_texts))
+    }
+
+    const A: &str = "제어부는 센서의 출력에 따라 모터를 구동하고 표시부에 상태를 표시한다.";
+    const B: &str = "제어부는 센서의 출력에 따라 밸브를 개폐하고 경보부에 경고를 출력한다.";
+
+    #[test]
+    fn one_sided_numbers_pair_by_text_for_comparison_only() {
+        let n = |text: &str| Some(text.to_string());
+        let (mut numbered, mut other) = numbered_plain(
+            &[("0001", "가나다라마바"), ("0002", "사아자")],
+            &["가나다라마바 덧붙임", "사아자", "새 문단"],
+        );
+        number_for_comparison(&mut numbered, &mut other);
+        let got: Vec<_> = other.iter().map(|p| p.number.clone()).collect();
+        assert_eq!(got, [None, n("0001"), n("0002"), n("새 0003")]);
+        // 양쪽 번호 · 양쪽 없음은 그대로 `number_unnumbered` 와 같다.
+        let (mut a, mut b) = numbered_plain(&[("0001", "가")], &["가"]);
+        b[1].number = n("0009");
+        number_for_comparison(&mut a, &mut b);
+        assert_eq!(b[1].number, n("0009"));
+    }
+
+    #[test]
+    fn similarity_pairing_picks_the_best_candidate_not_the_first() {
+        // 「B 이때」는 A 와도 0.6 을 넘게 닮았지만 B 와 훨씬 더 닮았다 — 첫 후보(A)에 짝지으면 엉뚱한 문단이 「바뀐」 것으로 뜬다.
+        let edited = format!("{B} 이때");
+        let (mut numbered, mut now) = numbered_plain(&[("0001", A), ("0002", B)], &[&edited]);
+        number_for_comparison(&mut numbered, &mut now);
+        assert_eq!(now[1].number.as_deref(), Some("0002"));
+        let marks = amendment_marks(&numbered, &now);
+        assert_eq!(marks.changed, ["【0002】"]);
+        assert_eq!(marks.removed, ["【0001】"]);
+    }
+
+    #[test]
+    fn similarity_pairing_inserted_paragraph_shifts_nothing() {
+        let (a2, b2) = (format!("{A} 또한"), format!("{B} 이때"));
+        let (mut numbered, mut now) = numbered_plain(
+            &[("0001", A), ("0002", B)],
+            &[&a2, "전혀 다른 새 내용의 문단이다 하나둘셋", &b2],
+        );
+        number_for_comparison(&mut numbered, &mut now);
+        let marks = amendment_marks(&numbered, &now);
+        assert_eq!(marks.changed, ["【0001】", "【0002】"]);
+        assert_eq!(marks.added.len(), 1, "{marks:?}");
+        assert!(marks.removed.is_empty(), "{marks:?}");
+    }
+
+    #[test]
+    fn similarity_pairing_refuses_an_ambiguous_pair() {
+        // 둘이 한 글자만 달라 어느 쪽이 짝인지 알 수 없다 — 틀린 짝보다 「지움 + 넣음」이 낫다.
+        let x = |tail: &str| {
+            format!("제어부는 센서의 출력에 따라 모터를 구동하고 표시부에 상태를 표시한다 {tail}.")
+        };
+        let (one, two, three) = (x("가"), x("나"), x("다"));
+        let (mut numbered, mut now) = numbered_plain(&[("0001", &one), ("0002", &two)], &[&three]);
+        number_for_comparison(&mut numbered, &mut now);
+        let marks = amendment_marks(&numbered, &now);
+        assert!(marks.changed.is_empty(), "{marks:?}");
+        assert_eq!(marks.added.len(), 1, "{marks:?}");
+        assert_eq!(marks.removed, ["【0001】", "【0002】"]);
     }
 
     #[test]

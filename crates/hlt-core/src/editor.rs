@@ -1986,7 +1986,7 @@ impl EditorSession {
         figures: &crate::FigureSignatures,
     ) -> crate::AmendmentMarks {
         let mut now = self.paragraphs();
-        crate::number_unnumbered(&mut baseline, &mut now);
+        crate::number_for_comparison(&mut baseline, &mut now);
         crate::amendment_marks_with(&baseline, &now, figures, &self.figure_signatures())
     }
 

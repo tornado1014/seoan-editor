@@ -1,6 +1,7 @@
 #![allow(clippy::result_large_err)]
 
 mod amend_marks;
+mod baseline;
 mod batch;
 mod cancel;
 mod cell_format_edit;
@@ -8,7 +9,6 @@ mod claim_check;
 mod codec;
 mod container;
 mod cp949_safe;
-mod baseline;
 mod docx;
 mod docx_write;
 mod drawmark;
@@ -60,8 +60,9 @@ mod write;
 pub use amend_marks::{
     AmendRow, AmendmentMarks, BasisHit, CitationIssue, CitationKind, ClaimBasis, FigureSignatures,
     ParagraphMark, PhraseBasis, amendment_basis, amendment_marks, amendment_marks_with,
-    amendment_table, claim_citation_issues, claim_parents, number_unnumbered,
+    amendment_table, claim_citation_issues, claim_parents, number_for_comparison, number_unnumbered,
 };
+pub use baseline::docx_baseline;
 pub use batch::{BatchCheckRow, BatchRow, batch_generate_hlt, batch_submission_checks};
 pub use cancel::{CancellationToken, ProgressEvent, ProgressSink, ProgressTotals, VerifyOptions};
 pub use cell_format_edit::{
@@ -81,7 +82,6 @@ pub use cp949_safe::{
     Cp949Choices, Cp949Finding, Cp949Substitution, apply_cp949, cp949_safe_text, make_cp949_safe,
     scan_cp949, scan_cp949_text,
 };
-pub use baseline::docx_baseline;
 pub use docx::{
     DocxDocument, DocxMediaAsset, DocxPackageSummary, DocxPageBreak, inspect_docx_path,
     load_docx_image_payloads,
