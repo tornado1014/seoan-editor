@@ -294,7 +294,13 @@ pub fn align_inferred(
     let mut out: Vec<(usize, Pair)> = Vec::new();
     for (&t, &s) in &anchors {
         if theads[t].is_none() {
-            emit_paragraph(&mut out, &cx, (t, s), pinned.remove(&t).unwrap_or_default());
+            emit_paragraph(
+                &mut out,
+                &cx,
+                (t, s),
+                pinned.remove(&t).unwrap_or_default(),
+                false,
+            );
         }
     }
     // 닻 사이 구간: 문단 수가 같으면 차례로, 다르면 숫자 열이 유일하게 같은 것만.
@@ -308,7 +314,9 @@ pub fn align_inferred(
         let ss: Vec<usize> = ((w[0].1 + 1) as usize..w[1].1 as usize)
             .filter(|&i| scand(i))
             .collect();
-        let pairs: Vec<(usize, usize)> = if ts.len() == ss.len() {
+        // 차례로 채운 짝(ordered)은 닻이 아니라 순서가 근거다 — 숫자 증거가 있어야 문장 짝이 된다.
+        let ordered = ts.len() == ss.len();
+        let pairs: Vec<(usize, usize)> = if ordered {
             ts.into_iter().zip(ss).collect()
         } else {
             let tn: Vec<Vec<String>> = ts.iter().map(|&i| numbers(&target[i].text)).collect();
@@ -328,7 +336,7 @@ pub fn align_inferred(
             found
         };
         for (t, s) in pairs {
-            emit_paragraph(&mut out, &cx, (t, s), Vec::new());
+            emit_paragraph(&mut out, &cx, (t, s), Vec::new(), ordered);
         }
     }
 
@@ -442,15 +450,33 @@ fn add_ordered<T: Copy + Ord>(have: &mut Vec<(T, T)>, new: (T, T)) -> bool {
 }
 
 /// 짝지은 문단 하나(문장 칸 = 문장 번호) → 문장 짝 또는 문단 짝 하나.
+/// `ordered`: 닻 사이를 차례로 채워 짝지은 문단 — 문단 전체의 숫자 증거가 양쪽 비어 있지 않고 같을 때만 문장 짝 후보.
 fn emit_paragraph(
     out: &mut Vec<(usize, Pair)>,
     cx: &Ctx,
     (t, s): (usize, usize),
     mut pins: Vec<(usize, usize)>,
+    ordered: bool,
 ) {
     pins.sort_unstable();
     let units = |n: usize, p: usize| (0..n as u32).map(|k| (p, k)).collect::<Vec<_>>();
     let (tu, su) = (units(cx.tsent[t].len(), t), units(cx.ssent[s].len(), s));
+    if ordered {
+        let all = |texts: &[String]| texts.iter().flat_map(|x| evidence(x)).collect::<Vec<_>>();
+        let te = all(&tu
+            .iter()
+            .map(|&(p, k)| slice(&cx.target[p].text, cx.tsent[p][k as usize]))
+            .collect::<Vec<_>>());
+        let se = all(&su
+            .iter()
+            .map(|&(p, k)| {
+                strip_number_prefix(&slice(&cx.source[p], cx.ssent[p][k as usize])).to_string()
+            })
+            .collect::<Vec<_>>());
+        if te.is_empty() || te != se {
+            return paragraph_pair(out, cx, (t, s));
+        }
+    }
     emit_group(out, cx, &tu, &su, &pins, (t, s), false);
 }
 
@@ -512,20 +538,23 @@ fn emit_group(
         (ta, sa) = (a + 1, b + 1);
     }
     if segments.is_empty() {
-        let (t, s) = fallback;
-        out.push((
-            t,
-            Pair {
-                target_id: cx.target[t].id.clone(),
-                target_sentence: None,
-                source_paragraph: s as u32,
-                source_sentence: None,
-                grade: Grade::Paragraph,
-            },
-        ));
+        paragraph_pair(out, cx, fallback);
     } else {
         out.extend(segments);
     }
+}
+
+fn paragraph_pair(out: &mut Vec<(usize, Pair)>, cx: &Ctx, (t, s): (usize, usize)) {
+    out.push((
+        t,
+        Pair {
+            target_id: cx.target[t].id.clone(),
+            target_sentence: None,
+            source_paragraph: s as u32,
+            source_sentence: None,
+            grade: Grade::Paragraph,
+        },
+    ));
 }
 
 fn slice(text: &str, (s, e): (u32, u32)) -> String {

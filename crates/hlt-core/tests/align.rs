@@ -510,18 +510,18 @@ fn a_claim_numbered_ten_or_more_still_demotes_on_different_numerals() {
 fn leading_figure_numbers_must_agree_before_a_sentence_pair() {
     // 한 칸 밀린 도면 설명(한 자리 번호는 숫자 증거가 아니다)이 문장 짝으로 둔갑하면 안 된다.
     let target = [
-        para("a", "도 1은 장치의 도면이다.", None),
-        para("b", "도 2는 시스템의 도면이다.", None),
+        para("a", "도 1은 장치의 도면이다.", Some("0001")),
+        para("b", "도 2는 시스템의 도면이다.", Some("0002")),
     ];
     let shifted = strings(&[
-        "FIG. 2 shows a view of the device.",
-        "FIG. 3 shows a view of the system.",
+        "[0001] FIG. 2 shows a view of the device.",
+        "[0002] FIG. 3 shows a view of the system.",
     ]);
     let al = align_inferred(&target, &shifted, &[]);
     assert!(al.pairs.iter().all(|p| p.grade != Grade::Sentence));
     let right = strings(&[
-        "FIG. 1 shows a view of the device.",
-        "FIG. 2 shows a view of the system.",
+        "[0001] FIG. 1 shows a view of the device.",
+        "[0002] FIG. 2 shows a view of the system.",
     ]);
     let al = align_inferred(&target, &right, &[]);
     assert_eq!(al.pairs.len(), 2);
@@ -558,31 +558,31 @@ fn only_the_first_unit_of_a_claim_loses_its_leading_number() {
 #[test]
 fn a_label_on_only_one_side_does_not_demote() {
     // 「도 1을 참조하면」 ↔ 「Referring to FIG. 1」 — 원문은 낱말로 시작하지 않는다.
-    let target = [para("a", "도 1을 참조하면 장치가 보인다.", None)];
+    let target = [para("a", "도 1을 참조하면 장치가 보인다.", Some("0001"))];
     let al = align_inferred(
         &target,
-        &strings(&["Referring to FIG. 1, the device is seen."]),
+        &strings(&["[0001] Referring to FIG. 1, the device is seen."]),
         &[],
     );
     assert_eq!(al.pairs[0].grade, Grade::Sentence);
     // 반대: 원문만 「FIG. 2」 로 시작하고 역문은 낱말이 아니다.
-    let target = [para("a", "장치가 도시되어 있다.", None)];
-    let al = align_inferred(&target, &strings(&["FIG. 2 shows the device."]), &[]);
+    let target = [para("a", "장치가 도시되어 있다.", Some("0001"))];
+    let al = align_inferred(&target, &strings(&["[0001] FIG. 2 shows the device."]), &[]);
     assert_eq!(al.pairs[0].grade, Grade::Sentence);
 }
 
 #[test]
 fn a_figure_label_without_its_number_demotes() {
-    let target = [para("a", "도 1은 장치의 도면이다.", None)];
+    let target = [para("a", "도 1은 장치의 도면이다.", Some("0001"))];
     let al = align_inferred(
         &target,
-        &strings(&["FIG. shows a view of the device."]),
+        &strings(&["[0001] FIG. shows a view of the device."]),
         &[],
     );
     assert!(al.pairs.iter().all(|p| p.grade != Grade::Sentence));
     let al = align_inferred(
         &target,
-        &strings(&["FIGS. and show views of the device."]),
+        &strings(&["[0001] FIGS. and show views of the device."]),
         &[],
     );
     assert!(al.pairs.iter().all(|p| p.grade != Grade::Sentence));
@@ -590,8 +590,12 @@ fn a_figure_label_without_its_number_demotes() {
 
 #[test]
 fn fig_is_a_whole_word_check() {
-    let target = [para("a", "도 1은 비유적 표현이다.", None)];
-    let al = align_inferred(&target, &strings(&["FIGURATIVE language is used."]), &[]);
+    let target = [para("a", "도 1은 비유적 표현이다.", Some("0001"))];
+    let al = align_inferred(
+        &target,
+        &strings(&["[0001] FIGURATIVE language is used."]),
+        &[],
+    );
     assert_eq!(al.pairs[0].grade, Grade::Sentence);
 }
 
@@ -610,4 +614,91 @@ fn claim_lines_are_exempt_from_the_label_check() {
     let al = align_inferred(&target, &source, &[]);
     assert_eq!(al.pairs.len(), 2);
     assert!(al.pairs.iter().all(|p| p.grade == Grade::Sentence));
+}
+
+fn gap_fixture() -> ([EditorParagraph; 5], Vec<String>) {
+    // 표제 닻 둘 사이에 문단 셋씩 — 문장 수는 전부 둘, 숫자 · 원문 식별번호 없음.
+    let mut target = vec![para("h1", "【기술분야】", None)];
+    let mut source = vec!["Technical Field".to_string()];
+    for id in ["x", "y", "z"] {
+        target.push(para(id, "가 문장이다. 나 문장이다.", None));
+        source.push("First sentence. Second sentence.".to_string());
+    }
+    target.push(para("h2", "【배경기술】", None));
+    source.push("Background".to_string());
+    (target.try_into().ok().unwrap(), source)
+}
+
+#[test]
+fn order_filled_paragraphs_without_numeric_evidence_get_one_paragraph_pair() {
+    let (target, source) = gap_fixture();
+    let al = align_inferred(&target, &source, &[]);
+    for id in ["x", "y", "z"] {
+        let p = pair_summary(&al, id);
+        assert_eq!(p.len(), 1, "{id}");
+        assert_eq!(p[0].3, Grade::Paragraph, "{id}");
+    }
+}
+
+#[test]
+fn order_filled_paragraphs_with_the_same_numerals_get_sentence_pairs() {
+    let target = [
+        para("h1", "【기술분야】", None),
+        para("x", "장치(110)가 있다. 층이 있다.", None),
+        para("y", "기판(120)이 있다. 전극이 있다.", None),
+        para("h2", "【배경기술】", None),
+    ];
+    let source = strings(&[
+        "Technical Field",
+        "A device 110 exists. A layer exists.",
+        "A substrate 120 exists. An electrode exists.",
+        "Background",
+    ]);
+    let al = align_inferred(&target, &source, &[]);
+    for id in ["x", "y"] {
+        let p = pair_summary(&al, id);
+        assert_eq!(p.len(), 2, "{id}");
+        assert!(p.iter().all(|q| q.3 == Grade::Sentence), "{id}");
+    }
+    // 한쪽이 비었거나 다르면 문단 짝.
+    let other = strings(&[
+        "Technical Field",
+        "A device 110 exists. A layer exists.",
+        "A substrate 130 exists. An electrode exists.",
+        "Background",
+    ]);
+    let al = align_inferred(&target, &other, &[]);
+    assert_eq!(pair_summary(&al, "x").len(), 2);
+    assert_eq!(pair_summary(&al, "y"), [(None, 2, None, Grade::Paragraph)]);
+}
+
+#[test]
+fn directly_anchored_paragraphs_keep_sentence_pairs_without_numerals() {
+    let target = [
+        para("a", "가 문장이다. 나 문장이다.", Some("0001")),
+        para("b", "다 문장이다. 라 문장이다.", Some("0002")),
+    ];
+    let source = strings(&[
+        "[0001] First one. Second one.",
+        "[0002] Third one. Fourth one.",
+    ]);
+    let al = align_inferred(&target, &source, &[]);
+    assert_eq!(al.pairs.len(), 4);
+    assert!(al.pairs.iter().all(|p| p.grade == Grade::Sentence));
+}
+
+#[test]
+fn a_pinned_paragraph_keeps_sentence_pairs_without_numerals() {
+    let (target, mut source) = gap_fixture();
+    source.insert(1, "Extra.".into()); // 개수가 어긋나 차례 채움이 안 선다 — 핀이 닻
+    let pin = Pin {
+        target_id: "x".into(),
+        target_sentence: 0,
+        source_paragraph: 2,
+        source_sentence: 0,
+    };
+    let al = align_inferred(&target, &source, &[pin]);
+    let p = pair_summary(&al, "x");
+    assert_eq!(p.len(), 2);
+    assert!(p.iter().all(|q| q.3 == Grade::Sentence));
 }
