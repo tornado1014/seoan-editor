@@ -24,6 +24,8 @@ pub struct CheckObjects {
     pub cell_texts: Vec<String>,
     /// 최종본(.fin)에서 연 문서 — 보정으로 지운 청구항의 「삭제」는 정상이다.
     pub from_final: bool,
+    /// 줄 간격이 표준(280%)이 아닌 본문 문단.
+    pub nonstandard_spacing: BTreeSet<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -566,6 +568,32 @@ pub fn format_checks(paragraphs: &[EditorParagraph], objects: &CheckObjects) -> 
                     preview(text)
                 ),
             );
+        }
+    }
+    // 표준서식(매뉴얼 4.3.3 · 5.1.1): 본문 줄 간격 280% · 글자 12pt. 실물 228건에 하나도 없다.
+    for p in paragraphs {
+        let spacing = objects.nonstandard_spacing.contains(&p.id);
+        let sized: BTreeSet<u32> = p
+            .spans
+            .iter()
+            .filter_map(|s| s.size)
+            .filter(|z| *z != 12)
+            .collect();
+        if spacing || !sized.is_empty() {
+            let mut what = Vec::new();
+            if spacing {
+                what.push("줄 간격이 280%가 아닙니다".to_string());
+            }
+            if !sized.is_empty() {
+                let list: Vec<String> = sized.iter().map(|z| format!("{z}pt")).collect();
+                what.push(format!("글자 크기 {}", list.join(" · ")));
+            }
+            out.push(SubmitIssue {
+                kind: SubmitKind::Format,
+                code: None,
+                paragraph_id: Some(p.id.clone()),
+                detail: format!("「{}」 — {}", preview(&p.text), what.join(" · ")),
+            });
         }
     }
     // 매뉴얼 규칙이지만 이대로 접수된 실물이 있는 것(실물 최종본 228건 중 E-266 5 · E-249 2 · E-271 3 · E-215 3건) — 확인용.

@@ -176,6 +176,11 @@ beforeEach(() => {
       case 'editor_replace_texts':
       case 'editor_fix_double_spaces':
         return view(texts);
+      case 'editor_standardize_format':
+        return { view: view(texts), changed: 2 };
+      case 'editor_paste_picture':
+        texts.splice(Number(String(args!.after).split(':')[1]) + 1, 0, '_');
+        return view(texts);
       case 'editor_save_csv':
         return '/d/표.csv';
       case 'editor_read_review':
@@ -415,6 +420,44 @@ describe('page editing', () => {
     await settle(500);
     expect(calls.filter(([command]) => command === 'editor_paste_formatted')).toHaveLength(before);
     expect(texts).toEqual(['가H2O', 'x!글만나다', '라마']);
+  });
+
+  test('그림 붙이기: 글 없이 그림만 든 ⌘V → 흑백 · 우클릭 「그림 붙이기(색 그대로)」 → 원본 색 · 점검 창 「표준서식으로 모두 고치기」', async () => {
+    texts = ['가나다', '라마'];
+    const root = await open();
+    clickAt(root, 63, 104);
+    const png = new File([new Uint8Array([137, 80, 78, 71])], 'a.png', { type: 'image/png' });
+    const event = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', { value: { getData: () => '', files: [png] } });
+    root.querySelector('.caret-input')!.dispatchEvent(event);
+    await settle(50);
+    expect(last('editor_paste_picture')).toEqual([
+      'editor_paste_picture',
+      { after: 'paragraph:0', offset: null, pngBase64: btoa(String.fromCharCode(137, 80, 78, 71)), monochrome: true },
+    ]);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { read: async () => [{ types: ['image/png'], getType: async () => new Blob([new Uint8Array([1, 2])], { type: 'image/png' }) }] },
+      configurable: true,
+    });
+    clickAt(root, 63, 104);
+    root.querySelector('.nk-page')!.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 63 * SCALE, clientY: 104 * SCALE }),
+    );
+    await settle(10);
+    await menus.at(-1)!.find((item) => item.text === '그림 붙이기(색 그대로)')!.action!();
+    await settle(30);
+    expect(last('editor_paste_picture')![1]).toEqual(expect.objectContaining({ monochrome: false, pngBase64: btoa(String.fromCharCode(1, 2)) }));
+    // 제출 전 점검의 「표준서식」 묶음 → 모두 고치기.
+    submitAnswer = [{ kind: 'format', paragraph_id: 'paragraph:0', detail: '「가나다」 — 글자 크기 16pt' }];
+    root.querySelector<HTMLButtonElement>('[data-action="fin"]')!.click();
+    await settle(30);
+    const box = root.querySelector<HTMLFormElement>('.submit-ask')!;
+    box.querySelector<HTMLButtonElement>('.submit-fix-format')!.click();
+    await settle(30);
+    expect(last('editor_standardize_format')).toEqual(['editor_standardize_format', undefined]);
+    expect(box.textContent).toContain('2문단을 표준서식');
+    q(box, '.item-cancel').click();
+    await settle(10);
   });
 
   test('cmd/ctrl+enter breaks the page at the caret; tab types a tab instead of leaving the page', async () => {
@@ -1074,13 +1117,13 @@ describe('page editing', () => {
     expect(head[0]).toBe('파일');
     expect(head.slice(-2)).toEqual(['합계', '열지 못함']);
     const first = [...root.querySelectorAll('.batch-body tbody tr')][0];
-    expect([...first.querySelectorAll('td')].map((td) => td.textContent)).toEqual(['a.HLT', '0', '0', '0', '0', '0', '2', '1', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0', '3', '']);
+    expect([...first.querySelectorAll('td')].map((td) => td.textContent)).toEqual(['a.HLT', '0', '0', '0', '0', '0', '2', '1', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0', '0', '3', '']);
     expect(root.querySelector('.editor-status')!.textContent).toBe('폴더 제출 전 점검 — 2개 파일 · 걸린 파일 1');
     q(root, '.batch-csv').click();
     await settle(10);
     const [, args] = last('editor_save_csv')!;
     expect((args as { name: string }).name).toBe('제출 전 점검.csv');
-    expect((args as { text: string }).text.split('\r\n')[1]).toBe('"a.HLT","0","0","0","0","0","2","1","0","0","0","0","0","0","0","0","0","0","0","0","0","3",""');
+    expect((args as { text: string }).text.split('\r\n')[1]).toBe('"a.HLT","0","0","0","0","0","2","1","0","0","0","0","0","0","0","0","0","0","0","0","0","0","3",""');
   });
 
   test('toCsv: 따옴표 · 쉼표 · 줄바꿈이 든 칸', () => {

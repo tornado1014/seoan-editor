@@ -93,7 +93,7 @@ pub use edit::{
 };
 pub use editor::{
     EditorParagraph, EditorSession, EditorSpan, FigureKind, FindFormat, FindMatch, FindQuery,
-    ReplaceFormat, ReviewOutcome,
+    ReplaceFormat, ReviewOutcome, monochrome_png,
 };
 pub use error::{CoreError, ErrorCode};
 pub use export_fin::{

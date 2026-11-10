@@ -47,6 +47,8 @@ import {
   editorClaimIssues,
   editorClaimParents,
   editorSubmissionChecks,
+  editorStandardizeFormat,
+  editorPastePicture,
   editorExportFin,
   editorFind,
   editorReplace,
@@ -156,6 +158,7 @@ const SUBMIT_GROUPS: [SubmitIssueDto['kind'], string][] = [
   ['image', '도면 · 대표도 그림'],
   ['claim_body', '청구항 번호 · 내용'],
   ['table', '표'],
+  ['format', '표준서식과 다른 줄 간격 · 글자 크기(280% · 12pt)'],
 ];
 
 /** 표 → CSV(칸마다 따옴표 · 안의 따옴표는 둘로). */
@@ -1928,6 +1931,49 @@ export function mountEditor(root: HTMLElement): void {
     }));
   }
 
+  /** 표준서식으로 고침(통특기 매뉴얼 4.3.3): 본문 줄 간격 280% · 글자 12pt(되돌리기 한 번). 고친 문단 수(못 하면 null). */
+  async function standardizeFormat(): Promise<number | null> {
+    if (!canEdit()) return null;
+    let changed = 0;
+    await structural('표준서식으로 고침', async () => {
+      const result = await editorStandardizeFormat();
+      changed = result.changed;
+      return { next: result.view, caret };
+    });
+    say(changed ? `${changed}문단을 표준서식으로 고쳤습니다.` : '이미 표준서식입니다(줄 간격 280% · 12pt).');
+    return changed;
+  }
+
+  /** 그림 붙이기(통특기 매뉴얼 4.7.2): ⌘V 의 그림은 흑백 2색(「붙이기」) · 「색 그대로」는 원본 색(「이미지 붙이기 › Color」).
+   *  커서 문단 아래(표 칸이면 칸 안 그 자리). */
+  async function pastePicture(blob: Blob, monochrome: boolean) {
+    if (!caret || !canEdit()) return;
+    const { paragraph: at, offset } = caret;
+    const base64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+    await structural(monochrome ? '그림 붙이기(흑백)' : '그림 붙이기(색 그대로)', async () => ({
+      next: await editorPastePicture(at, isCell(at) ? offset : undefined, base64, monochrome),
+      caret: null,
+    }));
+  }
+
+  /** 클립보드에서 그림 하나(없으면 null) — 「그림 붙이기(색 그대로)」 메뉴. */
+  async function clipboardPicture(): Promise<Blob | null> {
+    try {
+      for (const item of await navigator.clipboard.read()) {
+        const type = item.types.find((value) => value.startsWith('image/'));
+        if (type) return await item.getType(type);
+      }
+    } catch {
+      /* 권한 · 빈 클립보드 */
+    }
+    return null;
+  }
+
   /** 식별항목 삭제(통특기 「단락삭제」 창): 종류 + 번호(쉼표 · 범위)를 묻고 지운다. 커서가 표제 위면 그 종류 · 번호를 채워 둔다.
    *  【청구항 N】은 내용 문단까지 지운다(통특기와 같다) · 뒤 번호는 그대로. 커서는 지운 첫 표제의 앞 문단 끝으로. */
   async function removeItem() {
@@ -2363,7 +2409,9 @@ export function mountEditor(root: HTMLElement): void {
           const fix =
             kind === 'spacing' && issues.some((issue) => issue.kind === kind && issue.detail.startsWith('공백 두 칸'))
               ? '<button type="button" class="submit-fix-spaces">공백 두 칸 → 한 칸으로 모두 고치기</button>'
-              : '';
+              : kind === 'format'
+                ? '<button type="button" class="submit-fix-format">표준서식으로 모두 고치기</button>'
+                : '';
           return rows ? `<fieldset><legend>${title}</legend>${fix}<ul>${rows}</ul></fieldset>` : '';
         })
         .join('')}
@@ -2389,6 +2437,19 @@ export function mountEditor(root: HTMLElement): void {
       box.querySelector('.item-cancel')!.addEventListener('click', () => done(false));
       box.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') done(false);
+      });
+      box.querySelector<HTMLButtonElement>('.submit-fix-format')?.addEventListener('click', async (event) => {
+        const button = event.currentTarget as HTMLButtonElement;
+        if (!canEdit()) return;
+        button.disabled = true;
+        const changed = await standardizeFormat();
+        if (changed === null) return;
+        button.closest('fieldset')!.querySelector('ul')!.remove();
+        button.replaceWith(
+          Object.assign(document.createElement('p'), {
+            textContent: osKeys(`${changed}문단을 표준서식(줄 간격 280% · 12pt)으로 고쳤습니다(⌘Z로 되돌리기).`),
+          }),
+        );
       });
       box.querySelector<HTMLButtonElement>('.submit-fix-spaces')?.addEventListener('click', async (event) => {
         const button = event.currentTarget as HTMLButtonElement;
@@ -2651,6 +2712,15 @@ export function mountEditor(root: HTMLElement): void {
           enabled: caret !== null && editable,
           action: () => void insertPicture(),
         },
+        {
+          text: '그림 붙이기(색 그대로)',
+          enabled: caret !== null && editable,
+          action: async () => {
+            const blob = await clipboardPicture();
+            if (blob) await pastePicture(blob, false).catch((error) => fail('그림 붙이기', error));
+            else say('클립보드에 그림이 없습니다.');
+          },
+        },
         { text: '그림 크기…', enabled: picture !== null && editable, action: () => picture && void pictureSize(picture) },
         {
           text: '그림 바꾸기…',
@@ -2668,6 +2738,12 @@ export function mountEditor(root: HTMLElement): void {
   input.addEventListener('paste', (event) => {
     event.preventDefault();
     const text = event.clipboardData?.getData('text/plain').replace(/\r\n?/g, '\n') ?? '';
+    // 글 없이 그림만 든 클립보드(캡처 · 그림 복사) → 흑백 그림으로(통특기 「붙이기」와 같다).
+    const picture = [...(event.clipboardData?.files ?? [])].find((file) => file.type.startsWith('image/'));
+    if (!text && picture) {
+      void pastePicture(picture, true).catch((error) => fail('그림 붙이기', error));
+      return;
+    }
     // 서식이 있는 HTML(워드 · 서안 복사)이면 서식째 · 아니면(표 칸 포함) 글만.
     const runs = caret && !isCell(caret.paragraph) ? htmlRuns(event.clipboardData?.getData('text/html') ?? '') : null;
     if (runs) {
@@ -3490,6 +3566,7 @@ export function mountEditor(root: HTMLElement): void {
         showTable('문서 통계', ['항목', '값'], rows.map((cells) => ({ cells })), 'stats-shade');
       },
     },
+    { label: '표준서식으로 고침', run: () => void standardizeFormat() },
     { label: osKeys('다음 고친 곳 (⌘])'), run: () => void jumpEdit(true) },
     { label: osKeys('앞 고친 곳 (⌘[)'), run: () => void jumpEdit(false) },
     { label: '보정 전후 대비표…', run: () => void comparisonTable() },

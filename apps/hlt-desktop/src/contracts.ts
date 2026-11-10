@@ -399,10 +399,16 @@ export type SubmitKindDto =
   | 'heading_style'
   | 'image'
   | 'claim_body'
-  | 'table';
+  | 'table'
+  | 'format';
 /** 제출 전 점검 한 줄(가 볼 문단 · 없으면 문서 전체의 일 · 통특기 매뉴얼 오류코드가 있으면 `code`). */
 export type SubmitIssueDto = { kind: SubmitKindDto; code?: string; paragraph_id: string | null; detail: string };
 export const editorSubmissionChecks = () => invoke<SubmitIssueDto[]>('editor_submission_checks');
+/** 표준서식으로 고침(본문 줄 간격 280% · 글자 12pt · 되돌리기 한 번) · changed = 고친 문단 수. */
+export const editorStandardizeFormat = () => invoke<{ view: EditorViewDto; changed: number }>('editor_standardize_format');
+/** 그림 붙이기(클립보드): monochrome = 흑백 2색(통특기 「붙이기」) · 아니면 원본 색. offset 이 있으면 after = 표 칸. */
+export const editorPastePicture = (after: string, offset: number | undefined, pngBase64: string, monochrome: boolean) =>
+  invoke<EditorViewDto>('editor_paste_picture', { after, offset: offset ?? null, pngBase64, monochrome });
 /** 보정 근거 후보: 보정 전 명세서 식별번호 문단 · 점수(통째로면 1) · 인용 문장 · 그 문단의 도면. */
 export type BasisHitDto = { number: string; score: number; exact: boolean; quote: string; figures: string[] };
 export type ClaimBasisDto = { claim: number; added: boolean; phrases: { text: string; hits: BasisHitDto[] }[] };

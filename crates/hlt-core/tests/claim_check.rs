@@ -256,6 +256,13 @@ fn submission_checks_on_submitted_finals() {
                     path.file_name().unwrap().to_string_lossy()
                 ));
             }
+            // 표준서식(줄 간격 280% · 12pt)도 접수본엔 하나도 없어야 한다.
+            if issue.kind == hlt_core::SubmitKind::Format {
+                coded.push(format!(
+                    "서식 {}",
+                    path.file_name().unwrap().to_string_lossy()
+                ));
+            }
         }
         let mut kinds = std::collections::BTreeSet::new();
         for issue in &issues {

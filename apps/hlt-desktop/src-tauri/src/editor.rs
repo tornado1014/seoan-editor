@@ -689,6 +689,57 @@ pub async fn editor_fix_double_spaces(
     })
 }
 
+/// 표준서식으로 고침(본문 줄 간격 280% · 글자 12pt · 되돌리기 한 번). 고친 문단 수는 화면이 고친 뒤 점검으로 안다.
+#[tauri::command]
+pub async fn editor_standardize_format(
+    window: Window,
+    state: State<'_, EditorState>,
+) -> Result<StandardizedDto, CoreError> {
+    with_session(&state, &window, |session| {
+        let changed = session.standardize_format()?;
+        let title = title(session);
+        Ok(StandardizedDto {
+            view: view(session, title),
+            changed,
+        })
+    })
+}
+
+#[derive(serde::Serialize)]
+pub struct StandardizedDto {
+    view: EditorViewDto,
+    changed: usize,
+}
+
+/// 그림 붙이기(클립보드 그림 · 통특기 매뉴얼 4.7.2): `monochrome` 이면 흑백 2색(「붙이기」), 아니면 원본 색(「이미지 붙이기 › Color」).
+/// `offset` 이 있으면 `after` = 표 칸 id 의 그 자리.
+#[tauri::command]
+pub async fn editor_paste_picture(
+    window: Window,
+    state: State<'_, EditorState>,
+    after: String,
+    offset: Option<usize>,
+    png_base64: String,
+    monochrome: bool,
+) -> Result<EditorViewDto, CoreError> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(png_base64)
+        .map_err(|_| CoreError::new(ErrorCode::UnsupportedFormat, "picture", false))?;
+    let bytes = if monochrome {
+        hlt_core::monochrome_png(&bytes)?
+    } else {
+        bytes
+    };
+    with_session(&state, &window, |session| {
+        match offset {
+            Some(offset) => session.insert_picture_in_cell(&after, offset, &bytes)?,
+            None => session.insert_picture(&after, &bytes)?,
+        }
+        let title = title(session);
+        Ok(view(session, title))
+    })
+}
+
 /// 부호 목록(상세설명 「이름(부호)」 · 【부호의 설명】 — 부호 숫자 차례).
 #[tauri::command]
 pub async fn editor_sign_table(

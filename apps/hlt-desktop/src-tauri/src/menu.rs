@@ -9,12 +9,13 @@ use tauri::menu::{Menu, MenuBuilder, MenuItem, Submenu, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
 /// 「도구」 메뉴 — 화면 `TOOLS` 이름과 같아야 한다(화면 테스트가 대조한다).
-pub const TOOLS: [&str; 9] = [
+pub const TOOLS: [&str; 10] = [
     "청구항 번호 다시 매기기…",
     "도면 번호 다시 매기기…",
     "부호 목록",
     "되풀이 문장 찾기",
     "문서 통계",
+    "표준서식으로 고침",
     "다음 고친 곳 (⌘])",
     "앞 고친 곳 (⌘[)",
     "보정 전후 대비표…",

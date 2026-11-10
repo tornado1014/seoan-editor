@@ -50,6 +50,8 @@ pub enum SubmitKind {
     ClaimBody,
     /// 표 칸 안 【】 · 표 제목 · 그림 표(E-203 · E-215 · E-271).
     Table,
+    /// 표준서식과 다른 본문 줄 간격(280% 아님) · 글자 크기(12pt 아님) — 「표준서식으로 고침」이 고친다.
+    Format,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

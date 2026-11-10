@@ -1279,6 +1279,47 @@ impl EditorSession {
         self.insert_heading_pairs(&at, before, &text, std::slice::from_ref(&text), false)
     }
 
+    /// 표준서식으로 고침(통특기 매뉴얼 4.3.3): 표 아닌 문단의 줄 간격을 280%, 글자 크기를 기본(12pt)으로 — 한 고침.
+    /// 고친 문단 수. ponytail: 표 칸(10pt · 130%)은 실물로 재 본 뒤에 — 지금은 본문만.
+    pub fn standardize_format(&mut self) -> Result<usize, CoreError> {
+        let mut changed = 0;
+        let paragraphs = self.paragraphs();
+        let needed = paragraphs
+            .iter()
+            .any(|p| p.spans.iter().any(|span| nonstandard_size(span.size)))
+            || self
+                .document
+                .paragraphs
+                .iter()
+                .any(|p| nonstandard_spacing(p.lspace));
+        if !needed {
+            return Ok(0);
+        }
+        self.edit_model(|model| {
+            for paragraph in model.paragraphs.iter_mut().filter(|p| p.table_id.is_none()) {
+                let mut touched = false;
+                if nonstandard_spacing(paragraph.lspace) {
+                    paragraph.lspace = STANDARD_LSPACE;
+                    touched = true;
+                }
+                for inline in &mut paragraph.inlines {
+                    if let HmlInline::Text { size, .. } = inline
+                        && nonstandard_size(*size)
+                    {
+                        *size = None;
+                        touched = true;
+                    }
+                }
+                if touched {
+                    paragraph.source_line_bytes.clear();
+                    changed += 1;
+                }
+            }
+            Ok(())
+        })?;
+        Ok(changed)
+    }
+
     /// 표제 빼기(새 명세서 선택사항 — 통특기 「도면 포함」 · 「청구범위 제출유예」): 이름이 `names` 인 표제(번호 표제는
     /// 밑 이름으로 — 「도」 = 【도 N】)와 바로 뒤 빈 본문 한 문단을 뺀다(한 고침). 그 본문에 글 · 그림 · 표가 있으면 거부.
     pub fn remove_headings(&mut self, names: &[&str]) -> Result<(), CoreError> {
@@ -2043,6 +2084,13 @@ impl EditorSession {
                 .collect(),
             cell_texts: self.cell_texts().into_values().collect(),
             from_final: self.from_final,
+            nonstandard_spacing: self
+                .document
+                .paragraphs
+                .iter()
+                .filter(|p| nonstandard_spacing(p.lspace))
+                .map(|p| p.id.clone())
+                .collect(),
         };
         issues.extend(crate::format_checks(&paragraphs, &objects));
         if self.package_sequence
@@ -3503,6 +3551,33 @@ fn set_text_keeping_formats(paragraph: &mut crate::HmlParagraph, text: &str) {
     paragraph.source_line_bytes.clear();
 }
 
+/// 그림을 흑백 2색으로(통특기 「붙이기」 — 컬러 · 회색조 그림도 흑백이 된다 · 매뉴얼 4.7.2): 밝기 128 문턱 → 0/255 회색조 PNG.
+pub fn monochrome_png(bytes: &[u8]) -> Result<Vec<u8>, CoreError> {
+    let mut luma = image::load_from_memory(bytes)
+        .map_err(|_| editor_error("figure_image"))?
+        .to_luma8();
+    for pixel in luma.pixels_mut() {
+        pixel.0[0] = if pixel.0[0] < 128 { 0 } else { 255 };
+    }
+    let mut png = Vec::new();
+    luma.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(|_| editor_error("figure_image"))?;
+    Ok(png)
+}
+
+/// 표준 줄 간격(%) — 통특기 매뉴얼 4.3.3 · 실물 본문 문단 47,297개가 전부 이 값.
+pub(crate) const STANDARD_LSPACE: u32 = 280;
+
+/// 표준(12pt)이 아닌 글자 크기 — 다시 구운 문서는 12pt 도 값으로 적는다.
+pub(crate) fn nonstandard_size(size: Option<u32>) -> bool {
+    size.is_some_and(|size| size != 12)
+}
+
+/// 표준이 아닌 줄 간격(0 은 문서 끝 문단 — 실물 파일마다 하나).
+pub(crate) fn nonstandard_spacing(lspace: u32) -> bool {
+    lspace != 0 && lspace != STANDARD_LSPACE
+}
+
 pub(crate) fn editor_error(reason: &str) -> CoreError {
     let mut error = CoreError::new(ErrorCode::StructureInvalid, "editor", false);
     error.details.insert("reason".into(), reason.into());
@@ -3512,6 +3587,85 @@ pub(crate) fn editor_error(reason: &str) -> CoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 표준서식으로 고침: 줄 간격 · 글자 크기가 다른 본문 문단을 280% · 12pt 로(한 고침 · 되돌리기 한 번) — 고치기 전엔
+    /// 점검(Format)이 걸리고 뒤엔 0.
+    #[test]
+    fn standardize_format_restores_line_spacing_and_size() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("s.HLT");
+        crate::save_new_specification(
+            &path,
+            crate::SpecKind::Patent,
+            crate::SpecOptions::default(),
+        )
+        .unwrap();
+        let mut session = EditorSession::open(&path).unwrap();
+        let body = session.paragraphs()[2].id.clone();
+        session
+            .replace_text(&body, "본 고안은 시험 장치에 관한 것이다.")
+            .unwrap();
+        session.set_size(&body, 0, 4, 16).unwrap();
+        session
+            .edit_model(|model| {
+                let at = model
+                    .paragraphs
+                    .iter()
+                    .position(|p| p.text.starts_with("본 고안"))
+                    .unwrap();
+                model.paragraphs[at].lspace = 160;
+                Ok(())
+            })
+            .unwrap();
+        let formats = |session: &EditorSession| {
+            session
+                .submission_checks()
+                .into_iter()
+                .filter(|issue| issue.kind == crate::SubmitKind::Format)
+                .count()
+        };
+        assert_eq!(
+            formats(&session),
+            1,
+            "고치기 전: 줄 간격 · 글자 크기가 한 문단에"
+        );
+        assert_eq!(session.standardize_format().unwrap(), 1);
+        assert_eq!(formats(&session), 0);
+        assert!(
+            session
+                .paragraphs()
+                .iter()
+                .all(|p| p.spans.iter().all(|s| !nonstandard_size(s.size)))
+        );
+        assert_eq!(
+            session.standardize_format().unwrap(),
+            0,
+            "이미 표준이면 고침 없음"
+        );
+        session.undo().unwrap();
+        assert_eq!(formats(&session), 1, "되돌리기 한 번에 둘 다");
+    }
+
+    /// 흑백 붙이기: 컬러 그림이 0/255 두 값뿐인 회색조가 된다.
+    #[test]
+    fn monochrome_png_has_two_levels() {
+        let mut color = image::RgbImage::new(4, 1);
+        for (x, rgb) in [[250, 10, 10], [10, 200, 30], [120, 120, 120], [20, 20, 20]]
+            .into_iter()
+            .enumerate()
+        {
+            color.put_pixel(x as u32, 0, image::Rgb(rgb));
+        }
+        let mut png = Vec::new();
+        color
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let out = image::load_from_memory(&monochrome_png(&png).unwrap()).unwrap();
+        assert_eq!(out.color(), image::ColorType::L8);
+        let values: Vec<u8> = out.to_luma8().pixels().map(|p| p.0[0]).collect();
+        assert!(values.iter().all(|v| *v == 0 || *v == 255), "{values:?}");
+        assert!(values.contains(&0) && values.contains(&255));
+    }
 
     /// 저장 뒤 되읽기: 고친 판을 덮어쓰면 통과하고 저장한 판이 된다. 제자리 파일이 다른 바이트 · 다른 글이면 거절한다.
     #[test]
