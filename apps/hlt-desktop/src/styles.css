@@ -179,7 +179,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 
 /* 책상과 종이: 위에서 빛이 드는 책상 · 종이는 가장자리 한 줄과 부드러운 그림자로 놓인다. */
 .editor-pages { overflow: auto; background: var(--desk); padding: 2rem 1.5rem 3.5rem; display: flex; flex-direction: column; align-items: center; gap: 1.6rem; }
-.editor-center { grid-column: 2; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.editor-center { position: relative; grid-column: 2; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .editor-center > .editor-pages { flex: 1; min-height: 0; }
 /* 고정 창: 쪽 위의 읽기 전용 두 번째 보기 — 높이는 설정(손잡이로 끌어 바꿈). */
 .editor-pinned { flex: none; display: flex; flex-direction: column; height: 220px; background: var(--surface); border-bottom: 1px solid var(--line); }
@@ -483,12 +483,12 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 .drop-target { outline: 2px dashed var(--accent); outline-offset: -6px; }
 .editor-source.drop-source { background: var(--accent-soft); }
 
-/* 상시 점검: 쪽 왼쪽 여백 동그라미(배치에 끼지 않는 절대 위치) + 상태 띠 */
+/* 상시 점검: 쪽 왼쪽 여백 동그라미(배치에 끼지 않는 절대 위치) + 상태 띠(가운데 열 안쪽 왼쪽 아래 — 배율 상자는 같은 열 오른쪽 아래, 원문 창은 다른 열이라 서로 안 덮는다) */
 .nk-live { position: absolute; padding: 0; border: 0; border-radius: 50%; cursor: pointer; opacity: .85; }
 .nk-live:hover { opacity: 1; }
 .nk-live.error { background: var(--error); }
 .nk-live.warning { background: var(--warn-ink); }
-.live-strip { position: fixed; right: 1rem; bottom: 14px; z-index: 6; padding: .3rem .75rem; border: 1px solid var(--line, currentColor); border-radius: 999px; background: color-mix(in srgb, var(--surface) 90%, transparent); box-shadow: var(--lift-1); font-size: 12px; cursor: pointer; color: var(--muted); }
+.live-strip { position: absolute; left: 1rem; bottom: 14px; z-index: 6; padding: .3rem .75rem; border: 1px solid var(--line, currentColor); border-radius: 999px; background: color-mix(in srgb, var(--surface) 90%, transparent); box-shadow: var(--lift-1); font-size: 12px; cursor: pointer; color: var(--muted); }
 .live-strip.has-error { color: var(--error); }
 .live-strip.has-warning { color: var(--warn-ink); }
 .live-strip[hidden] { display: none; }

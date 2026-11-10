@@ -56,6 +56,12 @@ export function createSourceSync(o: {
   markTarget(range: { paragraph: string; start: number; end: number } | null, grade: 'sentence' | 'paragraph'): void;
   pin(pin: PinDto): Promise<AlignmentDto>;
   say(text: string): void;
+  /** 실패 안내(`라벨 실패: 까닭` 을 상태줄 · 오류 띠에). 없으면 `say` 로 까닭만. */
+  fail?(label: string, error: unknown): void;
+  /** 지금 화면 판 번호 — 이와 다른 판의 정렬 결과(손 고정 · 지우기 답)는 낡은 것이라 쓰지 않는다. */
+  revision?(): number;
+  /** 낡은 결과를 버렸다 — 새 정렬을 다시 받아 달라고. */
+  resync?(): void;
   /** 문서 차례의 문단 id — 짝 없는 문단에서 앞쪽 가장 가까운 짝 문단을 찾는 데 쓴다. */
   paragraphs(): string[];
   /** 커서가 지금 화면에 보이는가(보이면 커서가 이기고 `followTop` 은 아무것도 안 한다). */
@@ -66,6 +72,12 @@ export function createSourceSync(o: {
   menu?(items: { text: string; action(): void }[]): void;
 }) {
   let alignment: AlignmentDto | null = null;
+  /** 역문 문단 → 그 문단의 첫 짝(정렬을 받을 때 한 번 만든다 — 스크롤 프레임마다 짝 목록을 훑지 않게). */
+  let firstPair = new Map<string, PairDto>();
+  const indexPairs = (a: AlignmentDto) => {
+    firstPair = new Map();
+    for (const pair of a.pairs) if (!firstPair.has(pair.target_id)) firstPair.set(pair.target_id, pair);
+  };
   let shown = false;
   let lastKey = '';
   /** 고친 뒤 새 정렬이 올 때까지 참 — 옛 범위가 새 글 위에 앉으니 칠하지 않는다. */
@@ -110,10 +122,18 @@ export function createSourceSync(o: {
     if (!alignment) return null;
     const ids = o.paragraphs();
     for (let at = ids.indexOf(id); at >= 0; at -= 1) {
-      const pair = alignment.pairs.find((each) => each.target_id === ids[at]);
+      const pair = firstPair.get(ids[at]);
       if (pair) return o.pane.querySelector<HTMLElement>(`p[data-p="${pair.source_paragraph}"]`);
     }
     return null;
+  }
+
+  /** 고쳤다 — 새 정렬(`update`)이 올 때까지 칠한 것을 거둔다(칸 글은 그대로). */
+  function invalidate() {
+    stale = true;
+    lastKey = '';
+    clear();
+    o.markTarget(null, 'sentence');
   }
 
   function follow() {
@@ -155,7 +175,8 @@ export function createSourceSync(o: {
       update(next);
       o.say(next.dropped_pins.some((dropped) => same(dropped, pin)) ? '이 고정은 적용되지 않았습니다(다른 청구항이거나 앞뒤 고정과 차례가 어긋납니다).' : '');
     } catch (error) {
-      o.say(`손 고정에 실패했습니다 — ${error instanceof Error ? error.message : String(error)}`);
+      if (o.fail) o.fail('손 고정', error);
+      else o.say(`손 고정 실패: ${error instanceof Error ? error.message : JSON.stringify(error)}`);
     }
   }
 
@@ -183,9 +204,16 @@ export function createSourceSync(o: {
   });
 
   function update(a: AlignmentDto) {
+    if (o.revision && a.revision !== o.revision()) {
+      // 낡은 판의 결과 — 그리지 않고(`stale` 을 거짓으로 만들지 않고) 새 정렬을 다시 받는다.
+      invalidate();
+      o.resync?.();
+      return;
+    }
     const scroll = o.pane.scrollTop;
     alignment = a;
     stale = false;
+    indexPairs(a);
     render(a);
     o.pane.scrollTop = scroll;
     o.changed?.(a);
@@ -198,6 +226,7 @@ export function createSourceSync(o: {
       lastKey = '';
       stale = false;
       alignment = a;
+      indexPairs(a);
       render(a);
       o.pane.scrollTop = 0;
       o.changed?.(a);
@@ -214,16 +243,12 @@ export function createSourceSync(o: {
       lastKey = key;
     },
     /** 고쳤다 — 새 정렬(`update`)이 올 때까지 칠한 것을 거둔다(칸 글은 그대로). */
-    invalidate() {
-      stale = true;
-      lastKey = '';
-      clear();
-      o.markTarget(null, 'sentence');
-    },
+    invalidate,
     close() {
       shown = false;
       stale = false;
       alignment = null;
+      firstPair = new Map();
       lastKey = '';
       o.pane.replaceChildren();
       o.markTarget(null, 'sentence');

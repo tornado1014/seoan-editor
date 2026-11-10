@@ -385,7 +385,6 @@ export function mountEditor(root: HTMLElement): void {
         </div>
         <span class="seal" aria-hidden="true">書案</span>
         <span class="editor-status" aria-live="polite"></span>
-        <button type="button" class="live-strip" hidden title="제출 전 점검 목록을 엽니다(문서는 바뀌지 않습니다)"></button>
         <button type="button" class="review-left" hidden title="걸지 않은 오기 정정 — 누를 때마다 다음 정정을 찾기 막대로"></button>
         <span class="editor-error" role="alert" hidden title="눌러서 닫기"></span>
       </div>
@@ -435,6 +434,7 @@ export function mountEditor(root: HTMLElement): void {
           <section class="editor-pinned" hidden aria-label="고정 창"></section>
           <div class="pinned-grip" hidden role="separator" aria-orientation="horizontal" title="끌어서 고정 창 높이를 바꿉니다"></div>
           <div class="editor-pages" tabindex="0"></div>
+          <button type="button" class="live-strip" hidden title="제출 전 점검 목록을 엽니다(문서는 바뀌지 않습니다)"></button>
         </div>
         <section class="desk-empty" aria-labelledby="desk-title">
           <h1 id="desk-title" class="desk-mark" lang="ko-Hani" aria-label="서안">書案</h1>
@@ -705,6 +705,7 @@ export function mountEditor(root: HTMLElement): void {
       liveStrip.hidden = true;
       pagesRoot.querySelectorAll('.nk-live').forEach((mark) => mark.remove());
     } else if (opening) {
+      live.stop(); // 옛 문서의 늦은 점검 결과가 새 문서 위에 그려지지 않게(같은 탭 문서 교체)
       liveMarks.clear();
       liveStrip.hidden = true;
       void live.now();
@@ -742,7 +743,14 @@ export function mountEditor(root: HTMLElement): void {
       mark.style.width = mark.style.height = `${14 * scale}px`;
       // 식별번호([0001] 8pt 바탕체 ≈ 24~28pt 폭)는 margin-31 ~ margin-3 에 오른쪽 맞춤 — 동그라미는 margin-56 ~ margin-42 로 겹치지 않는다.
       // 쪽을 누르면 커서가 놓인다 — 이 동그라미는 커서를 건드리지 않고 점검 창만 연다.
-      mark.addEventListener('mousedown', (event) => event.stopPropagation());
+      mark.addEventListener('mousedown', (event) => {
+        event.stopPropagation();
+        event.preventDefault(); // 포커스를 입력 칸에 둔다(한글 조합이 끝나지 않게)
+      });
+      mark.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        event.stopPropagation(); // 쪽 메뉴를 띄우지 않는다
+      });
       mark.addEventListener('click', (event) => {
         event.stopPropagation();
         void openChecks(issues[0].paragraph_id);
@@ -800,6 +808,12 @@ export function mountEditor(root: HTMLElement): void {
   const baseName = () =>
     fromOriginal() ? '원출원' : amendBase.value === 'history' ? historyOption.textContent! : fromFile() ? fileOption.textContent! : '연 뒤 고친 것';
   let lastBase = '';
+  /** 문서가 바뀌면(닫기 · 같은 탭에서 다른 문서) 기준도 처음으로 — 옛 문서의 기준이 남아 틀린 안내가 나가지 않게. */
+  function resetAmendBase() {
+    amendBase.value = lastBase = '';
+    fileOption.textContent = '다른 파일…';
+    historyOption.textContent = '이전 판…';
+  }
   amendBase.addEventListener('change', async () => {
     if (amendBase.value === 'history') {
       // 「이전 판…」: 이전 판 창을 고르기 모드로(닫으면 앞 기준으로).
@@ -883,7 +897,10 @@ export function mountEditor(root: HTMLElement): void {
     // 쪽 상자를 새로 짓는데(keepScroll 거짓) 보기 객체가 다르면 다른 문서다(배율 바꿈은 같은 객체로 다시 짓는다).
     const newDocument = !keepScroll && view !== null && next !== view;
     const opening = view === null || newDocument;
-    if (newDocument) closeSource();
+    if (newDocument) {
+      closeSource();
+      resetAmendBase();
+    }
     view = next;
     deskEmpty.hidden = true;
     const replaced = next.cp949_substitutions ?? [];
@@ -950,6 +967,7 @@ export function mountEditor(root: HTMLElement): void {
     planned = new Map();
     window.clearTimeout(autosaveTimer);
     closeSource();
+    resetAmendBase();
     hidePinned();
     live.stop();
     liveMarks.clear();
@@ -1008,7 +1026,7 @@ export function mountEditor(root: HTMLElement): void {
         label.append(note);
       }
       label.addEventListener('click', () => {
-        if (node.id) jumpTo(node.id);
+        if (node.id) goAndFocus(node.id);
         else pageHost(0)?.scrollIntoView();
       });
       if (node.id) outlineMarks.push({ index: order.get(node.id) ?? 0, label });
@@ -1068,7 +1086,7 @@ export function mountEditor(root: HTMLElement): void {
   const pinnedButton = q<HTMLButtonElement>('[data-action="pinned"]');
   const pinned = createPinnedPane(pinnedHost, {
     go(id, withCaret) {
-      if (withCaret) return jumpTo(id);
+      if (withCaret) return goAndFocus(id);
       const page = view?.paragraph_pages[id];
       if (page !== undefined) pageHost(page)?.scrollIntoView({ block: 'start' });
     },
@@ -1088,7 +1106,10 @@ export function mountEditor(root: HTMLElement): void {
     pinnedButton.setAttribute('aria-pressed', 'false');
   }
   const PINNED_MIN = 80;
+  // 손잡이를 잡아도 입력 칸의 포커스가 빠지지 않게(한글 조합이 끝나지 않게) — 포커스 이동은 mousedown 의 기본 동작이다.
+  pinnedGrip.addEventListener('mousedown', (event) => event.preventDefault());
   pinnedGrip.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
     const startY = event.clientY;
     const startHeight = pinnedHost.offsetHeight;
     pinnedGrip.setPointerCapture?.(event.pointerId);
@@ -1172,13 +1193,16 @@ export function mountEditor(root: HTMLElement): void {
   const sourceSync = createSourceSync({
     pane: q<HTMLElement>('.source-body'),
     caret: () => caret,
-    go: (paragraph, offset) => jumpTo(paragraph, offset),
+    go: (paragraph, offset) => goAndFocus(paragraph, offset),
     markTarget(range, grade) {
       targetMark = range ? { range, grade } : null;
       drawTargetMark();
     },
     pin: editorSourcePin,
     say,
+    fail,
+    revision: () => view?.revision ?? 0,
+    resync: () => sourceAlign.touch(),
     paragraphs: () => view?.paragraphs.map((paragraph) => paragraph.id) ?? [],
     caretVisible,
     changed: drawHead,
@@ -1191,7 +1215,8 @@ export function mountEditor(root: HTMLElement): void {
   const sourceAlign = createRevisionedFetch<AlignmentDto>({
     fetch: () => (root.isConnected ? editorSourceAlign() : Promise.reject(new Error('닫힌 편집기'))),
     revision: () => view?.revision ?? 0,
-    apply: (next) => sourceSync.update(next),
+    // 아직 보내지 않은 글(dirtyId)이 있으면 이 정렬은 곧 낡는다 — 적용을 미루고 다시 받는다(최대 0.4초 밀린 강조를 그리지 않는다).
+    apply: (next) => (dirtyId ? sourceAlign.touch() : sourceSync.update(next)),
     delayMs: 600,
   });
   /** 커서 줄이 지금 쪽 칸(스크롤 창) 안에 보이는가. */
@@ -1368,6 +1393,11 @@ export function mountEditor(root: HTMLElement): void {
     if (page !== undefined) pageHost(page)?.scrollIntoView({ block: 'start' });
     revealBlock = 'center';
     place({ paragraph: id, offset }, false);
+  }
+  /** 옆 창(구조 · 고정 · 원문)에서 눌러 커서를 옮길 때: 입력 포커스를 숨은 입력 칸으로 돌려 바로 이어 칠 수 있게(쪽을 누를 때의 mousedown 처럼). */
+  function goAndFocus(id: string, offset = 0) {
+    jumpTo(id, offset);
+    input.focus({ preventScroll: true });
   }
   /** 화면 맨 위에 보이는 문단(그린 쪽의 줄 자리로 · 못 정하면 `null`). */
   function topParagraph(): string | null {

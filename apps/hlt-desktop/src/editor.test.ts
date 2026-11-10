@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { EditorViewDto, PlannedImageDto, PlannedPageDto } from './contracts';
 import { AUTOSAVE_MS, basisDraft, goTarget, mountEditor, toCsv } from './editor';
 import { sectionOf } from './editor-view';
+import tourSource from './tour.ts?raw';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('./figure-editor', () => ({}));
@@ -98,6 +99,9 @@ let settingsAnswer: unknown = null;
 let viewRevision = 1;
 let liveIssues: unknown[] = [];
 let liveApplies = true;
+/** 다음 상시 점검 답을 이 약속이 풀릴 때까지 붙든다(한 번만). */
+let liveGate: Promise<void> | null = null;
+let sourcePinError: unknown = null;
 let historyAnswer: unknown[] = [];
 let historyOpened: EditorViewDto | null = null;
 let settingsGate: Promise<void> | null = null;
@@ -133,6 +137,8 @@ beforeEach(() => {
   viewRevision = 1;
   liveIssues = [];
   liveApplies = true;
+  liveGate = null;
+  sourcePinError = null;
   historyAnswer = [];
   historyOpened = null;
   settingsGate = null;
@@ -177,8 +183,13 @@ beforeEach(() => {
         return basisAnswer;
       case 'editor_submission_checks':
         return submitAnswer;
-      case 'editor_live_checks':
-        return { revision: viewRevision, issues: liveIssues };
+      case 'editor_live_checks': {
+        const gate = liveGate;
+        liveGate = null;
+        const issues = liveIssues; // 붙들기 전에 뜬 답
+        if (gate) await gate;
+        return { revision: viewRevision, issues };
+      }
       case 'editor_export_fin':
         return '/tmp/x.fin';
       case 'editor_export_amendment':
@@ -207,6 +218,7 @@ beforeEach(() => {
         return { ...(sourceAnswer as { alignment: object }).alignment, revision: viewRevision };
       case 'editor_source_pin':
       case 'editor_source_unpin_all':
+        if (sourcePinError) throw sourcePinError;
         return (sourceAnswer as { alignment: object }).alignment;
       case 'editor_source_close':
         return undefined;
@@ -1753,7 +1765,8 @@ describe('page editing', () => {
     await settle(500);
     expect(last('editor_replace_text')).toEqual(['editor_replace_text', { paragraphId: 'paragraph:1', text: 'X가나다' }]);
     expect(pane.querySelector('p[data-id="paragraph:1"]')!.textContent).toBe('X가나다');
-    // 닫기 → 비고 · 다른 문서를 열면 그 문서 청구범위(설정이 켜져 있으니 저절로).
+    // 닫기 → 비고 · 다른 문서를 열면 그 문서 청구범위. 아래 settings-changed 는 첫 설정이 아니라 아무 일도 안 한다 —
+    // 다시 켜지는 까닭은 이 앞에서 단추를 눌러 pinnedWanted 가 참이 된 것(설정 pinned_on 은 시작할 때 씨앗일 뿐).
     settingsAnswer = { ...SETTINGS, zoom: 1, pinned_on: true };
     q(root, '[data-action="close-document"]').click();
     await settle(10);
@@ -2122,6 +2135,7 @@ describe('page editing', () => {
         expect(root.querySelector<HTMLElement>('.tour-hole')!.hidden, shown ? '보이면 비춘다' : '숨은 자리는 비추지 않는다').toBe(!shown);
         expect(root.querySelector<HTMLElement>('.tour-note')!.hidden).toBe(shown);
         q(root, '.tour-end').click();
+        await settle(500); // 지연 저장이 다음 문서를 바꾸지 않게
       }
     } finally {
       HTMLElement.prototype.getBoundingClientRect = rect;
@@ -2707,6 +2721,219 @@ describe('page editing', () => {
       'editor_toggle_format',
       { paragraphId: 'paragraph:0', start: 1, end: 2, format: 'bold' },
     ]);
+  });
+
+  // ---- 최종 검토 보완 ----
+
+  test('F-1: 구조 창 · 고정 창 · 원문 창에서 눌러 가면 입력 포커스가 숨은 입력 칸으로 돌아온다', async () => {
+    texts = ['【발명의 설명】', '가나다. 라마.', '【청구범위】', '【청구항 1】', '장치.'];
+    sourceAnswer = xliffSource();
+    settingsAnswer = { ...SETTINGS, zoom: 1, pinned_on: true };
+    const root = await open();
+    await settle(10);
+    const input = root.querySelector<HTMLTextAreaElement>('.caret-input')!;
+    const away = () => {
+      const other = document.createElement('button');
+      document.body.append(other);
+      other.focus();
+      expect(document.activeElement).toBe(other);
+      other.remove();
+    };
+    away();
+    root.querySelector<HTMLElement>('.tree-label:not(.root)')!.click();
+    expect(document.activeElement, '구조 창').toBe(input);
+    away();
+    root.querySelector<HTMLElement>('.pinned-body p[data-id="paragraph:1"]')!.click();
+    expect(document.activeElement, '고정 창').toBe(input);
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    away();
+    sourceSpan(root, 1).click();
+    expect(document.activeElement, '원문 창').toBe(input);
+    await settle(500);
+  });
+
+  test('F-2: 상시 점검 띠는 가운데 열 안쪽에 있다(원문 창 · 툴바 밖) · 열 기준 왼쪽 아래(스타일은 구조 단언 밖 — 보고서에 위치 기술)', async () => {
+    const root = await open();
+    await settle(10);
+    const center = root.querySelector('.editor-center')!;
+    expect(center.contains(strip(root))).toBe(true);
+    expect(root.querySelector('.editor-source')!.contains(strip(root))).toBe(false);
+    expect(root.querySelector('.editor-toolbar')!.contains(strip(root))).toBe(false);
+    expect(root.querySelector('.zoom-box')!.contains(strip(root))).toBe(false);
+    await settle(500);
+  });
+
+  test('F-3: 문서를 닫거나 같은 탭에서 문서가 바뀌면 보정 기준이 처음(연 뒤 고친 것)으로 · 옵션 글도 원래대로', async () => {
+    const root = await open();
+    const base = root.querySelector<HTMLSelectElement>('.amend-base')!;
+    const option = (value: string) => root.querySelector<HTMLOptionElement>(`.amend-base option[value="${value}"]`)!;
+    marksAnswer = { paragraphs: [], changed: [], added: [], removed: [] };
+    compareAnswer = '1차본.HLT';
+    base.value = 'file';
+    base.dispatchEvent(new Event('change'));
+    await settle(10);
+    expect(option('file').textContent).toBe('파일: 1차본.HLT');
+    // 닫기.
+    q(root, '[data-action="close-document"]').click();
+    await settle(20);
+    expect(base.value).toBe('');
+    expect(option('file').textContent).toBe('다른 파일…');
+    // 다시 열어 이전 판을 고른 뒤 같은 탭에서 다른 문서로(이전 판 열기).
+    q(root, '[data-action="open"]').click();
+    await settle(10);
+    historyAnswer = [{ saved: '2026-10-24 13:00:00', size: 4096 }];
+    compareHistoryAnswer = '이전 판 — 2026-10-24 11:00:00';
+    base.value = 'history';
+    base.dispatchEvent(new Event('change'));
+    await settle(10);
+    root.querySelector<HTMLButtonElement>('.history-shade .history-pick')!.click();
+    await settle(10);
+    expect(option('history').textContent).toBe('이전 판 — 2026-10-24 11:00:00');
+    historyOpened = view(texts);
+    q(root, '[data-action="history"]').click();
+    await settle(10);
+    root.querySelector<HTMLButtonElement>('.history-open')!.click();
+    await settle(10);
+    expect(base.value).toBe('');
+    expect(option('history').textContent).toBe('이전 판…');
+    await settle(500);
+  });
+
+  test('F-4: 같은 탭에서 문서가 바뀌면 옛 문서의 늦은 점검 결과는 그려지지 않는다', async () => {
+    liveIssues = [issueOf('error', 'paragraph:0')];
+    let release = () => {};
+    liveGate = new Promise<void>((resolve) => (release = resolve));
+    const root = await open(); // 첫 문서의 점검은 붙들린다
+    await settle(10);
+    liveIssues = [];
+    historyAnswer = [{ saved: '2026-10-24 13:00:00', size: 4096 }];
+    historyOpened = view(texts);
+    q(root, '[data-action="history"]').click();
+    await settle(10);
+    root.querySelector<HTMLButtonElement>('.history-open')!.click();
+    await settle(10);
+    expect(strip(root).textContent, '새 문서의 점검').toBe('점검 통과');
+    release(); // 옛 문서의 늦은 결과(오류 1건)
+    await settle(20);
+    expect(strip(root).textContent).toBe('점검 통과');
+    expect(root.querySelectorAll('.nk-live')).toHaveLength(0);
+    await settle(500);
+  });
+
+  test('F-5: 손 고정 · 지우기의 답이 낡은 판이면 그리지 않고 다시 받는다', async () => {
+    texts = ['가나다. 라마.', '바사.'];
+    sourceAnswer = xliffSource();
+    const root = await open();
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    clickAt(root, 105, 104);
+    const title = () => sourcePane(root).querySelector('.source-title')!.textContent;
+    const before = title();
+    // 답이 옛 판(99)의 것이다 — 머리 글(손 고정 7)이 바뀌면 안 된다.
+    sourceAnswer = withAlignment({ revision: 99, pins: 7 });
+    calls.length = 0;
+    sourceSpan(root, 0).dispatchEvent(new MouseEvent('click', { bubbles: true, altKey: true }));
+    await settle(10);
+    expect(last('editor_source_pin')).toBeDefined();
+    expect(title()).toBe(before);
+    expect(title()).not.toContain('손 고정 7');
+    // 다시 받기: 600ms 뒤 정렬 요청.
+    await settle(800);
+    expect(calls.some(([command]) => command === 'editor_source_align')).toBe(true);
+    const mid = title();
+    // 지우기도 같다.
+    const unpinAll = [...sourcePane(root).querySelectorAll<HTMLButtonElement>('.source-head button')].find((b) => /^(손 고정 지우기|한 번 더)/.test(b.textContent!))!;
+    unpinAll.click();
+    unpinAll.click();
+    await settle(10);
+    expect(calls.some(([command]) => command === 'editor_source_unpin_all')).toBe(true);
+    expect(title()).toBe(mid);
+    await settle(800);
+  });
+
+  test('F-6: 손 고정이 실패하면 「[object Object]」가 아니라 까닭을 안내한다', async () => {
+    texts = ['가나다. 라마.', '바사.'];
+    sourceAnswer = xliffSource();
+    const root = await open();
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    clickAt(root, 105, 104);
+    sourcePinError = { code: 'path_not_allowed', phase: 'editor_closed', details: {} };
+    sourceSpan(root, 0).dispatchEvent(new MouseEvent('click', { bubbles: true, altKey: true }));
+    await settle(10);
+    const status = root.querySelector('.editor-status')!.textContent!;
+    expect(status).toContain('손 고정 실패');
+    expect(status).not.toContain('[object Object]');
+    await settle(500);
+  });
+
+  test('F-7: 고친 곳 이동 투어 문구는 고른 기준을 말한다', async () => {
+    expect(tourSource).toContain('⌘[ 앞 고친 곳으로 갑니다(고른 기준).');
+    expect(tourSource).not.toContain('「연 뒤 고친 것」 기준)');
+  });
+
+  test('F-8: 고정 창 높이 손잡이와 점검 동그라미는 눌러도 입력 칸 포커스를 빼앗지 않는다 · 동그라미 우클릭은 쪽 메뉴를 안 띄운다', async () => {
+    texts = ['【청구범위】', '가나다'];
+    settingsAnswer = { ...SETTINGS, zoom: 1, pinned_on: true };
+    liveIssues = [issueOf('error', 'paragraph:1')];
+    const root = await open();
+    await settle(10);
+    clickAt(root, 63, 104);
+    const input = root.querySelector<HTMLTextAreaElement>('.caret-input')!;
+    input.focus();
+    expect(document.activeElement).toBe(input);
+    const fire = (target: Element, type: string, Kind: typeof MouseEvent = MouseEvent) => {
+      const event = new Kind(type, { bubbles: true, cancelable: true, button: type === 'contextmenu' ? 2 : 0 });
+      target.dispatchEvent(event);
+      return event;
+    };
+    const grip = root.querySelector('.pinned-grip')!;
+    expect(fire(grip, 'mousedown').defaultPrevented, '손잡이 mousedown').toBe(true);
+    expect(fire(grip, 'pointerdown').defaultPrevented, '손잡이 pointerdown').toBe(true);
+    const circle = root.querySelector('.nk-live')!;
+    expect(circle).not.toBeNull();
+    expect(fire(circle, 'mousedown').defaultPrevented, '동그라미 mousedown').toBe(true);
+    let reached = false;
+    root.addEventListener('contextmenu', () => (reached = true));
+    const menu = fire(circle, 'contextmenu');
+    expect(menu.defaultPrevented).toBe(true);
+    expect(reached, '쪽 메뉴 쪽으로 번지지 않는다').toBe(false);
+    expect(document.activeElement).toBe(input);
+    await settle(500);
+  });
+
+  test('F-11: 아직 보내지 않은 글이 있을 때 도착한 정렬은 적용을 미룬다', async () => {
+    texts = ['가나다. 라마.', '바사.'];
+    sourceAnswer = xliffSource();
+    const root = await open();
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    clickAt(root, 60, 104);
+    const base = vi.mocked(invoke).getMockImplementation()!;
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let held = false;
+    vi.mocked(invoke).mockImplementation((async (command: string, args?: Record<string, unknown>) => {
+      if (command === 'editor_source_align' && !held) {
+        held = true;
+        calls.push([command, args]);
+        await gate;
+        return { ...(sourceAnswer as { alignment: object }).alignment, revision: viewRevision };
+      }
+      return base(command, args as never);
+    }) as never);
+    type(root, 'X');
+    await settle(1100); // 0.4초에 보내고 · 0.6초 뒤 정렬 요청(붙들림)
+    expect(held).toBe(true);
+    type(root, 'Y'); // 정렬이 오기 전에 새 글(보내지 않음)
+    release();
+    await settle(20);
+    expect(sourcePane(root).querySelector('.current'), '미뤘다 — 아직 안 칠했다').toBeNull();
+    await settle(1800); // 보낸 뒤 다시 받아 적용
+    expect(sourcePane(root).querySelector('.current')).not.toBeNull();
+    vi.mocked(invoke).mockImplementation(base);
+    await settle(500);
   });
 });
 
