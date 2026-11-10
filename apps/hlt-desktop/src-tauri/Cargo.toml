@@ -11,6 +11,7 @@ tauri-build = { version = "2", features = [] }
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 hlt-core = { path = "../../../crates/hlt-core", features = ["pdf", "pdf-read"] }
+sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }

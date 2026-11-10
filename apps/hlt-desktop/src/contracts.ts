@@ -367,6 +367,47 @@ export type SourceParagraphDto = { key: string | null; text: string };
 export const editorSourceOpen = () => invoke<SourceParagraphDto[] | null>('editor_source_open');
 /** 놓은 원문(.docx). */
 export const editorSourceOpenPath = (path: string) => invoke<SourceParagraphDto[]>('editor_source_open_path', { path });
+/**
+ * 원문 창(문장 단위). 모든 문장 범위 `[start, end)` 는 UTF-16 코드 단위 — JS 문자열 오프셋 그대로 쓴다(변환은 Rust 가 했다).
+ * 손 고정 `PinDto` 는 문장 번호(0부터)라 단위 변환이 없다.
+ */
+export type PairGradeDto = 'sentence' | 'paragraph';
+export type PairDto = {
+  target_id: string;
+  target_sentence: number | null;
+  source_paragraph: number;
+  source_sentence: number | null;
+  grade: PairGradeDto;
+};
+export type PinDto = { target_id: string; target_sentence: number; source_paragraph: number; source_sentence: number };
+export type SourceParaDto = { key: string | null; text: string; sentences: [number, number][] };
+export type AlignmentDto = {
+  source: SourceParaDto[];
+  target_sentences: [string, [number, number][]][];
+  pairs: PairDto[];
+  dropped_pins: PinDto[];
+};
+export type SourceKindDto = 'xliff' | 'docx' | 'pdf';
+export type SourceDto = {
+  name: string;
+  kind: SourceKindDto;
+  alignment: AlignmentDto;
+  pins: number;
+  /** PDF 만: 쪽 수 · 글을 읽은 쪽 수. */
+  pages: number | null;
+  pages_with_text: number | null;
+};
+/** 고르기 창(docx · pdf · XLIFF · 취소 = `null`). */
+export const editorSourcePick = () => invoke<SourceDto | null>('editor_source_pick');
+/** 경로로 바로(놓은 파일 · 기억한 원문). 이 문서에 같은 원문으로 기억된 손 고정이 돌아온다. */
+export const editorSourceLoad = (path: string) => invoke<SourceDto>('editor_source_load', { path });
+/** 든 원문을 지금 문단으로 다시 정렬(원문이 없으면 `null`). */
+export const editorSourceAlign = () => invoke<AlignmentDto | null>('editor_source_align');
+export const editorSourcePin = (pin: PinDto) => invoke<AlignmentDto>('editor_source_pin', { pin });
+export const editorSourceUnpinAll = () => invoke<AlignmentDto>('editor_source_unpin_all');
+export const editorSourceClose = () => invoke<void>('editor_source_close');
+/** 이 문서에 기억된 원문 경로(파일이 있을 때). */
+export const editorSourceRemembered = () => invoke<string | null>('editor_source_remembered');
 /** 지금 판 문단마다 원문 짝 이름(화면 문단 차례). */
 export const editorParagraphKeys = () => invoke<(string | null)[]>('editor_paragraph_keys');
 /** 번호 다시 매기기: 바꿀 문단(전 · 후 글). */

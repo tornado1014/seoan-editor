@@ -10,6 +10,8 @@ mod menu;
 mod recent;
 mod recovery;
 mod settings;
+mod source_memory;
+mod source_pane;
 mod update;
 
 use commands::{AppState, cancel_verify, select_hlt, verify_file};
@@ -392,6 +394,13 @@ fn main() {
             editor_save_csv,
             editor_source_open,
             editor_source_open_path,
+            source_pane::editor_source_pick,
+            source_pane::editor_source_load,
+            source_pane::editor_source_align,
+            source_pane::editor_source_pin,
+            source_pane::editor_source_unpin_all,
+            source_pane::editor_source_close,
+            source_pane::editor_source_remembered,
             editor_paragraph_keys,
             editor_renumber_plan,
             editor_replace_texts,

@@ -26,6 +26,16 @@ pub struct Slot {
     pub source: Option<PathBuf>,
     /// `source` 를 열거나 저장한 때의 표지 — 저장 전에 다른 곳에서 바뀌었는지 견준다.
     pub stamp: Option<Stamp>,
+    /// 원문 창이 든 원문(문서가 바뀌거나 닫히면 비운다 — `swap_session`).
+    pub held: Option<crate::source_pane::SourceState>,
+}
+
+impl Slot {
+    /// 문서를 바꿔 끼운다(`None` = 닫기). 이 문서에 맞춰 둔 원문은 같이 비운다.
+    pub fn swap_session(&mut self, session: Option<EditorSession>) {
+        self.session = session;
+        self.held = None;
+    }
 }
 
 /// 파일 표지: 수정 시각 · 크기.
@@ -113,7 +123,7 @@ impl ImportDto {
 }
 
 impl EditorState {
-    fn slot(&self, label: &str) -> Arc<Mutex<Slot>> {
+    pub(crate) fn slot(&self, label: &str) -> Arc<Mutex<Slot>> {
         let mut windows = self
             .windows
             .lock()
@@ -1105,7 +1115,7 @@ pub async fn editor_close_document(
         return Ok(false);
     }
     if let Ok(mut slot) = state.slot(window.label()).lock() {
-        slot.session = None;
+        slot.swap_session(None);
         slot.source = None;
     }
     crate::recovery::discard(&app, window.label());
@@ -1374,7 +1384,7 @@ async fn open_path(
     let mut slot = slot
         .lock()
         .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "editor_lock", false))?;
-    slot.session = Some(session);
+    slot.swap_session(Some(session));
     slot.source = (recovered.is_none() && copy.is_none()).then(|| path.clone());
     slot.stamp = slot.source.as_deref().and_then(stamp_of);
     drop(slot);
@@ -2235,6 +2245,13 @@ pub async fn editor_save_as(
     })?;
     if unlocked {
         if let Ok(mut slot) = state.slot(window.label()).lock() {
+            // 기억해 둔 원문 · 손 고정도 새 경로 열쇠로 옮긴다.
+            if let (Some(old), Some(file)) = (
+                slot.source.as_deref(),
+                crate::source_pane::memory_file(&app),
+            ) {
+                crate::source_memory::move_key(&file, old, &path);
+            }
             slot.source = Some(path.clone());
             slot.stamp = stamp_of(&path);
         }
