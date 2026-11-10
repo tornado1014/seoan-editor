@@ -122,3 +122,21 @@ fn revision_grows_on_edit_undo_and_redo() {
     let r2 = session.revision();
     assert!(r0 < r1 && r1 < r2);
 }
+
+#[test]
+fn sessions_never_share_revision_numbers() {
+    let (_t1, mut first) = edited();
+    let mut seen = vec![first.revision()];
+    assert!(first.undo().unwrap());
+    seen.push(first.revision());
+    let (_t2, mut second) = edited();
+    let second_start = second.revision();
+    assert!(second.undo().unwrap());
+    let second_range = second_start..=second.revision();
+    assert!(
+        seen.iter().all(|r| !second_range.contains(r)),
+        "{seen:?} {second_range:?}"
+    );
+    // 한 세션 안에서는 종전처럼 단조 증가.
+    assert!(second_start < second.revision());
+}

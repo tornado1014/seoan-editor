@@ -818,3 +818,33 @@ fn only_the_span_whose_counts_differ_is_weakened() {
         assert_eq!(pair_summary(&al, id)[0].3, Grade::Paragraph, "{id}");
     }
 }
+
+/// 손 고정(편집 쪽 첫 문단 → 원문 맨 끝 문단)이 청구항 묶음과 교차하면 청구항 번호 짝은 내지 않는다.
+#[test]
+fn a_claim_number_pair_crossing_a_pin_is_not_made() {
+    let target = [
+        para("p1", "서론이 있다.", None),
+        para("h", "【청구항 1】", None),
+        para("c1", "장치.", None),
+    ];
+    let source = strings(&[
+        "What is claimed is:",
+        "1. A device.",
+        "ABSTRACT",
+        "An intro.",
+    ]);
+    let pin = Pin {
+        target_id: "p1".into(),
+        target_sentence: 0,
+        source_paragraph: 3,
+        source_sentence: 0,
+    };
+    let al = align_inferred(&target, &source, &[pin]);
+    let got: Vec<(&str, u32)> = al
+        .pairs
+        .iter()
+        .map(|p| (p.target_id.as_str(), p.source_paragraph))
+        .collect();
+    assert!(!got.iter().any(|(id, _)| *id == "c1"), "{got:?}");
+    assert!(got.contains(&("p1", 3)), "{got:?}");
+}

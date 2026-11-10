@@ -4,7 +4,8 @@ mod support;
 use std::{path::Path, sync::Mutex};
 
 use hlt_core::{
-    ErrorCode, InspectOptions, VerifyOptions, inspect_path, set_free_space_probe, verify_path,
+    EditorSession, ErrorCode, InspectOptions, VerifyOptions, inspect_path, set_free_space_probe,
+    set_spool_start_check_threshold, verify_path,
 };
 
 /// 여유 조회 훅은 프로세스 전역이다 — 줄 세운다.
@@ -50,11 +51,14 @@ fn low_free_space_stops_the_open_and_leaves_nothing_in_the_spool_folder() {
     unsafe { std::env::set_var("SEOAN_SPOOL_DIR", base.path()) };
     let fixture = support::pct_table_fixture();
 
+    // 시작 확인은 선언 크기가 문턱을 넘을 때만 한다 — 작은 합성 픽스처를 위해 문턱을 0 으로 낮춘다.
+    set_spool_start_check_threshold(Some(0));
     set_free_space_probe(Some(one_gib));
     let error = inspect_path(fixture.path(), InspectOptions::default())
         .err()
         .unwrap();
     set_free_space_probe(None);
+    set_spool_start_check_threshold(None);
 
     assert_eq!(error.code, ErrorCode::DiskFull);
     assert!(
@@ -64,6 +68,40 @@ fn low_free_space_stops_the_open_and_leaves_nothing_in_the_spool_folder() {
     );
     assert!(error.message.contains("2GB 이상 필요"), "{}", error.message);
     assert_eq!(spool_files(base.path()), 0);
+}
+
+/// 여유가 모자라도 64MiB 미만 문서는 열리고 · 고쳐지고 · 저장된다(시작 확인은 큰 문서만).
+#[test]
+fn a_small_document_ignores_low_free_space_on_open_edit_and_save() {
+    let _guard = SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("명세서.HLT");
+    hlt_core::save_new_specification(
+        &path,
+        hlt_core::SpecKind::Patent,
+        hlt_core::SpecOptions::default(),
+    )
+    .unwrap();
+    set_free_space_probe(None);
+    let baseline = inspect_path(&path, InspectOptions::default()).unwrap();
+
+    /// 시험이 어느 줄에서 끝나든 전역 조회 훅을 되돌린다.
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            set_free_space_probe(None);
+        }
+    }
+    set_free_space_probe(Some(one_gib));
+    let _reset = Reset;
+    let again = inspect_path(&path, InspectOptions::default()).unwrap();
+    assert_eq!(again.paragraphs.len(), baseline.paragraphs.len());
+    let mut session = EditorSession::open(&path).unwrap();
+    let id = session.paragraphs()[0].id.clone();
+    session.replace_text(&id, "고친 글").unwrap();
+    session.save_as(&temp.path().join("저장.HLT")).unwrap();
 }
 
 #[test]

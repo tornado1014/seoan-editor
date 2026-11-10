@@ -277,3 +277,42 @@ fn spool_dir_refuses_a_symlinked_root() {
 fn spool_dir_helper() {
     assert!(spool_dir().is_err());
 }
+
+/// 자식에서 합성 문서를 열어 성공 여부를 돌려준다(스풀 바탕 = `base`).
+fn open_in_child(base: &Path) -> bool {
+    Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "open_helper", "--ignored"])
+        .env("SEOAN_SPOOL_DIR", base)
+        .stdout(std::process::Stdio::null()) // 거절을 시험하는 자식의 실패 출력이 스위트 줄에 섞이지 않게
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+}
+
+#[test]
+#[ignore = "자식 프로세스 도우미 — 스풀 뿌리 시험이 부른다(열리면 성공)"]
+fn open_helper() {
+    let _ = root();
+    let fixture = support::pct_table_fixture();
+    inspect_path(fixture.path(), InspectOptions::default()).unwrap();
+}
+
+#[test]
+fn an_unusable_spool_root_falls_back_to_the_system_temp_folder() {
+    let base = tempfile::tempdir().unwrap();
+    fs::write(base.path().join("seoan-spool"), b"not a folder").unwrap();
+    assert!(
+        open_in_child(base.path()),
+        "일반 파일이 뿌리 자리에 있어도 열려야 한다"
+    );
+}
+
+#[test]
+fn a_symlinked_spool_root_still_fails_the_open() {
+    let base = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), base.path().join("seoan-spool")).unwrap();
+    assert!(!open_in_child(base.path()), "심링크 뿌리는 폴백 없이 거절");
+    assert_eq!(fs::read_dir(elsewhere.path()).unwrap().count(), 0);
+}

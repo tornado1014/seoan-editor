@@ -481,6 +481,18 @@ pub(crate) fn infer(
             dropped.extend(claim_pins.iter().map(|p| p.0));
             continue;
         }
+        // 번호만 같은 묶음이 1단계 짝 · 닻 · 손 고정을 가로지르면 번호 증거 자체가 깨진 것 — 문단 짝도 내지 않는다.
+        let (t0, t1) = (tunits[0].0, tunits[tunits.len() - 1].0);
+        let (s0, s1) = (sunits[0].0, sunits[sunits.len() - 1].0);
+        let crossing = points.iter().any(|&(a, b)| {
+            let inside = (t0..=t1).contains(&a) && (s0..=s1).contains(&b);
+            let ordered = (a < t0 && b < s0) || (a > t1 && b > s1);
+            !(inside || ordered)
+        });
+        if crossing {
+            dropped.extend(claim_pins.iter().map(|p| p.0));
+            continue;
+        }
         let mut at: Vec<(usize, usize)> = Vec::new();
         claim_pins.retain(|&(n, t, tk, s, sk)| {
             let (a, b) = (

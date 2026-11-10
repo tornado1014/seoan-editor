@@ -53,6 +53,9 @@ fn error(code: ErrorCode, message: &str, source: &Path) -> CoreError {
     e
 }
 
+/// 이보다 깊이 중첩된 XLIFF 는 읽지 않는다(실제 파일은 10 겹 안팎).
+const MAX_DEPTH: usize = 256;
+
 fn parse(text: &str) -> Option<Node> {
     let mut reader = Reader::from_str(text);
     reader.config_mut().trim_text(false);
@@ -88,7 +91,13 @@ fn parse(text: &str) -> Option<Node> {
     };
     loop {
         match reader.read_event().ok()? {
-            Event::Start(s) => stack.push(open(&reader, &s)?),
+            Event::Start(s) => {
+                // 수만 겹 중첩 입력이 아래의 재귀(`walk` · `plain` · Drop)를 터뜨리지 못하게 막는다.
+                if stack.len() >= MAX_DEPTH {
+                    return None;
+                }
+                stack.push(open(&reader, &s)?)
+            }
             Event::Empty(s) => {
                 let node = open(&reader, &s)?;
                 if !close(&mut stack, node) {

@@ -5,7 +5,10 @@ use std::{
     fs::{self, File},
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use crate::{CoreError, ErrorCode};
@@ -43,9 +46,30 @@ pub fn spool_dir() -> io::Result<PathBuf> {
     Ok(dir)
 }
 
+/// 전용 뿌리가 심링크인가(누가 일부러 바꾼 것 — 폴백 없이 거절한다).
+fn root_is_symlink() -> bool {
+    fs::symlink_metadata(spool_root()).is_ok_and(|meta| meta.file_type().is_symlink())
+}
+
+/// 스풀 폴더 — 전용 뿌리를 못 만들면(이미 파일 · 남의 폴더 · 읽기 전용) 시스템 임시 폴더. 심링크 뿌리는 오류 그대로.
+pub(crate) fn spool_dir_or_temp() -> io::Result<PathBuf> {
+    spool_dir().or_else(|error| {
+        if root_is_symlink() {
+            Err(error)
+        } else {
+            Ok(std::env::temp_dir())
+        }
+    })
+}
+
 /// 이름 없는 스풀 파일 하나(유닉스: 만들자마자 unlink · 윈도: 닫히면 삭제).
+/// 전용 뿌리를 못 쓰면 `tempfile::tempfile()`(시스템 임시 폴더)로 대신한다 — 심링크 뿌리만 거절.
 pub(crate) fn spool_file() -> io::Result<File> {
-    tempfile::tempfile_in(spool_dir()?)
+    match spool_dir() {
+        Ok(dir) => tempfile::tempfile_in(dir),
+        Err(error) if root_is_symlink() => Err(error),
+        Err(_) => tempfile::tempfile(),
+    }
 }
 
 #[cfg(unix)]
@@ -114,6 +138,15 @@ pub const SPOOL_CHECK_EVERY: u64 = 64 * 1024 * 1024;
 /// 여유가 이보다 작으면 멈춘다.
 pub const SPOOL_MIN_FREE: u64 = 2 * 1024 * 1024 * 1024;
 
+/// 시작 확인은 선언된 해제 크기가 이 값을 넘을 때만 한다(작은 문서는 쓰는 동안의 확인조차 한 번도 안 걸린다).
+static START_CHECK_ABOVE: AtomicU64 = AtomicU64::new(SPOOL_CHECK_EVERY);
+
+/// 시작 확인 문턱을 바꾼다(테스트 · 진단용 — `None` 이면 기본 64MiB).
+#[doc(hidden)]
+pub fn set_spool_start_check_threshold(bytes: Option<u64>) {
+    START_CHECK_ABOVE.store(bytes.unwrap_or(SPOOL_CHECK_EVERY), Ordering::SeqCst);
+}
+
 type FreeProbe = fn(&Path) -> Option<u64>;
 static PROBE: Mutex<Option<FreeProbe>> = Mutex::new(None);
 
@@ -155,7 +188,7 @@ fn os_free_bytes(_dir: &Path) -> Option<u64> {
     None
 }
 
-/// 스풀에 쓰는 양을 세다가 64MiB 마다 여유를 본다. 시작할 때도 한 번 본다.
+/// 스풀에 쓰는 양을 세다가 64MiB 마다 여유를 본다. 선언 크기가 문턱을 넘는 큰 문서는 시작할 때도 한 번 본다.
 pub(crate) struct SpoolGuard {
     dir: PathBuf,
     written: u64,
@@ -166,27 +199,25 @@ pub(crate) struct SpoolGuard {
 }
 
 impl SpoolGuard {
-    pub(crate) fn new() -> Result<Self, CoreError> {
-        let dir =
-            spool_dir().map_err(|_| CoreError::new(ErrorCode::IoError, "inspect_spool", false))?;
-        Self::with_limits(dir, SPOOL_CHECK_EVERY, SPOOL_MIN_FREE, None)
+    /// `declared` = 선언된 해제 크기(모르면 `None` → 시작 확인 없음).
+    pub(crate) fn new(declared: Option<u64>) -> Result<Self, CoreError> {
+        let dir = spool_dir_or_temp()
+            .map_err(|_| CoreError::new(ErrorCode::IoError, "inspect_spool", false))?;
+        let guard = Self::with_limits(dir, SPOOL_CHECK_EVERY, SPOOL_MIN_FREE, None);
+        if declared.is_some_and(|size| size > START_CHECK_ABOVE.load(Ordering::SeqCst)) {
+            guard.check_free()?;
+        }
+        Ok(guard)
     }
 
-    fn with_limits(
-        dir: PathBuf,
-        every: u64,
-        min_free: u64,
-        probe: Option<FreeProbe>,
-    ) -> Result<Self, CoreError> {
-        let guard = Self {
+    fn with_limits(dir: PathBuf, every: u64, min_free: u64, probe: Option<FreeProbe>) -> Self {
+        Self {
             dir,
             written: 0,
             every,
             min_free,
             probe,
-        };
-        guard.check_free()?;
-        Ok(guard)
+        }
     }
 
     fn check_free(&self) -> Result<(), CoreError> {
@@ -230,10 +261,10 @@ pub(crate) struct GuardedWriter<W> {
 }
 
 impl<W> GuardedWriter<W> {
-    pub(crate) fn new(inner: W) -> Result<Self, CoreError> {
+    pub(crate) fn new(inner: W, declared: Option<u64>) -> Result<Self, CoreError> {
         Ok(Self {
             inner,
-            guard: SpoolGuard::new()?,
+            guard: SpoolGuard::new(declared)?,
         })
     }
 }
@@ -262,8 +293,7 @@ mod guard_tests {
     #[test]
     fn checks_every_interval_and_not_before() {
         let dir = tempfile::tempdir().unwrap();
-        // 문턱 0 이면 시작 확인은 통과 · 이어서 문턱을 올려 주기 확인만 본다.
-        let mut guard = SpoolGuard::with_limits(dir.path().into(), 100, 0, Some(tiny)).unwrap();
+        let mut guard = SpoolGuard::with_limits(dir.path().into(), 100, 0, Some(tiny));
         guard.min_free = 1024;
         assert!(guard.account(99).is_ok(), "간격 안에서는 보지 않는다");
         let error = guard.account(1).unwrap_err();

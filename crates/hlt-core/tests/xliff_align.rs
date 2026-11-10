@@ -143,6 +143,30 @@ fn not_xliff_and_zero_segments_are_korean_errors() {
     assert!(read_xliff(&fixture("missing_file.xlf")).is_err());
 }
 
+#[test]
+fn absurdly_deep_nesting_is_refused_without_a_panic() {
+    let nest = |depth: usize| {
+        format!(
+            "<xliff version=\"1.2\"><file><body><trans-unit id=\"1\"><source>{o}글{c}</source><target>{o}글{c}</target></trans-unit></body></file></xliff>",
+            o = "<g>".repeat(depth),
+            c = "</g>".repeat(depth)
+        )
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let deep = dir.path().join("deep.xlf");
+    std::fs::write(&deep, nest(1000)).unwrap();
+    let e = read_xliff(&deep).unwrap_err();
+    assert!(
+        e.message.chars().any(|c| ('가'..='힣').contains(&c)),
+        "{}",
+        e.message
+    );
+    // 보통 깊이는 그대로 읽는다.
+    let fine = dir.path().join("fine.xlf");
+    std::fs::write(&fine, nest(20)).unwrap();
+    assert_eq!(read_xliff(&fine).unwrap().len(), 1);
+}
+
 const T: [&str; 7] = [
     "가나다 첫째 문장이다.",
     "라마바 둘째 문장이다.",
@@ -990,4 +1014,66 @@ fn a_number_anchor_into_a_used_group_gives_a_paragraph_pair_at_most() {
     let n = used.len();
     used.dedup();
     assert_eq!(used.len(), n);
+}
+
+/// 역문에서 청구항 하나를 지우고 번호를 다시 매겼다: 1단계가 (역문 청3 ↔ 원문 청4)에 맞추면,
+/// 번호만 같은 (역문 청4 ↔ 원문 청4)는 그 1단계 짝을 가로지르므로 짝을 내지 않는다. 1단계 짝은 남는다.
+#[test]
+fn a_renumbered_claim_never_pairs_across_a_stage_one_pair() {
+    let doc = vec![
+        para("h1", "【청구항 1】"),
+        para("c1", "장치로서 부품이 있다."),
+        para("h2", "【청구항 2】"),
+        para("c2", "제1항에 있어서 층이 있다."),
+        para("h3", "【청구항 3】"),
+        para("c3", "제1항에 있어서 전극을 갖는다."),
+        para("h4", "【청구항 4】"),
+        para("c4", "제1항에 있어서 모터를 별도로 갖는다."),
+    ];
+    let segs = vec![
+        seg("What is claimed is:", "", Some("g0")),
+        seg(
+            "1. A device having a part.",
+            "장치로서 부품이 있다.",
+            Some("g1"),
+        ),
+        seg(
+            "2. The device of claim 1 having a layer.",
+            "제1항에 있어서 층이 있다.",
+            Some("g2"),
+        ),
+        seg(
+            "3. The device of claim 1 having a gear.",
+            "제1항에 있어서 기어가 있다.",
+            Some("g3"),
+        ),
+        seg(
+            "4. The device of claim 1 having an electrode.",
+            "제1항에 있어서 전극을 갖는다.",
+            Some("g4"),
+        ),
+        seg(
+            "5. The device of claim 1 having a motor.",
+            "제1항에 있어서 모터가 있다.",
+            Some("g5"),
+        ),
+    ];
+    let a = align_xliff(&doc, &segs, &[]);
+    let pairs = pairs_of(&a);
+    let source_of = |id: &str| -> Vec<(u32, Grade)> {
+        pairs
+            .iter()
+            .filter(|p| p.0 == id)
+            .map(|p| (p.2, p.4))
+            .collect()
+    };
+    // 1단계: c3 ↔ 원문 청4 묶음(문단 4).
+    assert!(source_of("c3").iter().any(|&(s, _)| s == 4), "{pairs:?}");
+    // c4 는 번호만 같은 원문 청4(문단 4)와 짝지어지면 안 된다(교차).
+    assert!(source_of("c4").iter().all(|&(s, _)| s != 4), "{pairs:?}");
+    // 교차하지 않는 앞 청구항(1단계 짝)은 종전대로 남는다.
+    assert!(
+        !source_of("c1").is_empty() && !source_of("c2").is_empty(),
+        "{pairs:?}"
+    );
 }

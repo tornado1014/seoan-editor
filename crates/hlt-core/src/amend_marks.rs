@@ -288,7 +288,8 @@ pub fn number_unnumbered(before: &mut [EditorParagraph], now: &mut [EditorParagr
 }
 
 /// 화면 비교(다른 파일 · 이전 판 · 워드)용: `number_unnumbered` 에 더해 **한쪽만** 번호가 있으면 글 닮음으로 짝짓는다.
-/// 대비표 길(`amendment_table`)은 이 함수를 쓰지 않고 `number_unnumbered` 그대로다.
+/// 대비표 중 최종본(`.fin`) 기준(`amendment_table`)은 이 함수를 쓰지 않고 `number_unnumbered` 그대로다 —
+/// 「다른 파일」 · 「이전 판」 기준 대비표(`amendment_table_against("file")`)는 화면 비교와 같이 이 함수를 쓴다.
 pub fn number_for_comparison(before: &mut [EditorParagraph], now: &mut [EditorParagraph]) {
     let (before_numbered, now_numbered) = (
         before.iter().any(|p| p.number.is_some()),
@@ -311,6 +312,8 @@ fn number_by_similarity(
 ) {
     const SIMILAR: f32 = 0.6;
     const AMBIGUOUS: f32 = 0.05;
+    // ponytail: 문단당 후보를 앞쪽 16 개로 자른다(문단 수 N 에 대해 N×16 번 비교) — 더 먼 짝은 삭제 + 추가로 뜬다. 필요하면 창을 키운다.
+    const WINDOW: usize = 16;
     let (numbered, plain) = if before_numbered {
         (&mut *before, &mut *now)
     } else {
@@ -343,7 +346,7 @@ fn number_by_similarity(
                 let mut next = op.second_start;
                 for i in op.first_start..op.first_end {
                     let mine: Vec<char> = plain_texts[i].chars().collect();
-                    let mut scores: Vec<(f32, usize)> = (next..op.second_end)
+                    let mut scores: Vec<(f32, usize)> = (next..op.second_end.min(next + WINDOW))
                         .map(|j| {
                             let theirs: Vec<char> = numbered_texts[j].chars().collect();
                             (SequenceMatcher::new(&mine, &theirs).ratio(), j)
@@ -1590,6 +1593,32 @@ mod tests {
         assert!(marks.changed.is_empty(), "{marks:?}");
         assert_eq!(marks.added.len(), 1, "{marks:?}");
         assert_eq!(marks.removed, ["【0001】", "【0002】"]);
+    }
+
+    #[test]
+    fn similarity_pairing_looks_only_a_fixed_window_ahead() {
+        // 서로 전혀 닮지 않은 스무 문단(문단마다 다른 글자 대역) 중 열아홉째와 닮은 새 문단 하나:
+        // 후보 창(16) 밖이므로 짝짓지 않는다(삭제 + 추가로 표시). 창 안(첫째)과 닮은 것은 짝지어진다.
+        let text = |i: u32| -> String {
+            (0..30)
+                .filter_map(|k| char::from_u32(0xAC00 + i * 97 + k))
+                .collect()
+        };
+        let old: Vec<String> = (0..20).map(text).collect();
+        let numbers: Vec<String> = (1..=20).map(|n| format!("{n:04}")).collect();
+        let rows: Vec<(&str, &str)> = numbers
+            .iter()
+            .zip(&old)
+            .map(|(n, t)| (n.as_str(), t.as_str()))
+            .collect();
+        let far = format!("{} 덧", old[18]);
+        let near = format!("{} 덧", old[0]);
+        let (mut numbered, mut now) = numbered_plain(&rows, &[&far]);
+        number_for_comparison(&mut numbered, &mut now);
+        assert_eq!(now[1].number.as_deref(), Some("새 0001"), "창 밖은 짝 없음");
+        let (mut numbered, mut now) = numbered_plain(&rows, &[&near]);
+        number_for_comparison(&mut numbered, &mut now);
+        assert_eq!(now[1].number.as_deref(), Some("0001"));
     }
 
     #[test]

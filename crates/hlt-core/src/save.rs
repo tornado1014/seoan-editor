@@ -410,7 +410,8 @@ pub(crate) fn open_inflated_source(
     let layout = read_layout(&mut source_file, &source_name)?;
     let mut spool = crate::spool::spool_file()
         .map_err(|error| io_error(&error, "spool_create", &source_name))?;
-    let mut guarded = crate::spool::GuardedWriter::new(&mut spool)?;
+    let mut guarded =
+        crate::spool::GuardedWriter::new(&mut spool, Some(document.summary.inflated_bytes))?;
     inflate_raw_to_writer(&mut source_file, &layout, &mut guarded, options)?;
     spool
         .flush()

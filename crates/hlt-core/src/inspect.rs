@@ -212,7 +212,7 @@ pub fn inspect_path(path: &Path, options: InspectOptions) -> Result<InspectDocum
         .map_err(|_| inspect_error(ErrorCode::IoError, "inspect_inflate", layout.stream_start))?;
     let compressed = input.take(layout.footer_offset - layout.stream_start);
     let mut decoder = DeflateDecoder::new(compressed);
-    let mut guard = crate::spool::SpoolGuard::new()?;
+    let mut guard = crate::spool::SpoolGuard::new(Some(u64::from(layout.footer.inflated_size)))?;
     let mut spool = crate::spool::spool_file()
         .map_err(|_| inspect_error(ErrorCode::IoError, "inspect_spool", 0))?;
     let mut buffer = [0_u8; BUFFER_SIZE];

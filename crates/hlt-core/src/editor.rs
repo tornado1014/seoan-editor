@@ -13,6 +13,14 @@ use crate::{
     hml_document_from_hlt, inflate_hlt, inspect_path, number_paragraphs_as_new, page_plan,
 };
 
+/// 세션마다 판 번호의 시작값을 다르게 준다(프로세스 전역) — 같은 탭에서 문서를 바꿔도 옛 문서의 늦은 결과가 새 문서의 번호와 겹치지 않는다.
+/// 한 세션이 이 간격(2^32)만큼 판을 바꾸는 일은 없다. 화면의 숫자는 2^53 까지 정확하다(세션 약 200 만 개).
+static REVISION_BASE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn next_revision_base() -> u64 {
+    REVISION_BASE.fetch_add(1 << 32, std::sync::atomic::Ordering::Relaxed)
+}
+
 pub struct EditorSession {
     dir: tempfile::TempDir,
     versions: Vec<Version>,
@@ -264,7 +272,7 @@ impl EditorSession {
                 generated: false,
             }],
             current: 0,
-            revision: 0,
+            revision: next_revision_base(),
             saved: Some(0),
             dialect,
             document,

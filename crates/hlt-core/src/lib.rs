@@ -201,7 +201,9 @@ pub use save::{
 };
 pub use schema::{PackageReport, SchemaReport, validate_kipo_package, validate_kipo_xml};
 pub use source_view::{SourceParagraph, paragraph_keys, source_keys, source_paragraphs};
-pub use spool::{set_free_space_probe, spool_dir, sweep_stale_spools};
+pub use spool::{
+    set_free_space_probe, set_spool_start_check_threshold, spool_dir, sweep_stale_spools,
+};
 pub use submit_check::{
     LiveIssue, Severity, SignRow, SubmitIssue, SubmitKind, double_space_fixes, severity,
     sign_table, submission_checks,
