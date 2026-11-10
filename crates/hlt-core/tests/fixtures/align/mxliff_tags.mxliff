@@ -5,6 +5,7 @@
 <group id="a1"><trans-unit id="u1" m:para-id="p1" m:locked="false"><source>Alpha {1}beta {b&gt;bold&lt;b} {i&gt;it&lt;i} {u&gt;und&lt;u} {bu&gt;both&lt;bu} {^&gt;sup&lt;^} {2&gt;tag&lt;2} end.</source><target>알파 {1}베타 {b&gt;굵게&lt;b} {i&gt;기울&lt;i} {u&gt;밑줄&lt;u} {bu&gt;둘&lt;bu} {^&gt;위&lt;^} {2&gt;태그&lt;2} 끝.</target></trans-unit></group>
 <group id="a2"><trans-unit id="u2" m:para-id="p2" m:locked="true"><source>Locked one.</source><target>잠긴 하나.</target></trans-unit></group>
 <group id="a3"><trans-unit id="u3" m:para-id="p3" translate="no"><source>Not translated.</source><target>번역 안 함.</target></trans-unit></group>
+<group id="a4"><trans-unit id="u4" m:para-id="p4"><source>Mid{b&gt;dle&lt;b}word.</source><target>가{b&gt;나&lt;b}다</target></trans-unit></group>
 </body>
 </file>
 </xliff>

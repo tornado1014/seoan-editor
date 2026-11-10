@@ -112,6 +112,7 @@ fn mxliff_placeholders_are_stripped_and_locked_or_untranslatable_units_lose_thei
             ),
             ("Locked one.", ""),
             ("Not translated.", ""),
+            ("Middleword.", "가나다"),
         ]
     );
 }
@@ -556,4 +557,47 @@ fn pins_fill_unpaired_sentences_and_unusable_ones_are_reported() {
     let a = align_xliff(&doc, &segs, &bad);
     assert_eq!(pairs_of(&a), pairs_of(&base));
     assert_eq!(a.dropped_pins, bad);
+}
+
+fn single(doc: &str, seg_text: &str) -> hlt_core::Alignment {
+    align_xliff(&[para("a", doc)], &[seg("S.", seg_text, Some("g"))], &[])
+}
+
+#[test]
+fn a_match_must_end_on_a_boundary() {
+    // 다른 문장의 앞 조각 · 조사가 붙은 말 중간은 맞춤이 아니다.
+    assert!(single("도 1A는 평면도이다.", "도 1").pairs.is_empty());
+    assert!(single("도 1은 평면도이다.", "도 1").pairs.is_empty());
+    assert!(single("FIG. 1A shows a device.", "FIG. 1").pairs.is_empty());
+    // 다음 글자가 문장부호이면 맞춤.
+    let a = single("A는 B이다. C는 D이다.", "A는 B이다");
+    assert_eq!(pairs_of(&a), [sentence_pair("a", 0, 0, 0)]);
+    assert_eq!(a.target_sentences[0].1[0], (0, 6));
+    // 맞춘 글이 부호로 끝나면 뒤에 공백이 없어도 맞춤.
+    let a = single("A는 B이다.C는 D이다.", "A는 B이다.");
+    assert_eq!(pairs_of(&a), [sentence_pair("a", 0, 0, 0)]);
+}
+
+#[test]
+fn a_searched_match_must_start_on_a_boundary() {
+    let doc = vec![
+        para("p0", "첫 문단 문장이 여기 있다."),
+        para("p1", "둘째 문단 문장이 여기 있다."),
+        para("p2", "앞에 붙은 말이 있는 끼어 있는 이상한 꼬리 문장이다."),
+    ];
+    let segs = vec![
+        seg("1.", "첫 문단 문장이 여기 있다.", Some("a")),
+        seg("X.", "끼어 있는 이상한 꼬리 문장이다.", Some("b")),
+        seg("2.", "둘째 문단 문장이 여기 있다.", Some("c")),
+    ];
+    let a = align_xliff(&doc, &segs, &[]);
+    let got: Vec<(String, Option<u32>)> = a
+        .pairs
+        .iter()
+        .map(|p| (p.target_id.clone(), p.target_sentence))
+        .collect();
+    assert_eq!(
+        got,
+        [("p0".to_string(), Some(0)), ("p1".to_string(), Some(0))]
+    );
 }

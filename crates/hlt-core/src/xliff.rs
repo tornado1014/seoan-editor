@@ -251,7 +251,7 @@ fn strip_placeholders(text: &str) -> String {
     static TAG: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(r"\{[0-9]+\}|\{[A-Za-z0-9^]{1,3}>|<[A-Za-z0-9^]{1,3}\}").expect("정규식")
     });
-    collapse(&TAG.replace_all(text, " "))
+    collapse(&TAG.replace_all(text, ""))
 }
 
 /// XLIFF 1.2 계열(.xlf · .xliff · .txlf · .mxliff): `trans-unit` 의 `source` / `target` 글(인라인 태그는 글만 ·
@@ -376,14 +376,43 @@ const LOOKAHEAD_PARAGRAPHS: usize = 3;
 /// 이보다 짧은 글은 커서 자리가 아니면 찾지 않는다(짧은 되풀이 문장에 낚이지 않게).
 const MIN_SEARCH_CHARS: usize = 10;
 
+fn is_punct(c: char) -> bool {
+    ".,;:!?)]}」』】”’\"'。、，；：！？）".contains(c)
+}
+
+impl DocPara {
+    /// 정규화 `[o, e)` 가 오른쪽 경계에서 끝나는가: 문단 끝 · 다음이 공백 · 다음이 문장부호 · 맞춘 글이 부호로 끝남.
+    fn ends_on_boundary(&self, e: usize) -> bool {
+        self.norm.get(e).is_none_or(|&c| c == ' ' || is_punct(c)) || is_punct(self.norm[e - 1])
+    }
+
+    /// 정규화 `o` 가 왼쪽 경계인가: 문단 처음 · 줄바꿈 뒤 · 끝맺음 부호(`.!?。;:`) 뒤 공백 다음.
+    fn starts_on_boundary(&self, o: usize) -> bool {
+        let mut j = self.map[o] as usize;
+        let mut spaced = false;
+        while j > 0 && self.chars[j - 1].is_whitespace() {
+            if matches!(self.chars[j - 1], '\n' | '\r') {
+                return true;
+            }
+            spaced = true;
+            j -= 1;
+        }
+        j == 0 || (spaced && ".!?。;:".contains(self.chars[j - 1]))
+    }
+}
+
 fn search(docs: &[DocPara], cur: Cursor, needle: &[char]) -> Option<Cursor> {
     let last = (cur.d + LOOKAHEAD_PARAGRAPHS).min(docs.len());
     (cur.d..last).find_map(|d| {
         let from = if d == cur.d { cur.o } else { 0 };
-        docs[d].norm[from..]
+        let p = &docs[d];
+        p.norm[from..]
             .windows(needle.len())
-            .position(|w| w == needle)
-            .map(|i| Cursor { d, o: from + i })
+            .enumerate()
+            .filter(|(_, w)| *w == needle)
+            .map(|(i, _)| from + i)
+            .find(|&o| p.starts_on_boundary(o) && p.ends_on_boundary(o + needle.len()))
+            .map(|o| Cursor { d, o })
     })
 }
 
@@ -437,10 +466,9 @@ pub fn align_xliff(target: &[EditorParagraph], segments: &[Segment], pins: &[Pin
     for k in (0..n).filter(|&k| !src[k].is_empty() && !tgt[k].is_empty()) {
         settle(&docs, &mut cur);
         let equal = tgt[k] == src[k].chars().collect::<Vec<_>>();
-        let found = if docs
-            .get(cur.d)
-            .is_some_and(|p| p.norm[cur.o..].starts_with(&tgt[k]))
-        {
+        let found = if docs.get(cur.d).is_some_and(|p| {
+            p.norm[cur.o..].starts_with(&tgt[k]) && p.ends_on_boundary(cur.o + tgt[k].len())
+        }) {
             Some(cur)
         } else if !equal && tgt[k].len() >= MIN_SEARCH_CHARS {
             search(&docs, cur, &tgt[k])
