@@ -35,6 +35,7 @@ import {
   editorAmendmentBasis,
   editorAmendmentMarks,
   editorComparePick,
+  editorCompareHistory,
   editorAutosave,
   editorBatchCheck,
   editorBatchGenerate,
@@ -358,9 +359,10 @@ export function mountEditor(root: HTMLElement): void {
         <div class="tb-group" role="group" aria-label="보정(OA 대응)">
           <button type="button" data-action="review" disabled title="검토보고서 불러오기 — OA 검토보고서(워드)의 보정안 · 오기 정정을 골라 편집기에 겁니다">${icon('import')}<span>검토보고서</span></button>
           <button type="button" data-action="amend-marks" aria-pressed="false" disabled title="보정 표시 — 옆에서 고른 기준에 견준 바뀐 글(넣은 글 · 지운 자리 · 바뀐 문단)을 쪽 위에 보입니다">${icon('diff')}<span>보정 표시</span></button>
-          <select class="amend-base" aria-label="보정 표시 · 보정 근거의 기준" title="견줄 기준 — 연 뒤 고친 것 · 원출원(최종본 안 보정서까지) · 다른 파일">
+          <select class="amend-base" aria-label="보정 표시 · 보정 근거의 기준" title="견줄 기준 — 연 뒤 고친 것 · 원출원(최종본 안 보정서까지) · 이전 판(저장할 때 덮인 판) · 다른 파일(HLT · 최종본 · 워드)">
             <option value="">연 뒤 고친 것</option>
             <option value="original">원출원</option>
+            <option value="history">이전 판…</option>
             <option value="file">다른 파일…</option>
           </select>
           <button type="button" data-action="basis" disabled title="보정 근거 — 바뀐 청구항의 새 말이 있는 원출원 명세서 단락 · 의견서 인용 문장 초안">${icon('evidence')}<span>보정 근거</span></button>
@@ -782,13 +784,29 @@ export function mountEditor(root: HTMLElement): void {
   const amendBase = q<HTMLSelectElement>('.amend-base');
   /** 보정 표시 · 보정 근거의 기준이 원출원인가(기본 = 연 뒤 고친 것). */
   const fromOriginal = () => amendBase.value === 'original';
-  const fromFile = () => amendBase.value === 'file';
+  /** 고른 파일 · 이전 판은 같은 길(백엔드가 하나만 쥔다). */
+  const fromFile = () => amendBase.value === 'file' || amendBase.value === 'history';
   const fileOption = q<HTMLOptionElement>('.amend-base option[value="file"]');
+  const historyOption = q<HTMLOptionElement>('.amend-base option[value="history"]');
   /** 상태줄에 보일 기준 이름. */
-  const baseName = () => (fromOriginal() ? '원출원' : fromFile() ? fileOption.textContent! : '연 뒤 고친 것');
+  const baseName = () =>
+    fromOriginal() ? '원출원' : amendBase.value === 'history' ? historyOption.textContent! : fromFile() ? fileOption.textContent! : '연 뒤 고친 것';
   let lastBase = '';
   amendBase.addEventListener('change', async () => {
-    if (fromFile()) {
+    if (amendBase.value === 'history') {
+      // 「이전 판…」: 이전 판 창을 고르기 모드로(닫으면 앞 기준으로).
+      const name = await pickHistory();
+      if (!name) {
+        amendBase.value = lastBase;
+        return;
+      }
+      historyOption.textContent = name;
+      if (!showAmend) {
+        q<HTMLButtonElement>('[data-action="amend-marks"]').click();
+        lastBase = amendBase.value;
+        return;
+      }
+    } else if (fromFile()) {
       // 「다른 파일…」: 고를 때마다 새로 고른다(취소하면 앞 기준으로).
       say('견줄 파일 여는 중…');
       const name = await editorComparePick().catch((error) => (fail('견줄 파일', error), null));
@@ -838,6 +856,8 @@ export function mountEditor(root: HTMLElement): void {
       marks.removed.length ? `지운 것: ${marks.removed.join(', ')}` : '',
       issues.length ? `청구항 인용 문제 ${issues.length}건(「보정서」를 누르면 목록)` : '',
     ].filter(Boolean);
+    // 워드는 그림 바이트를 못 견준다 — 그림은 바뀐 것으로 세지 않는다.
+    if (parts.length && amendBase.value === 'file' && /\.docx$/i.test(fileOption.textContent ?? '')) parts.push('워드와는 그림을 견주지 않습니다');
     return parts.length
       ? `보정 표시(${baseName()}) — ${parts.join(' · ')}`
       : fromOriginal()
@@ -3359,26 +3379,37 @@ export function mountEditor(root: HTMLElement): void {
   }
 
   /** 이전 판 창: 저장이 덮기 전에 남긴 판(새것부터) → 고른 판을 새 탭에서 이름 없는 문서로. */
-  async function openHistory() {
+  async function openHistory(pick?: { done: (index: number | null) => void }) {
     let kept;
     try {
       kept = await editorHistoryList();
     } catch (error) {
+      pick?.done(null);
       return fail('이전 판', error);
     }
     if (!kept.length) {
+      pick?.done(null);
       return say(`이전 판이 없습니다 — 저장할 때마다 덮기 전 판을 남깁니다(파일마다 최근 ${settings?.history_keep ?? 10}개 · ${settings?.history_days ?? 30}일).`);
     }
     root.querySelector('.history-shade')?.remove();
     const shade = document.createElement('div');
     shade.className = 'basis-shade history-shade';
-    shade.innerHTML = `<div class="basis-ask batch-ask"><header><strong>이전 판</strong><button type="button" class="batch-close">닫기</button></header><div class="batch-body"><p>저장할 때 덮인 판입니다. 「열기」는 새 탭에 이름 없는 문서로 엽니다 — 원본은 그대로이고, 저장하면 이름을 묻습니다.</p><table><thead><tr><th>저장한 때</th><th>크기</th><th></th></tr></thead><tbody>${kept
+    shade.innerHTML = `<div class="basis-ask batch-ask"><header><strong>이전 판</strong><button type="button" class="batch-close">닫기</button></header><div class="batch-body"><p>${pick ? '저장할 때 덮인 판입니다. 「이 판에 견주기」를 누르면 보정 표시가 그 판에 견준 바뀐 글을 보입니다 — 문서는 그대로입니다.' : '저장할 때 덮인 판입니다. 「열기」는 새 탭에 이름 없는 문서로 엽니다 — 원본은 그대로이고, 저장하면 이름을 묻습니다.'}</p><table><thead><tr><th>저장한 때</th><th>크기</th><th></th></tr></thead><tbody>${kept
       .map(
         (item, index) =>
-          `<tr><td>${escapeHtml(item.saved)}</td><td>${Math.max(1, Math.round(item.size / 1024)).toLocaleString()} KB</td><td><button type="button" class="history-open" data-index="${index}">열기</button></td></tr>`,
+          `<tr><td>${escapeHtml(item.saved)}</td><td>${Math.max(1, Math.round(item.size / 1024)).toLocaleString()} KB</td><td>${pick ? `<button type="button" class="history-pick" data-index="${index}">이 판에 견주기</button>` : `<button type="button" class="history-open" data-index="${index}">열기</button>`}</td></tr>`,
       )
       .join('')}</tbody></table></div></div>`;
-    shade.querySelector('.batch-close')!.addEventListener('click', () => shade.remove());
+    shade.querySelector('.batch-close')!.addEventListener('click', () => {
+      shade.remove();
+      pick?.done(null);
+    });
+    for (const button of shade.querySelectorAll<HTMLButtonElement>('.history-pick')) {
+      button.addEventListener('click', () => {
+        shade.remove();
+        pick?.done(Number(button.dataset.index));
+      });
+    }
     for (const button of shade.querySelectorAll<HTMLButtonElement>('.history-open')) {
       button.addEventListener('click', async () => {
         shade.remove();
@@ -3395,6 +3426,16 @@ export function mountEditor(root: HTMLElement): void {
       });
     }
     root.append(shade);
+  }
+
+  /** 「이전 판…」 기준: 이전 판 창에서 하나 골라 백엔드가 그 판을 견줄 기준으로 푼다(고른 판 이름 · 취소 = `null`). */
+  async function pickHistory(): Promise<string | null> {
+    const index = await new Promise<number | null>((done) => void openHistory({ done }));
+    if (index === null) return null;
+    say('이전 판 여는 중…');
+    const name = await editorCompareHistory(index).catch((error) => (fail('이전 판', error), null));
+    if (!name) say('');
+    return name;
   }
 
   /** 명령 찾기(⌘K): 툴바 단추 · 「도구」 메뉴를 이름 · 설명으로 거르고 ↑↓ · Enter 로 실행(꺼진 것은 흐리게 · 실행 안 함). */
@@ -3477,15 +3518,16 @@ export function mountEditor(root: HTMLElement): void {
     field.focus();
   }
 
-  /** 고친 곳 사이 이동(⌘] 다음 · ⌘[ 앞): 연 뒤 고친 문단(보정 표시 「연 뒤 고친 것」)을 문서 차례로 · 끝에서는 처음으로. */
+  /** 고친 곳 사이 이동(⌘] 다음 · ⌘[ 앞): 고른 기준(기본 「연 뒤 고친 것」)에 견줘 바뀐 문단을 문서 차례로 · 끝에서는 처음으로. */
   async function jumpEdit(forward: boolean) {
     await commit();
-    const marks = await editorAmendmentMarks(false, false).catch(() => null);
+    const marks = await editorAmendmentMarks(fromOriginal(), fromFile()).catch(() => null);
+    const named = amendBase.value !== '';
     const ids = [...new Set((marks?.paragraphs ?? []).map((mark) => mark.id))]
       .filter((id) => order(id) >= 0)
       .sort((a, b) => order(a) - order(b));
     if (ids.length === 0) {
-      say('연 뒤 고친 곳이 없습니다.');
+      say(named ? `${baseName()}에 견줘 바뀐 곳이 없습니다.` : '연 뒤 고친 곳이 없습니다.');
       return;
     }
     const here = caret ? order(caret.paragraph) : forward ? -1 : Number.MAX_SAFE_INTEGER;
@@ -3494,7 +3536,7 @@ export function mountEditor(root: HTMLElement): void {
       : ids.map((id) => order(id) < here).lastIndexOf(true);
     const index = at >= 0 ? at : forward ? 0 : ids.length - 1;
     jumpTo(ids[index]);
-    say(`고친 곳 ${index + 1}/${ids.length}${at < 0 ? (forward ? ' (처음으로 돌아왔습니다)' : ' (끝으로 갔습니다)') : ''}`);
+    say(`${named ? `${baseName()}에 견줘 바뀐 곳` : '고친 곳'} ${index + 1}/${ids.length}${at < 0 ? (forward ? ' (처음으로 돌아왔습니다)' : ' (끝으로 갔습니다)') : ''}`);
   }
 
   /** 글자모양은 고치기 창에서 고른 글자에 건다(문단만 · 아직 적용 안 한 글 고침이 있으면 막는다). */

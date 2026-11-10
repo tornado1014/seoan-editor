@@ -70,7 +70,7 @@ export const TOURS: Tour[] = [
     title: '보정 표시',
     summary: '기준(연 뒤 · 원출원 · 다른 파일)에 견준 바뀐 글',
     steps: [
-      { target: '.amend-base', title: '기준 고르기', text: '「연 뒤 고친 것」(이 파일을 연 뒤), 「원출원」(최종본 안 보정서까지), 「다른 파일…」(아무 HLT · fin) 가운데 견줄 기준을 고릅니다.' },
+      { target: '.amend-base', title: '기준 고르기', text: '「연 뒤 고친 것」(이 파일을 연 뒤), 「원출원」(최종본 안 보정서까지), 「이전 판…」(저장할 때 덮인 판), 「다른 파일…」(HLT · fin · 워드) 가운데 견줄 기준을 고릅니다.' },
       { target: '[data-action="amend-marks"]', title: '보정 표시 켜기', text: '넣은 글은 밑줄, 지운 자리는 표시로 쪽 위에 보입니다. 상태줄에 바뀐 · 넣은 · 지운 요소가 요약됩니다.' },
       { target: '.editor-pages', title: '고친 곳 사이 이동', text: '⌘] 다음 고친 곳, ⌘[ 앞 고친 곳으로 갑니다(「연 뒤 고친 것」 기준).' },
     ],

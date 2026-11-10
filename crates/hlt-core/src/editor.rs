@@ -1958,6 +1958,14 @@ impl EditorSession {
 
     /// 다른 파일을 비교 기준으로 연다(사본으로 · 원본은 안 건드린다). 그 뒤 `amendment_marks_against_file`.
     pub fn compare_with(&mut self, path: &Path) -> Result<(), CoreError> {
+        if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("docx"))
+        {
+            // 워드는 그림 서명이 없다 — 빈 서명이면 그림은 견주지 않는다(전부 바뀜으로 뜨지 않게).
+            self.compared = Some((crate::docx_baseline(path)?, Default::default()));
+            return Ok(());
+        }
         let mut other = EditorSession::open(path)?;
         other.settle();
         self.compared = Some((other.paragraphs(), other.figure_signatures()));

@@ -1775,7 +1775,7 @@ pub async fn editor_compare_pick(
     let Some(path) = app
         .dialog()
         .file()
-        .add_filter("HLT · 최종본", &["HLT", "hlt", "fin", "hlz"])
+        .add_filter("HLT · 최종본 · 워드", &["HLT", "hlt", "fin", "hlz", "docx"])
         .blocking_pick_file()
         .and_then(|picked| picked.into_path().ok())
     else {
@@ -1785,6 +1785,30 @@ pub async fn editor_compare_pick(
     Ok(path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned()))
+}
+
+/// 보정 표시 기준 「이전 판…」: 이전 판 하나(목록 차례)를 견줄 기준으로 푼다(사본 · 보관본은 안 건드린다).
+/// 돌려주는 글 = 「이전 판 — 저장 시각」. 경로는 화면에서 받지 않는다(목록을 다시 만들어 차례로 고른다).
+#[tauri::command]
+pub async fn editor_compare_history(
+    window: Window,
+    app: AppHandle,
+    state: State<'_, EditorState>,
+    index: usize,
+) -> Result<Option<String>, CoreError> {
+    let source = state
+        .slot(window.label())
+        .lock()
+        .ok()
+        .and_then(|slot| slot.source.clone())
+        .ok_or_else(|| refused("history_none"))?;
+    let root = crate::history::root(&app).ok_or_else(|| refused("history_none"))?;
+    let kept = crate::history::list(&root, &source)
+        .into_iter()
+        .nth(index)
+        .ok_or_else(|| refused("history_none"))?;
+    with_session(&state, &window, |session| session.compare_with(&kept.path))?;
+    Ok(Some(format!("이전 판 — {}", kept.saved)))
 }
 
 /// 보정 근거 초안: 최종본(.fin)으로 연 문서만(아니면 `null`).

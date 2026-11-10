@@ -350,6 +350,8 @@ export const editorAmendmentMarks = (original = false, file = false) =>
   invoke<AmendmentMarksDto | null>('editor_amendment_marks', { original, file });
 /** 보정 표시 기준 「다른 파일…」: 견줄 파일을 고른다(고른 파일 이름 · 취소 = `null`). */
 export const editorComparePick = () => invoke<string | null>('editor_compare_pick');
+/** 보정 표시 기준 「이전 판…」: 이전 판 하나(목록 차례)를 견줄 기준으로 푼다(「이전 판 — 저장 시각」).*/
+export const editorCompareHistory = (index: number) => invoke<string | null>('editor_compare_history', { index });
 /** 자동 저장(고친 것이 있으면 복구본을 두고 없으면 지운다). */
 export const editorAutosave = () => invoke<void>('editor_autosave');
 /** 일괄 처리(폴더를 고르는 것부터 · 취소 = `null`). 진행은 `batch-progress` 사건. */

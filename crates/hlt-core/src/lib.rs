@@ -8,6 +8,7 @@ mod claim_check;
 mod codec;
 mod container;
 mod cp949_safe;
+mod baseline;
 mod docx;
 mod docx_write;
 mod drawmark;
@@ -80,6 +81,7 @@ pub use cp949_safe::{
     Cp949Choices, Cp949Finding, Cp949Substitution, apply_cp949, cp949_safe_text, make_cp949_safe,
     scan_cp949, scan_cp949_text,
 };
+pub use baseline::docx_baseline;
 pub use docx::{
     DocxDocument, DocxMediaAsset, DocxPackageSummary, DocxPageBreak, inspect_docx_path,
     load_docx_image_payloads,

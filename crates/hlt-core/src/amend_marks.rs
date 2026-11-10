@@ -239,7 +239,14 @@ pub(crate) fn description_body(paragraphs: &[EditorParagraph]) -> Vec<usize> {
 /// 짝(같은 글 · 바뀐 글)은 같은 번호(지금 판 차례 `0001`…), 지금 판에만 있는 문단도 그 차례 번호, 앞 판에만 있는 문단은
 /// `이전 0003`(앞 판 차례)을 단다. 어느 한쪽에 번호가 하나라도 있으면 그대로 둔다.
 pub fn number_unnumbered(before: &mut [EditorParagraph], now: &mut [EditorParagraph]) {
-    if before.iter().chain(now.iter()).any(|p| p.number.is_some()) {
+    let (before_numbered, now_numbered) = (
+        before.iter().any(|p| p.number.is_some()),
+        now.iter().any(|p| p.number.is_some()),
+    );
+    if before_numbered != now_numbered {
+        return number_by_similarity(before, now, before_numbered);
+    }
+    if before_numbered {
         return;
     }
     let (old, new) = (description_body(before), description_body(now));
@@ -283,6 +290,71 @@ pub fn number_unnumbered(before: &mut [EditorParagraph], now: &mut [EditorParagr
         before[at].number = Some(match paired[j] {
             Some(k) => format!("{:04}", k + 1),
             None => format!("이전 {:04}", j + 1),
+        });
+    }
+}
+
+/// 한쪽만 식별번호가 있을 때(그냥 HLT ↔ 번호 붙은 워드·최종본): 번호 없는 쪽 상세설명 문단에, 글이 같거나 닮은(ratio ≥ 0.6)
+/// 번호 쪽 문단의 번호를 차례 보존으로 단다. 짝이 없으면 지금 판 `새 0007` · 앞 판 `이전 0007`(번호 없는 쪽 차례).
+/// ponytail: 바뀐 구간 안은 차례대로 훑는 탐욕 짝짓기 — 문단 순서가 뒤바뀐 큰 편집은 짝이 엇나갈 수 있다.
+fn number_by_similarity(
+    before: &mut [EditorParagraph],
+    now: &mut [EditorParagraph],
+    before_numbered: bool,
+) {
+    const SIMILAR: f32 = 0.6;
+    let (numbered, plain) = if before_numbered {
+        (&mut *before, &mut *now)
+    } else {
+        (&mut *now, &mut *before)
+    };
+    let numbered_at: Vec<usize> = description_body(numbered)
+        .into_iter()
+        .filter(|&at| numbered[at].number.is_some())
+        .collect();
+    let plain_at: Vec<usize> = description_body(plain)
+        .into_iter()
+        .filter(|&at| !plain[at].text.trim().is_empty())
+        .collect();
+    let numbered_texts: Vec<&str> = numbered_at
+        .iter()
+        .map(|&at| numbered[at].text.as_str())
+        .collect();
+    let plain_texts: Vec<&str> = plain_at.iter().map(|&at| plain[at].text.as_str()).collect();
+    let mut paired: Vec<Option<usize>> = vec![None; plain_at.len()];
+    let mut matcher = SequenceMatcher::new(&plain_texts, &numbered_texts);
+    for op in matcher.get_opcodes() {
+        match op.tag.as_str() {
+            "equal" => {
+                for k in 0..op.first_end - op.first_start {
+                    paired[op.first_start + k] = Some(op.second_start + k);
+                }
+            }
+            "replace" => {
+                let mut next = op.second_start;
+                for i in op.first_start..op.first_end {
+                    let found = (next..op.second_end).find(|&j| {
+                        SequenceMatcher::new(
+                            &plain_texts[i].chars().collect::<Vec<_>>(),
+                            &numbered_texts[j].chars().collect::<Vec<_>>(),
+                        )
+                        .ratio()
+                            >= SIMILAR
+                    });
+                    if let Some(j) = found {
+                        paired[i] = Some(j);
+                        next = j + 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let unmatched = if before_numbered { "새" } else { "이전" };
+    for (k, &at) in plain_at.iter().enumerate() {
+        plain[at].number = Some(match paired[k] {
+            Some(j) => numbered[numbered_at[j]].number.clone().unwrap_or_default(),
+            None => format!("{unmatched} {:04}", k + 1),
         });
     }
 }
@@ -1421,12 +1493,27 @@ mod tests {
         assert_eq!(numbers(&gone), [None, n("0001"), n("이전 0002"), n("0002")]);
         assert_eq!(amendment_marks(&gone, &kept).removed, ["【이전 0002】"]);
 
-        // 한쪽이라도 번호가 있으면(최종본 · 보정 명세서) 건드리지 않는다.
+        // 양쪽에 번호가 있으면(최종본 · 보정 명세서) 건드리지 않는다.
         let mut numbered = plain(&["【발명의 설명】", "가"]);
         numbered[1].number = n("0001");
-        let mut other = plain(&["【발명의 설명】", "가"]);
+        let mut also = plain(&["【발명의 설명】", "가"]);
+        also[1].number = n("0009");
+        number_unnumbered(&mut numbered, &mut also);
+        assert_eq!(numbers(&numbered), [None, n("0001")]);
+        assert_eq!(numbers(&also), [None, n("0009")]);
+
+        // 한쪽만 번호가 있으면(번호 붙은 워드 · 최종본 ↔ 그냥 HLT) 글이 같거나 닮은 문단이 그 번호를 받는다.
+        let mut numbered = plain(&["【발명의 설명】", "가나다라마바", "사아자"]);
+        numbered[1].number = n("0001");
+        numbered[2].number = n("0002");
+        let mut other = plain(&[
+            "【발명의 설명】",
+            "가나다라마바 덧붙임",
+            "사아자",
+            "새 문단",
+        ]);
         number_unnumbered(&mut numbered, &mut other);
-        assert_eq!(numbers(&other), [None, None]);
+        assert_eq!(numbers(&other), [None, n("0001"), n("0002"), n("새 0003")]);
     }
 
     #[test]

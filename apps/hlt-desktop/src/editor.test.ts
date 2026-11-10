@@ -80,6 +80,7 @@ let marksAnswer: unknown = null;
 let issuesAnswer: unknown[] = [];
 let parentsAnswer: Record<string, number[]> = {};
 let compareAnswer: string | null = null;
+let compareHistoryAnswer: string | null = null;
 let amendAnswer: unknown = null;
 let batchAnswer: unknown = null;
 let sourceAnswer: unknown = null;
@@ -112,6 +113,7 @@ beforeEach(() => {
   issuesAnswer = [];
   parentsAnswer = {};
   compareAnswer = null;
+  compareHistoryAnswer = null;
   amendAnswer = null;
   batchAnswer = null;
   sourceAnswer = null;
@@ -163,6 +165,8 @@ beforeEach(() => {
         return parentsAnswer;
       case 'editor_compare_pick':
         return compareAnswer;
+      case 'editor_compare_history':
+        return compareHistoryAnswer;
       case 'editor_amendment_basis':
         return basisAnswer;
       case 'editor_submission_checks':
@@ -2101,6 +2105,77 @@ describe('page editing', () => {
     compareAnswer = null;
     await pick('file'); // 취소 → 원출원으로
     expect(base.value).toBe('original');
+  });
+
+  test('기준을 이전 판으로 고르면 이전 판 창이 고르기 모드로 열리고 보정 표시가 그 판에 견준 것이다', async () => {
+    const root = await open();
+    historyAnswer = [
+      { saved: '2026-10-24 13:00:00', size: 4096 },
+      { saved: '2026-10-24 11:00:00', size: 2048 },
+    ];
+    compareHistoryAnswer = '이전 판 — 2026-10-24 11:00:00';
+    marksAnswer = { paragraphs: [], changed: ['【0002】'], added: [], removed: [] };
+    const base = root.querySelector<HTMLSelectElement>('.amend-base')!;
+    base.value = 'history';
+    base.dispatchEvent(new Event('change'));
+    await settle(10);
+    const picks = [...root.querySelectorAll<HTMLButtonElement>('.history-shade .history-pick')];
+    expect(picks.map((b) => b.textContent)).toEqual(['이 판에 견주기', '이 판에 견주기']);
+    picks[1].click();
+    await settle(10);
+    expect(last('editor_compare_history')).toEqual(['editor_compare_history', { index: 1 }]);
+    expect(root.querySelector('.history-shade')).toBeNull();
+    expect(q(root, '[data-action="amend-marks"]').getAttribute('aria-pressed')).toBe('true');
+    expect(last('editor_amendment_marks')).toEqual(['editor_amendment_marks', { original: false, file: true }]);
+    expect(root.querySelector('.editor-status')!.textContent).toBe('보정 표시(이전 판 — 2026-10-24 11:00:00) — 바뀐 것: 【0002】');
+  });
+
+  test('이전 판 고르기를 취소하면 앞 기준으로 돌아간다(다른 파일 취소와 같다)', async () => {
+    const root = await open();
+    historyAnswer = [{ saved: '2026-10-24 13:00:00', size: 4096 }];
+    const base = root.querySelector<HTMLSelectElement>('.amend-base')!;
+    base.value = 'original';
+    base.dispatchEvent(new Event('change'));
+    await settle(10);
+    base.value = 'history';
+    base.dispatchEvent(new Event('change'));
+    await settle(10);
+    q(root, '.history-shade .batch-close').click();
+    await settle(10);
+    expect(base.value).toBe('original');
+    expect(calls.some(([c]) => c === 'editor_compare_history')).toBe(false);
+  });
+
+  test('고친 곳 이동은 고른 기준을 따른다: 원출원이면 원출원에 견줘 바뀐 곳 · 파일이면 그 파일에', async () => {
+    texts = ['가', '나', '다', '라'];
+    const root = await open();
+    const key = (k: string) => document.dispatchEvent(new KeyboardEvent('keydown', { key: k, metaKey: true, bubbles: true }));
+    const status = () => root.querySelector('.editor-status')!.textContent;
+    marksAnswer = {
+      paragraphs: [
+        { id: 'paragraph:2', inserted: [[0, 1]], deleted: [] },
+        { id: 'paragraph:0', inserted: [[0, 1]], deleted: [] },
+      ],
+      changed: [],
+      added: [],
+      removed: [],
+    };
+    const base = root.querySelector<HTMLSelectElement>('.amend-base')!;
+    base.value = 'original';
+    base.dispatchEvent(new Event('change'));
+    await settle(10);
+    key(']');
+    await settle(10);
+    expect(last('editor_amendment_marks')).toEqual(['editor_amendment_marks', { original: true, file: false }]);
+    expect(status()).toBe('원출원에 견줘 바뀐 곳 1/2');
+    compareAnswer = '1차본.HLT';
+    base.value = 'file';
+    base.dispatchEvent(new Event('change'));
+    await settle(10);
+    key(']');
+    await settle(10);
+    expect(last('editor_amendment_marks')).toEqual(['editor_amendment_marks', { original: false, file: true }]);
+    expect(status()).toBe('파일: 1차본.HLT에 견줘 바뀐 곳 2/2');
   });
 
   test('보정 근거: 위 3개 후보만 보이고 나머지는 「더 보기」(체크는 그대로 · 접기)', async () => {
