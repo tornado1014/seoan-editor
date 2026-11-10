@@ -174,13 +174,41 @@ fn main() {
     std::process::exit(i32::from(exit_code));
 }
 
+/// 전역 플래그 `--allow-large`(어느 자리든): 풀면 1GiB 를 넘는 문서도 묻지 않고 연다. 환경변수 `SEOAN_ALLOW_LARGE=1` 은 기본값을 켠다.
 fn run<I, O, E>(args: I, stdout: &mut O, stderr: &mut E) -> u8
 where
     I: IntoIterator<Item = String>,
     O: Write,
     E: Write,
 {
-    let args: Vec<String> = args.into_iter().collect();
+    let mut args: Vec<String> = args.into_iter().collect();
+    let before = args.len();
+    args.retain(|arg| arg != "--allow-large");
+    let flagged = args.len() != before;
+    if flagged {
+        hlt_core::set_allow_large(true);
+    }
+    let code = run_command(args, stdout, stderr);
+    if flagged {
+        hlt_core::set_allow_large(false);
+    }
+    if code != EXIT_OK
+        && let Some(bytes) = hlt_core::take_large_document_bytes()
+    {
+        let _ = writeln!(
+            stderr,
+            "이 문서는 풀면 {:.1}GB 입니다. 계속하려면 --allow-large 를 붙이거나 SEOAN_ALLOW_LARGE=1 을 두세요.",
+            bytes as f64 / 1_000_000_000.0
+        );
+    }
+    code
+}
+
+fn run_command<O, E>(args: Vec<String>, stdout: &mut O, stderr: &mut E) -> u8
+where
+    O: Write,
+    E: Write,
+{
     if args.first().is_some_and(|value| value == "version") && args.len() == 1 {
         return run_version(stdout);
     }

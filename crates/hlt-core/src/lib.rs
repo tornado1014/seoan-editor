@@ -65,7 +65,11 @@ pub use amend_marks::{
 };
 pub use baseline::docx_baseline;
 pub use batch::{BatchCheckRow, BatchRow, batch_generate_hlt, batch_submission_checks};
-pub use cancel::{CancellationToken, ProgressEvent, ProgressSink, ProgressTotals, VerifyOptions};
+pub use cancel::{
+    CancellationToken, LARGE_THRESHOLD_BYTES, ProgressEvent, ProgressSink, ProgressTotals,
+    VerifyOptions, allow_large_default, large_threshold_default, set_allow_large,
+    take_large_document_bytes,
+};
 pub use cell_format_edit::{
     CellFormatEdit, CellFormatEditDecision, CellFormatEditDecisionStatus, CellFormatEditPlan,
     CellFormatEditRequest, CellFormatEditSaveResult, CellFormatEditSkipReason,
@@ -189,7 +193,7 @@ pub use save::{
 };
 pub use schema::{PackageReport, SchemaReport, validate_kipo_package, validate_kipo_xml};
 pub use source_view::{SourceParagraph, paragraph_keys, source_keys, source_paragraphs};
-pub use spool::{spool_dir, sweep_stale_spools};
+pub use spool::{set_free_space_probe, spool_dir, sweep_stale_spools};
 pub use submit_check::{
     LiveIssue, Severity, SignRow, SubmitIssue, SubmitKind, double_space_fixes, severity,
     sign_table, submission_checks,

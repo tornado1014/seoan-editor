@@ -26,6 +26,7 @@ pub enum ErrorCode {
     ResourceTooLarge,
     SizeLimitExceeded,
     DiskFull,
+    LargeDocument,
     Cancelled,
     UnsupportedFormat,
     ConversionFailed,
@@ -85,6 +86,13 @@ pub(crate) fn safe_source(source: &str) -> Option<String> {
 }
 
 pub(crate) fn io_error(error: &io::Error, phase: &str, source: &str) -> CoreError {
+    // 스풀 쓰기 보호(`GuardedWriter`)가 실어 보낸 오류는 그대로 돌려준다.
+    if let Some(core) = error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<CoreError>())
+    {
+        return core.clone();
+    }
     let code = if error.kind() == io::ErrorKind::PermissionDenied {
         ErrorCode::PermissionDenied
     } else {

@@ -104,9 +104,25 @@ fn verify_reader_inner<R: Read + Seek>(
     let layout = read_layout(reader, &source)?;
     emit_progress(options, "header", 0, 0, 0.0);
     check_cancelled(options, &source, layout.stream_start)?;
-    if crate::codec::is_stored(reader, &layout, options)
-        .map_err(|error| attach_source(error, &source, layout.stream_start))?
-    {
+    let stored = crate::codec::is_stored(reader, &layout, options)
+        .map_err(|error| attach_source(error, &source, layout.stream_start))?;
+    // 풀기 전에, 이미 읽은 꼬리의 해제 크기 필드(무압축이면 본문 길이)로 큰 문서를 가린다.
+    let declared = if stored {
+        layout.file_size - layout.stream_start
+    } else {
+        // deflate 는 1032 배를 넘게 줄이지 못한다 — 그보다 큰 선언은 꼬리가 어긋난 것(줄바꿈이 붙은 변종 등)이라
+        // 믿지 않고 종전처럼 풀어서 가린다(하드 상한은 그대로 막는다).
+        let declared = u64::from(layout.footer.inflated_size);
+        let compressed = layout.footer_offset - layout.stream_start;
+        if declared > compressed.saturating_mul(1032).saturating_add(1024) {
+            0
+        } else {
+            declared
+        }
+    };
+    crate::cancel::check_large(declared, options.allow_large, options.large_threshold_bytes)
+        .map_err(|error| attach_source(error, &source, layout.stream_start))?;
+    if stored {
         return verify_stored(reader, &layout, &source, options);
     }
 

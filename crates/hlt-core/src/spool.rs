@@ -3,9 +3,12 @@
 
 use std::{
     fs::{self, File},
-    io,
-    path::PathBuf,
+    io::{self, Write},
+    path::{Path, PathBuf},
+    sync::Mutex,
 };
+
+use crate::{CoreError, ErrorCode};
 
 /// 스풀 뿌리 `<바탕>/seoan-spool`. 바탕은 환경변수 `SEOAN_SPOOL_DIR`(테스트 · 진단용) 아니면 시스템 임시 폴더.
 /// 어느 쪽이든 전용 이름 `seoan-spool` 을 붙인다 — 바탕이 `$HOME` 이어도 그 안의 남의 폴더를 보지 않는다.
@@ -104,4 +107,166 @@ pub fn sweep_stale_spools() -> usize {
         }
     }
     removed
+}
+
+/// 해제본을 이만큼 쓸 때마다 스풀 볼륨의 여유를 본다.
+pub const SPOOL_CHECK_EVERY: u64 = 64 * 1024 * 1024;
+/// 여유가 이보다 작으면 멈춘다.
+pub const SPOOL_MIN_FREE: u64 = 2 * 1024 * 1024 * 1024;
+
+type FreeProbe = fn(&Path) -> Option<u64>;
+static PROBE: Mutex<Option<FreeProbe>> = Mutex::new(None);
+
+/// 여유 조회를 갈아 끼운다(테스트 · 진단용 — `None` 이면 운영체제에 묻는다).
+#[doc(hidden)]
+pub fn set_free_space_probe(probe: Option<FreeProbe>) {
+    *PROBE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = probe;
+}
+
+/// 그 폴더가 있는 볼륨의 쓸 수 있는 바이트. 못 재면 `None`(막지 않는다).
+fn free_bytes(dir: &Path) -> Option<u64> {
+    let probe = *PROBE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    match probe {
+        Some(probe) => probe(dir),
+        None => os_free_bytes(dir),
+    }
+}
+
+#[cfg(unix)]
+fn os_free_bytes(dir: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    // SAFETY: 영으로 채운 구조체를 statvfs 가 채운다.
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: path 는 NUL 로 끝나는 유효한 C 문자열이다.
+    if unsafe { libc::statvfs(path.as_ptr(), &mut stat) } != 0 {
+        return None;
+    }
+    (stat.f_bavail as u64).checked_mul(stat.f_frsize as u64)
+}
+
+// ponytail: 윈도는 여유를 재지 않는다(= 확인 없음). GetDiskFreeSpaceExW 를 더하면 된다.
+#[cfg(not(unix))]
+fn os_free_bytes(_dir: &Path) -> Option<u64> {
+    None
+}
+
+/// 스풀에 쓰는 양을 세다가 64MiB 마다 여유를 본다. 시작할 때도 한 번 본다.
+pub(crate) struct SpoolGuard {
+    dir: PathBuf,
+    written: u64,
+    every: u64,
+    min_free: u64,
+    /// 이 경비만 쓰는 조회(단위 시험용 · 없으면 전역 훅 또는 운영체제).
+    probe: Option<FreeProbe>,
+}
+
+impl SpoolGuard {
+    pub(crate) fn new() -> Result<Self, CoreError> {
+        let dir =
+            spool_dir().map_err(|_| CoreError::new(ErrorCode::IoError, "inspect_spool", false))?;
+        Self::with_limits(dir, SPOOL_CHECK_EVERY, SPOOL_MIN_FREE, None)
+    }
+
+    fn with_limits(
+        dir: PathBuf,
+        every: u64,
+        min_free: u64,
+        probe: Option<FreeProbe>,
+    ) -> Result<Self, CoreError> {
+        let guard = Self {
+            dir,
+            written: 0,
+            every,
+            min_free,
+            probe,
+        };
+        guard.check_free()?;
+        Ok(guard)
+    }
+
+    fn check_free(&self) -> Result<(), CoreError> {
+        let free = match self.probe {
+            Some(probe) => probe(&self.dir),
+            None => free_bytes(&self.dir),
+        };
+        match free {
+            Some(free) if free < self.min_free => Err(low_disk(free, self.min_free)),
+            _ => Ok(()),
+        }
+    }
+
+    /// `bytes` 를 쓰기 직전에 부른다.
+    pub(crate) fn account(&mut self, bytes: u64) -> Result<(), CoreError> {
+        let before = self.written / self.every;
+        self.written = self.written.saturating_add(bytes);
+        if self.written / self.every != before {
+            self.check_free()?;
+        }
+        Ok(())
+    }
+}
+
+fn low_disk(free: u64, min_free: u64) -> CoreError {
+    const GB: f64 = 1_000_000_000.0;
+    let mut error = CoreError::new(ErrorCode::DiskFull, "spool_free_space", false);
+    error.message = format!(
+        "디스크 여유가 부족해 문서를 열 수 없습니다(여유 {:.1}GB · {}GB 이상 필요).",
+        free as f64 / GB,
+        (min_free as f64 / GB).round()
+    );
+    error.details.insert("free_bytes".into(), free.to_string());
+    error
+}
+
+/// 쓰기 전에 `SpoolGuard` 를 거치는 `Write`(`inflate_raw_to_writer` 용). 모자라면 `CoreError` 를 실은 `io::Error`.
+pub(crate) struct GuardedWriter<W> {
+    pub(crate) inner: W,
+    guard: SpoolGuard,
+}
+
+impl<W> GuardedWriter<W> {
+    pub(crate) fn new(inner: W) -> Result<Self, CoreError> {
+        Ok(Self {
+            inner,
+            guard: SpoolGuard::new()?,
+        })
+    }
+}
+
+impl<W: Write> Write for GuardedWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.guard
+            .account(buf.len() as u64)
+            .map_err(io::Error::other)?;
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::*;
+
+    fn tiny(_: &Path) -> Option<u64> {
+        Some(512)
+    }
+
+    #[test]
+    fn checks_every_interval_and_not_before() {
+        let dir = tempfile::tempdir().unwrap();
+        // 문턱 0 이면 시작 확인은 통과 · 이어서 문턱을 올려 주기 확인만 본다.
+        let mut guard = SpoolGuard::with_limits(dir.path().into(), 100, 0, Some(tiny)).unwrap();
+        guard.min_free = 1024;
+        assert!(guard.account(99).is_ok(), "간격 안에서는 보지 않는다");
+        let error = guard.account(1).unwrap_err();
+        assert_eq!(error.code, ErrorCode::DiskFull);
+    }
 }

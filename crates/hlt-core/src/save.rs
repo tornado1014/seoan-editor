@@ -174,6 +174,8 @@ pub fn save_generated_hlt_with_profile_as_new(
         temporary.path(),
         InspectOptions {
             max_inflated_bytes: options.verify.max_inflated_bytes,
+            allow_large: options.verify.allow_large,
+            large_threshold_bytes: options.verify.large_threshold_bytes,
             ..InspectOptions::default()
         },
     )?;
@@ -299,6 +301,8 @@ pub(crate) fn save_new_document_with_kind(
         temporary.path(),
         InspectOptions {
             max_inflated_bytes: options.verify.max_inflated_bytes,
+            allow_large: options.verify.allow_large,
+            large_threshold_bytes: options.verify.large_threshold_bytes,
             ..InspectOptions::default()
         },
     )?;
@@ -396,6 +400,8 @@ pub(crate) fn open_inflated_source(
         &source_absolute,
         InspectOptions {
             max_inflated_bytes: options.max_inflated_bytes,
+            allow_large: options.allow_large,
+            large_threshold_bytes: options.large_threshold_bytes,
             ..InspectOptions::default()
         },
     )?;
@@ -404,7 +410,8 @@ pub(crate) fn open_inflated_source(
     let layout = read_layout(&mut source_file, &source_name)?;
     let mut spool = crate::spool::spool_file()
         .map_err(|error| io_error(&error, "spool_create", &source_name))?;
-    inflate_raw_to_writer(&mut source_file, &layout, &mut spool, options)?;
+    let mut guarded = crate::spool::GuardedWriter::new(&mut spool)?;
+    inflate_raw_to_writer(&mut source_file, &layout, &mut guarded, options)?;
     spool
         .flush()
         .and_then(|_| spool.sync_all())
@@ -473,6 +480,8 @@ where
         temporary.path(),
         InspectOptions {
             max_inflated_bytes: options.max_inflated_bytes,
+            allow_large: options.allow_large,
+            large_threshold_bytes: options.large_threshold_bytes,
             ..InspectOptions::default()
         },
     )?;
@@ -675,6 +684,8 @@ fn clone_verify_options(options: &VerifyOptions) -> VerifyOptions {
     VerifyOptions {
         request_id: options.request_id.clone(),
         max_inflated_bytes: options.max_inflated_bytes,
+        allow_large: options.allow_large,
+        large_threshold_bytes: options.large_threshold_bytes,
         cancellation: options.cancellation.clone(),
         progress: options.progress.clone(),
     }

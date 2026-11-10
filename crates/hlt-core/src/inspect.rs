@@ -27,6 +27,9 @@ const DEFAULT_TEXT_INDEX_BYTES: u64 = 4 * 1024 * 1024;
 #[derive(Debug, Clone)]
 pub struct InspectOptions {
     pub max_inflated_bytes: u64,
+    /// 큰 문서(`large_threshold_bytes` 초과) 허락 — `VerifyOptions` 와 같은 뜻.
+    pub allow_large: bool,
+    pub large_threshold_bytes: u64,
     pub max_paragraph_text_bytes: u64,
     pub max_text_index_bytes: u64,
     pub include_image_identities: bool,
@@ -38,6 +41,8 @@ impl Default for InspectOptions {
     fn default() -> Self {
         Self {
             max_inflated_bytes: 4 * 1024 * 1024 * 1024,
+            allow_large: crate::allow_large_default(),
+            large_threshold_bytes: crate::large_threshold_default(),
             max_paragraph_text_bytes: DEFAULT_PARAGRAPH_TEXT_BYTES,
             max_text_index_bytes: DEFAULT_TEXT_INDEX_BYTES,
             include_image_identities: false,
@@ -160,6 +165,8 @@ pub fn inspect_path(path: &Path, options: InspectOptions) -> Result<InspectDocum
         path,
         VerifyOptions {
             max_inflated_bytes: options.max_inflated_bytes,
+            allow_large: options.allow_large,
+            large_threshold_bytes: options.large_threshold_bytes,
             ..VerifyOptions::default()
         },
     ) {
@@ -205,6 +212,7 @@ pub fn inspect_path(path: &Path, options: InspectOptions) -> Result<InspectDocum
         .map_err(|_| inspect_error(ErrorCode::IoError, "inspect_inflate", layout.stream_start))?;
     let compressed = input.take(layout.footer_offset - layout.stream_start);
     let mut decoder = DeflateDecoder::new(compressed);
+    let mut guard = crate::spool::SpoolGuard::new()?;
     let mut spool = crate::spool::spool_file()
         .map_err(|_| inspect_error(ErrorCode::IoError, "inspect_spool", 0))?;
     let mut buffer = [0_u8; BUFFER_SIZE];
@@ -218,6 +226,7 @@ pub fn inspect_path(path: &Path, options: InspectOptions) -> Result<InspectDocum
                 inflated,
             ));
         }
+        guard.account(inflated)?;
         spool
             .write_all(raw)
             .map_err(|_| inspect_error(ErrorCode::IoError, "inspect_spool", 0))?;
@@ -239,6 +248,7 @@ pub fn inspect_path(path: &Path, options: InspectOptions) -> Result<InspectDocum
                 inflated,
             ));
         }
+        guard.account(read as u64)?;
         spool
             .write_all(&buffer[..read])
             .map_err(|_| inspect_error(ErrorCode::IoError, "inspect_spool", inflated))?;

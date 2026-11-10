@@ -5,6 +5,7 @@ mod capabilities;
 mod commands;
 mod editor;
 mod history;
+mod large_prompt;
 mod menu;
 mod recent;
 mod recovery;

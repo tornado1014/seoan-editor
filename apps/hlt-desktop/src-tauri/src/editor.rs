@@ -511,7 +511,7 @@ async fn open_here(
     if let Some(mode) = mode {
         state.set_mode(window.label(), mode);
     }
-    open_path(state, window, path).await.map(Some)
+    open_path(state, window, path).await
 }
 
 /// 지금 문서의 이전 판(새것부터 · 저장할 때 덮인 판).
@@ -1018,7 +1018,7 @@ async fn bake_import(
         new_tab(app, Some(window.label()), Some(output))?;
         return Ok(None);
     }
-    open_path(state, window, output).await.map(Some)
+    open_path(state, window, output).await
 }
 
 /// 새 의견서: 의견서 서식(빈 문서 + 【의견내용】)으로 새 `.HLT` 를 만들고 연다(이 탭에 문서가 있으면 새 탭).
@@ -1048,7 +1048,7 @@ pub async fn editor_new_opinion(
         new_tab(&app, Some(window.label()), Some(output))?;
         return Ok(None);
     }
-    open_path(&state, &window, output).await.map(Some)
+    open_path(&state, &window, output).await
 }
 
 /// 새 명세서(통특기 「국내출원 새문서」): 종류 + 선택사항으로 빈 명세서를 만들고 연다(이 탭에 문서가 있으면 새 탭).
@@ -1076,7 +1076,7 @@ pub async fn editor_new_specification(
         new_tab(&app, Some(window.label()), Some(output))?;
         return Ok(None);
     }
-    open_path(&state, &window, output).await.map(Some)
+    open_path(&state, &window, output).await
 }
 
 /// 닫기(⌘W · 창 닫기 단추 · 앱 끝내기): 화면이 친 글을 다 보낸 뒤 부른다. 고친 것이 있으면 저장을 묻는다.
@@ -1311,25 +1311,35 @@ pub async fn editor_open_pending(
         .ok()
         .and_then(|mut pending| pending.remove(window.label()));
     match path {
-        Some(path) => open_path(&state, &window, path).await.map(Some),
+        Some(path) => open_path(&state, &window, path).await,
         None => Ok(None),
     }
 }
 
+/// 문서를 여는 모든 길의 끝. 큰 문서면 묻고(`large_prompt`) 「취소」면 `Ok(None)` — 현재 문서 · 탭은 그대로.
 async fn open_path(
     state: &State<'_, EditorState>,
     window: &Window,
     path: PathBuf,
-) -> Result<EditorViewDto, CoreError> {
+) -> Result<Option<EditorViewDto>, CoreError> {
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
     let opened = path.clone();
-    let session = tauri::async_runtime::spawn_blocking(move || EditorSession::open(&opened))
-        .await
-        .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "worker", false))??;
-    let mut session = session;
+    let app = window.app_handle().clone();
+    let session = tauri::async_runtime::spawn_blocking(move || {
+        crate::large_prompt::open_or_ask(&app, || EditorSession::open(&opened))
+    })
+    .await
+    .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "worker", false))??;
+    let Some(mut session) = session else {
+        // 취소: 이 창에 맡겨 둔 여는 방식도 거둔다(다음 열기가 물려받지 않게).
+        if let Ok(mut modes) = state.modes.lock() {
+            modes.remove(window.label());
+        }
+        return Ok(None);
+    };
     let mode = state
         .modes
         .lock()
@@ -1362,7 +1372,7 @@ async fn open_path(
     drop(slot);
     if let Some(title) = copy {
         let _ = window.set_title(&title);
-        return Ok(dto);
+        return Ok(Some(dto));
     }
     if let Some(entry) = recovered {
         if let Some(dir) = crate::recovery::dir(window.app_handle()) {
@@ -1372,7 +1382,7 @@ async fn open_path(
             );
         }
         let _ = window.set_title(&format!("복구: {}", entry.title));
-        return Ok(dto);
+        return Ok(Some(dto));
     }
     crate::recent::changed(window.app_handle(), Some(&path));
     // 탭 제목 = 파일 이름.
@@ -1381,7 +1391,7 @@ async fn open_path(
     } else {
         name
     });
-    Ok(dto)
+    Ok(Some(dto))
 }
 
 /// 지금 보기(편집 준비가 끝났는지 화면이 물을 때).
@@ -1781,7 +1791,13 @@ pub async fn editor_compare_pick(
     else {
         return Ok(None);
     };
-    with_session(&state, &window, |session| session.compare_with(&path))?;
+    // 큰 문서면 묻는다 — 「취소」면 기준을 바꾸지 않고 `null`.
+    let asked = crate::large_prompt::open_or_ask(&app, || {
+        with_session(&state, &window, |session| session.compare_with(&path))
+    })?;
+    if asked.is_none() {
+        return Ok(None);
+    }
     Ok(path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned()))
@@ -1807,7 +1823,12 @@ pub async fn editor_compare_history(
         .into_iter()
         .nth(index)
         .ok_or_else(|| refused("history_none"))?;
-    with_session(&state, &window, |session| session.compare_with(&kept.path))?;
+    let asked = crate::large_prompt::open_or_ask(&app, || {
+        with_session(&state, &window, |session| session.compare_with(&kept.path))
+    })?;
+    if asked.is_none() {
+        return Ok(None);
+    }
     Ok(Some(format!("이전 판 — {}", kept.saved)))
 }
 
@@ -2555,7 +2576,7 @@ pub async fn editor_set_fin_amendments(
     keep_history(&app, &fin);
     write_replacing(&fin, &bytes)
         .map_err(|_| CoreError::new(ErrorCode::IoError, "fin_amendments", false))?;
-    open_path(&state, &window, fin).await.map(Some)
+    open_path(&state, &window, fin).await
 }
 
 /// 보정 전후 대비표(워드): 연 상태(최종본 · 보정서 기준)에 견준 바뀐 항목 · 보정 전 · 보정 후. 저장 자리를 묻는다.
