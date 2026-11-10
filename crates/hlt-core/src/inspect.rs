@@ -47,7 +47,7 @@ impl Default for InspectOptions {
 }
 
 pub struct InspectDocument {
-    _spool: tempfile::NamedTempFile,
+    _spool: std::fs::File,
     /// `include_image_payloads` 를 켰을 때만 채워진다. 키는 객체 코드다.
     pub image_payloads: BTreeMap<u32, HltImagePayload>,
     pub summary: InspectSummary,
@@ -205,7 +205,7 @@ pub fn inspect_path(path: &Path, options: InspectOptions) -> Result<InspectDocum
         .map_err(|_| inspect_error(ErrorCode::IoError, "inspect_inflate", layout.stream_start))?;
     let compressed = input.take(layout.footer_offset - layout.stream_start);
     let mut decoder = DeflateDecoder::new(compressed);
-    let mut spool = tempfile::NamedTempFile::new()
+    let mut spool = crate::spool::spool_file()
         .map_err(|_| inspect_error(ErrorCode::IoError, "inspect_spool", 0))?;
     let mut buffer = [0_u8; BUFFER_SIZE];
     let mut inflated = 0_u64;
@@ -255,7 +255,7 @@ pub fn inspect_path(path: &Path, options: InspectOptions) -> Result<InspectDocum
     }
 
     let cell_record = cell_record_size(&layout.header)?;
-    let file = spool.as_file_mut();
+    let file = &mut spool;
     let mut sections = parse_sections(file)?;
     let table_end = SECTION_START + sections.len() as u64 * SECTION_RECORD_SIZE;
     let body_start = find_body_start(file, table_end, inflated)?;

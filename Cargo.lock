@@ -1584,6 +1584,7 @@ dependencies = [
  "image",
  "jpeg-encoder",
  "krilla",
+ "libc",
  "quick-xml",
  "regex",
  "serde",

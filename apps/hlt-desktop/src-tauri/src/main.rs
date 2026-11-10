@@ -293,6 +293,8 @@ mod dock_quit {
 }
 
 fn main() {
+    // 지난 실행이 죽어 남긴 해제본 폴더를 치운다(실패는 무시).
+    hlt_core::sweep_stale_spools();
     capabilities::validate_default_capability()
         .expect("checked-in default capability must remain minimal");
     tauri::Builder::default()

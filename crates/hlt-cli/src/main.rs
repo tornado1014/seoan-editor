@@ -166,6 +166,8 @@ pub struct CellFormatInventoryPage {
 }
 
 fn main() {
+    // 지난 실행이 죽어 남긴 해제본 폴더를 치운다(실패는 무시).
+    hlt_core::sweep_stale_spools();
     let mut stdout = io::stdout().lock();
     let mut stderr = io::stderr().lock();
     let exit_code = run(std::env::args().skip(1), &mut stdout, &mut stderr);

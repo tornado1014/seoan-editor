@@ -49,6 +49,7 @@ mod schema;
 mod sequence_listing;
 mod serde_u64;
 mod source_view;
+mod spool;
 mod submit_check;
 mod table_edit;
 mod template;
@@ -188,6 +189,7 @@ pub use save::{
 };
 pub use schema::{PackageReport, SchemaReport, validate_kipo_package, validate_kipo_xml};
 pub use source_view::{SourceParagraph, paragraph_keys, source_keys, source_paragraphs};
+pub use spool::{spool_dir, sweep_stale_spools};
 pub use submit_check::{
     LiveIssue, Severity, SignRow, SubmitIssue, SubmitKind, double_space_fixes, severity,
     sign_table, submission_checks,

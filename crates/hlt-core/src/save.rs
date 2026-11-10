@@ -402,8 +402,8 @@ pub(crate) fn open_inflated_source(
     let mut source_file =
         File::open(&source_absolute).map_err(|error| io_error(&error, "open", &source_name))?;
     let layout = read_layout(&mut source_file, &source_name)?;
-    let mut spool =
-        tempfile::tempfile().map_err(|error| io_error(&error, "spool_create", &source_name))?;
+    let mut spool = crate::spool::spool_file()
+        .map_err(|error| io_error(&error, "spool_create", &source_name))?;
     inflate_raw_to_writer(&mut source_file, &layout, &mut spool, options)?;
     spool
         .flush()
@@ -569,8 +569,8 @@ fn rewrite_spool_file(
     source
         .seek(SeekFrom::Start(0))
         .map_err(|error| rewrite_io_error(&error, "edit_patch_copy"))?;
-    let mut output =
-        tempfile::tempfile().map_err(|error| rewrite_io_error(&error, "edit_patch_create"))?;
+    let mut output = crate::spool::spool_file()
+        .map_err(|error| rewrite_io_error(&error, "edit_patch_create"))?;
     let mut cursor = 0_u64;
     for patch in patches.iter() {
         copy_exact_bytes(
