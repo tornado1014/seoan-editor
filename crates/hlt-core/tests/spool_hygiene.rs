@@ -17,20 +17,21 @@ static INIT: Once = Once::new();
 /// 시스템 임시 폴더를 훑는 두 테스트가 서로의 파일을 보지 않게 줄 세운다.
 static TEMP_SCAN: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// 이 바이너리의 모든 테스트가 같은 스풀 뿌리를 쓴다(환경변수는 프로세스 전역이라 한 번만 정한다).
+/// 이 바이너리의 모든 테스트가 같은 스풀 바탕을 쓴다(환경변수는 프로세스 전역이라 한 번만 정한다).
+/// 스풀 뿌리는 그 아래 `seoan-spool` 이다.
 fn root() -> PathBuf {
     INIT.call_once(|| {
         let path = match std::env::var_os("SEOAN_SPOOL_DIR") {
             Some(existing) => PathBuf::from(existing), // 자식 프로세스: 부모가 정해 준 폴더
-            None => {
-                let dir = ROOT.get_or_init(|| tempfile::tempdir().unwrap());
-                dir.path().join("seoan-spool")
-            }
+            None => ROOT
+                .get_or_init(|| tempfile::tempdir().unwrap())
+                .path()
+                .to_path_buf(),
         };
         // SAFETY: 모든 테스트가 첫 줄에서 `root()` 를 불러 이 호출이 끝난 뒤에만 환경을 읽는다.
         unsafe { std::env::set_var("SEOAN_SPOOL_DIR", &path) };
     });
-    PathBuf::from(std::env::var_os("SEOAN_SPOOL_DIR").unwrap())
+    PathBuf::from(std::env::var_os("SEOAN_SPOOL_DIR").unwrap()).join("seoan-spool")
 }
 
 /// 일반 파일 중 0바이트보다 큰 것들의 (경로, 크기). 심링크는 따라가지 않는다.
@@ -112,7 +113,7 @@ fn abort_leaves_nothing() {
     let before = temp_dir_tmp_files();
     let output = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "abort_helper", "--ignored", "--nocapture"])
-        .env("SEOAN_SPOOL_DIR", &root)
+        .env("SEOAN_SPOOL_DIR", root.parent().unwrap())
         .env("SEOAN_TEST_FIXTURE", &fixture)
         .output()
         .unwrap();
@@ -146,7 +147,6 @@ fn sweep_removes_only_dead_pid_folders() {
     let dead = (3_000_000..3_000_100).find(|pid| is_dead(*pid)).unwrap();
     let dead_dir = root.join(dead.to_string());
     fs::create_dir_all(&dead_dir).unwrap();
-    fs::write(dead_dir.join("leftover"), b"x").unwrap();
     let own_dir = spool_dir().unwrap();
     assert!(own_dir.ends_with(std::process::id().to_string()));
     // 살아 있는 다른 프로세스(부모)의 폴더는 남는다.
@@ -159,7 +159,8 @@ fn sweep_removes_only_dead_pid_folders() {
     let link = root.join((dead + 1).to_string());
     std::os::unix::fs::symlink(outside.path(), &link).unwrap();
 
-    assert_eq!(sweep_stale_spools(), 1);
+    // 다른 테스트의 죽은 자식이 남긴 빈 폴더도 같이 치워질 수 있다.
+    assert!(sweep_stale_spools() >= 1);
 
     assert!(!dead_dir.exists());
     assert!(own_dir.exists());
@@ -186,4 +187,93 @@ fn sweep_without_root_is_zero() {
         .status()
         .unwrap();
     assert!(status.success());
+}
+
+#[test]
+#[ignore = "자식 프로세스 도우미 — run_sweep 이 부른다"]
+fn sweep_helper() {
+    println!("SWEPT={}", sweep_stale_spools());
+}
+
+/// 자기만의 바탕(`SEOAN_SPOOL_DIR`)으로 sweep 을 자식에서 돌려 지운 수를 돌려준다.
+fn run_sweep(base: &Path) -> usize {
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "sweep_helper", "--ignored", "--nocapture"])
+        .env("SEOAN_SPOOL_DIR", base)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix("SWEPT="))
+        .unwrap()
+        .parse()
+        .unwrap()
+}
+
+fn dead_pid() -> i32 {
+    (3_000_000..3_000_100).find(|pid| is_dead(*pid)).unwrap()
+}
+
+#[test]
+fn sweep_never_deletes_non_empty_folders() {
+    let base = tempfile::tempdir().unwrap();
+    let folder = base.path().join("seoan-spool").join(dead_pid().to_string());
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join("data"), b"x").unwrap();
+    assert_eq!(run_sweep(base.path()), 0);
+    assert!(folder.join("data").exists());
+}
+
+#[test]
+fn sweep_only_looks_under_the_seoan_spool_suffix() {
+    let base = tempfile::tempdir().unwrap();
+    let folder = base.path().join(dead_pid().to_string());
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join("data"), b"x").unwrap();
+    let empty = base.path().join((dead_pid() + 1).to_string());
+    fs::create_dir_all(&empty).unwrap();
+    assert_eq!(run_sweep(base.path()), 0);
+    assert!(folder.join("data").exists());
+    assert!(empty.exists());
+}
+
+#[test]
+fn sweep_skips_pid_names_out_of_range() {
+    let base = tempfile::tempdir().unwrap();
+    let folder = base.path().join("seoan-spool").join("99999999999");
+    fs::create_dir_all(&folder).unwrap();
+    assert_eq!(run_sweep(base.path()), 0);
+    assert!(folder.exists());
+}
+
+#[test]
+fn sweep_ignores_a_symlinked_root() {
+    let base = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let empty = elsewhere.path().join(dead_pid().to_string());
+    fs::create_dir_all(&empty).unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), base.path().join("seoan-spool")).unwrap();
+    assert_eq!(run_sweep(base.path()), 0);
+    assert!(empty.exists());
+}
+
+#[test]
+fn spool_dir_refuses_a_symlinked_root() {
+    let base = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), base.path().join("seoan-spool")).unwrap();
+    let status = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "spool_dir_helper", "--ignored"])
+        .env("SEOAN_SPOOL_DIR", base.path())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert_eq!(fs::read_dir(elsewhere.path()).unwrap().count(), 0);
+}
+
+#[test]
+#[ignore = "자식 프로세스 도우미 — spool_dir_refuses_a_symlinked_root 가 부른다"]
+fn spool_dir_helper() {
+    assert!(spool_dir().is_err());
 }
