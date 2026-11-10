@@ -58,8 +58,10 @@ mod text_policy;
 mod variable_edit;
 mod verify;
 mod write;
+mod xliff;
 
 pub use align::{Alignment, Grade, Lang, Pair, Pin, SourcePara, align_inferred, sentences};
+pub use xliff::{Segment, align_xliff, read_xliff};
 pub use amend_marks::{
     AmendRow, AmendmentMarks, BasisHit, CitationIssue, CitationKind, ClaimBasis, FigureSignatures,
     ParagraphMark, PhraseBasis, amendment_basis, amendment_marks, amendment_marks_with,

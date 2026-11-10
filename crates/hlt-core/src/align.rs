@@ -155,6 +155,36 @@ pub struct Pin {
     pub source_sentence: u32,
 }
 
+/// 편집 문서 청구항 본문(표제 줄은 뺀다): 문단 → 청구항 번호.
+pub(crate) fn target_claims(
+    target: &[EditorParagraph],
+    tkeys: &[Option<String>],
+) -> Vec<Option<u32>> {
+    (0..target.len())
+        .map(|i| {
+            let key = tkeys[i].as_deref()?.strip_prefix("claim:")?;
+            (!target[i].text.trim().starts_with('【')).then(|| key.parse().ok())?
+        })
+        .collect()
+}
+
+/// 편집 문서 문단별 문장 범위(글자 단위) — 글이 없거나 그림 자리표(`_`)뿐인 문단은 빈 목록.
+pub(crate) fn target_sentence_ranges(
+    target: &[EditorParagraph],
+    tclaim: &[Option<u32>],
+) -> Vec<Vec<(u32, u32)>> {
+    (0..target.len())
+        .map(|i| {
+            let text = &target[i].text;
+            if text.chars().all(|c| c == '_' || c.is_whitespace()) {
+                Vec::new()
+            } else {
+                sentences(text, Lang::Ko, tclaim[i].is_some())
+            }
+        })
+        .collect()
+}
+
 /// 짝 없는 재료(워드 · PDF): 닻(손 고정 · 식별번호 · 청구항 번호 · 표제) → 닻 사이 차례 → 문장 수가 같을 때만 문장 짝.
 /// 편집 문서는 국문, 원문은 영문으로 본다.
 pub fn align_inferred(
@@ -181,24 +211,8 @@ pub fn align_inferred(
         }
         sclaim[i] = current;
     }
-    // 편집 문서 청구항 본문(표제 줄은 뺀다).
-    let tclaim: Vec<Option<u32>> = (0..nt)
-        .map(|i| {
-            let key = tkeys[i].as_deref()?.strip_prefix("claim:")?;
-            (!target[i].text.trim().starts_with('【')).then(|| key.parse().ok())?
-        })
-        .collect();
-
-    let tsent: Vec<Vec<(u32, u32)>> = (0..nt)
-        .map(|i| {
-            let text = &target[i].text;
-            if text.chars().all(|c| c == '_' || c.is_whitespace()) {
-                Vec::new()
-            } else {
-                sentences(text, Lang::Ko, tclaim[i].is_some())
-            }
-        })
-        .collect();
+    let tclaim = target_claims(target, &tkeys);
+    let tsent = target_sentence_ranges(target, &tclaim);
     let ssent: Vec<Vec<(u32, u32)>> = (0..ns)
         .map(|i| sentences(&source_texts[i], Lang::En, sclaim[i].is_some()))
         .collect();

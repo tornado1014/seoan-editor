@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xliff xmlns:m="http://www.memsource.com/mxlf/2.0" xmlns="urn:oasis:names:tc:xliff:document:1.2" version="1.2" m:version="2.16" m:level="1">
+<file original="synthetic.docx" source-language="en" target-language="ko" datatype="x-undefined" m:task-id="1" m:file-format="DOC">
+<header><in-ctx-preview-skel bilingual="false"><![CDATA[<html><body>skeleton</body></html>]]></in-ctx-preview-skel></header>
+<body>
+<group id="a1" m:para-id="p1"><context-group name="c"><context context-type="x-ctx">ctx</context></context-group>
+<trans-unit id="u1" m:para-id="p1" m:confirmed="1" m:locked="false" xml:space="preserve"><source>Eta {1}sentence.</source><target>에타 {1}문장.</target><m:editing-stats><m:thinking-time>1</m:thinking-time></m:editing-stats></trans-unit></group>
+<group id="a2" m:para-id="p1">
+<trans-unit id="u2" m:para-id="p1" m:confirmed="1" m:locked="false" xml:space="preserve"><source>Theta   sentence.</source><target>세타
+문장.</target></trans-unit></group>
+<group id="a3" m:para-id="p2">
+<trans-unit id="u3" m:para-id="p2" m:confirmed="0" m:locked="true" xml:space="preserve"><source>Iota.</source><target></target></trans-unit></group>
+</body>
+</file>
+</xliff>

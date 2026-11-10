@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xliff xmlns="urn:oasis:names:tc:xliff:document:1.2" version="1.2">
+<file original="synthetic.docx" source-language="en-US" target-language="ko-KR" datatype="x-ms-word">
+<header><phase-group><phase phase-name="p1" process-name="translation"/></phase-group></header>
+<body>
+<group id="1" restype="x-page">
+<group id="2" restype="x-paragraph" segmented="true">
+<trans-unit id="1-1-1" editStatus="translated"><source>Alpha <bx id="1" rid="1" ctype="x-sup"/>1<ex id="2" rid="1"/> beta.</source><target state="translated">알파 <bx id="1" rid="1" ctype="x-sup"/>1<ex id="2" rid="1"/> 베타.</target><alt-trans alttranstype="mt" score="80"><source>NOT USED</source><target>쓰지 않음</target></alt-trans></trans-unit>
+<ws pos="after"> </ws>
+<trans-unit id="1-1-2" editStatus="translated"><source><bpt id="3" rid="3" ctype="x-fontFormat">&lt;font x&gt;</bpt>Gamma<ept id="4" rid="3">&lt;/font&gt;</ept> delta <ph id="5" ctype="x-shape">&lt;shape/&gt;</ph>epsilon.</source><target state="translated"><bpt id="3" rid="3" ctype="x-fontFormat">&lt;font x&gt;</bpt>감마<ept id="4" rid="3">&lt;/font&gt;</ept> 델타 <ph id="5" ctype="x-shape">&lt;shape/&gt;</ph>엡실론.</target></trans-unit>
+</group>
+<group id="3" restype="x-paragraph" segmented="true">
+<trans-unit id="1-2-1" editStatus="translated"><source>Zeta.</source><target state="translated">제타.</target></trans-unit>
+</group>
+</group>
+</body>
+</file>
+</xliff>
