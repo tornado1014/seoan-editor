@@ -143,12 +143,19 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 .editor:has(.desk-empty:not([hidden])) .seal { left: 1.35rem; }
 .editor-body { position: relative; flex: 1; display: grid; grid-template-columns: 17.5rem 1fr auto auto; min-height: 0; background: var(--desk); }
 /* 원문과 나란히 보기: 문서 오른쪽 칸(문서 폭의 절반쯤). */
-.editor-source { position: relative; width: min(38vw, 42rem); overflow: auto; border-left: 1px solid var(--line); padding: .5rem .9rem; background: var(--surface); font-family: "Times New Roman", serif; font-size: 14px; line-height: 1.55; }
+.editor-source { position: relative; width: min(38vw, 42rem); display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--surface); }
 .editor-source[hidden] { display: none; }
-.editor-source p { margin: 0 0 .6rem; padding: .15rem .3rem; border-radius: 4px; }
-.editor-source p[data-key] { cursor: pointer; }
-.editor-source p.current { background: var(--accent-soft); }
-.editor-source p.unpaired { opacity: .45; }
+.source-head { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .5rem; padding: .35rem .9rem; border-bottom: 1px solid var(--line); font-size: 12px; }
+.source-head .source-title { flex: 1 1 100%; font-weight: 600; }
+.source-head .source-warn { flex: 1 1 100%; color: var(--warning, #a15c00); }
+.source-body { position: relative; flex: 1; overflow: auto; padding: .5rem .9rem; font-family: "Times New Roman", serif; font-size: 14px; line-height: 1.55; user-select: text; }
+.source-body p { margin: 0 0 .6rem; padding: .15rem .3rem; border-radius: 4px; border: 1px solid transparent; }
+.source-body [data-s] { cursor: pointer; border-radius: 3px; }
+.source-body [data-s]:hover { background: var(--accent-soft); }
+.source-body [data-s].current { background: var(--mark); }
+.source-body p.current-para { border: 1px dashed var(--accent); }
+.nk-src { position: absolute; background: var(--mark); opacity: .55; pointer-events: none; mix-blend-mode: multiply; }
+.nk-src.paragraph { opacity: .2; }
 
 /* 구조 창: 책상 왼쪽 가장자리의 목차. 통특기처럼 점선 가지. */
 .editor-outline { overflow: auto; border-right: .5px solid var(--line); padding: .75rem 0; background: var(--sidebar); }

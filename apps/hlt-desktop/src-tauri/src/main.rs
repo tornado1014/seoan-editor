@@ -32,7 +32,7 @@ use editor::{
     editor_replace, editor_replace_cell_text, editor_replace_picture, editor_replace_text,
     editor_replace_text_page_break, editor_replace_texts, editor_resize_image, editor_save,
     editor_save_as, editor_save_csv, editor_set_alignment, editor_set_fin_amendments,
-    editor_set_size, editor_shift_indent, editor_sign_table, editor_source_open, editor_source_open_path,
+    editor_set_size, editor_shift_indent, editor_sign_table,
     editor_live_checks, editor_submission_checks, editor_table_edit, editor_toggle_format, editor_toggle_format_spans,
     editor_undo, editor_view,
 };
@@ -392,8 +392,6 @@ fn main() {
             editor_batch_check,
             editor_batch_stop,
             editor_save_csv,
-            editor_source_open,
-            editor_source_open_path,
             source_pane::editor_source_pick,
             source_pane::editor_source_load,
             source_pane::editor_source_align,

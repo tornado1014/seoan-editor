@@ -664,32 +664,6 @@ async fn import_picked(
     })
 }
 
-/// 원문과 나란히 보기: 영문 원문(.docx)을 골라 문단 + 짝 이름을 준다(취소 = `null`).
-#[tauri::command]
-pub async fn editor_source_open(
-    app: AppHandle,
-) -> Result<Option<Vec<hlt_core::SourceParagraph>>, CoreError> {
-    let Some(path) = app
-        .dialog()
-        .file()
-        .set_title("나란히 볼 원문(영문 .docx)")
-        .add_filter("Word", &["docx"])
-        .blocking_pick_file()
-        .and_then(|picked| picked.into_path().ok())
-    else {
-        return Ok(None);
-    };
-    source_paragraphs_of(path).await.map(Some)
-}
-
-/// 놓은 원문(.docx) — 고르기 창만 건너뛴다.
-#[tauri::command]
-pub async fn editor_source_open_path(
-    path: String,
-) -> Result<Vec<hlt_core::SourceParagraph>, CoreError> {
-    source_paragraphs_of(dropped(path, &["docx"])?).await
-}
-
 /// 화면이 넘긴 놓은 파일 경로 — 고르기 창의 확장자 필터와 같은 것만 받는다.
 fn dropped(path: String, extensions: &[&str]) -> Result<PathBuf, CoreError> {
     let path = PathBuf::from(path);
@@ -702,12 +676,6 @@ fn dropped(path: String, extensions: &[&str]) -> Result<PathBuf, CoreError> {
     } else {
         Err(CoreError::new(ErrorCode::PathNotAllowed, "select", false))
     }
-}
-
-async fn source_paragraphs_of(path: PathBuf) -> Result<Vec<hlt_core::SourceParagraph>, CoreError> {
-    tauri::async_runtime::spawn_blocking(move || hlt_core::source_paragraphs(&path))
-        .await
-        .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "worker", false))?
 }
 
 /// 지금 판 문단마다 원문 짝 이름(`p:0001` · `claim:3` · 없으면 `null`) — 화면 문단 차례 그대로.

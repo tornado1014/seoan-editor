@@ -14,12 +14,14 @@ export function summarize(issues: LiveIssueDto[]) {
   return { errors, warnings: issues.length - errors, byParagraph };
 }
 
-/** 상시 점검 — 고칠 때마다 `touch()`, 손을 멈추고 `delayMs` 뒤 한 번 가져온다. 낡은 판의 결과는 버리고 다시 예약한다. */
-export function createLiveChecks(o: {
-  fetch(): Promise<{ revision: number; issues: LiveIssueDto[] }>;
+/**
+ * 손을 멈춘 뒤 한 번 가져오는 틀 — 고칠 때마다 `touch()`, `delayMs` 뒤 가져온다.
+ * 낡은 판(`revision` 이 화면 판과 다름)의 결과는 버리고 다시 예약한다. `stop()` 뒤에 도착한 결과도 버린다.
+ */
+export function createRevisionedFetch<T extends { revision: number }>(o: {
+  fetch(): Promise<T | null>;
   revision(): number;
-  draw(byParagraph: Map<string, LiveIssueDto[]>): void;
-  strip(errors: number, warnings: number): void;
+  apply(result: T): void;
   delayMs?: number;
 }) {
   let timer = 0;
@@ -34,9 +36,7 @@ export function createLiveChecks(o: {
     const result = await o.fetch().catch(() => null);
     if (mine !== generation || !result) return; // 닫았다 · 가져오지 못했다
     if (result.revision !== o.revision()) return schedule(); // 그 사이 화면이 바뀌었다
-    const sum = summarize(result.issues);
-    o.draw(sum.byParagraph);
-    o.strip(sum.errors, sum.warnings);
+    o.apply(result);
   }
   return {
     touch: schedule,
@@ -46,4 +46,24 @@ export function createLiveChecks(o: {
       window.clearTimeout(timer);
     },
   };
+}
+
+/** 상시 점검 — 고칠 때마다 `touch()`, 손을 멈추고 `delayMs` 뒤 한 번 가져온다. */
+export function createLiveChecks(o: {
+  fetch(): Promise<{ revision: number; issues: LiveIssueDto[] }>;
+  revision(): number;
+  draw(byParagraph: Map<string, LiveIssueDto[]>): void;
+  strip(errors: number, warnings: number): void;
+  delayMs?: number;
+}) {
+  return createRevisionedFetch({
+    fetch: o.fetch,
+    revision: o.revision,
+    delayMs: o.delayMs,
+    apply(result) {
+      const sum = summarize(result.issues);
+      o.draw(sum.byParagraph);
+      o.strip(sum.errors, sum.warnings);
+    },
+  });
 }

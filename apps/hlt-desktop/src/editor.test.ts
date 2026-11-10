@@ -84,6 +84,8 @@ let compareHistoryAnswer: string | null = null;
 let amendAnswer: unknown = null;
 let batchAnswer: unknown = null;
 let sourceAnswer: unknown = null;
+let sourceRemembered: string | null = null;
+let sourceLoadError: unknown = null;
 let findError: unknown = null;
 let renumberAnswer: unknown[] = [];
 let signAnswer: unknown[] = [];
@@ -117,6 +119,8 @@ beforeEach(() => {
   amendAnswer = null;
   batchAnswer = null;
   sourceAnswer = null;
+  sourceRemembered = null;
+  sourceLoadError = null;
   findError = null;
   renumberAnswer = [];
   signAnswer = [];
@@ -189,8 +193,20 @@ beforeEach(() => {
       case 'editor_batch_generate':
       case 'editor_batch_check':
         return batchAnswer;
-      case 'editor_source_open':
+      case 'editor_source_pick':
         return sourceAnswer;
+      case 'editor_source_load':
+        if (sourceLoadError) throw sourceLoadError;
+        return sourceAnswer;
+      case 'editor_source_remembered':
+        return sourceRemembered;
+      case 'editor_source_align':
+        return { ...(sourceAnswer as { alignment: object }).alignment, revision: viewRevision };
+      case 'editor_source_pin':
+      case 'editor_source_unpin_all':
+        return (sourceAnswer as { alignment: object }).alignment;
+      case 'editor_source_close':
+        return undefined;
       case 'editor_paragraph_keys':
         return keysAnswer;
       case 'editor_sign_table':
@@ -389,6 +405,29 @@ function press(root: HTMLElement, key: string) {
 const q = (root: HTMLElement, selector: string) => root.querySelector<HTMLButtonElement>(selector)!;
 const last = (name: string) => calls.filter(([command]) => command === name).at(-1);
 const glyphs = (root: HTMLElement) => Array.from(root.querySelectorAll('.nk-glyph')).map((glyph) => glyph.textContent).join('');
+
+/** 원문 둘(문장 하나씩) ↔ 역문 첫 문단의 두 문장. 역문 문장 범위는 UTF-16 단위로 이미 받는다. */
+const xliffSource = (extra: Record<string, unknown> = {}) => ({
+  name: 'a.xlf',
+  kind: 'xliff',
+  pins: 0,
+  pages: null,
+  pages_with_text: null,
+  alignment: {
+    revision: 1,
+    source: [
+      { key: null, text: 'First.', sentences: [[0, 6]] },
+      { key: null, text: 'Second.', sentences: [[0, 7]] },
+    ],
+    target_sentences: [['paragraph:0', [[0, 4], [5, 8]]]],
+    pairs: [
+      { target_id: 'paragraph:0', target_sentence: 0, source_paragraph: 0, source_sentence: 0, grade: 'sentence' },
+      { target_id: 'paragraph:0', target_sentence: 1, source_paragraph: 1, source_sentence: 0, grade: 'sentence' },
+    ],
+    dropped_pins: [],
+  },
+  ...extra,
+});
 
 describe('page editing', () => {
   test('typing shows at once and becomes one paragraph edit after a pause', async () => {
@@ -1155,42 +1194,121 @@ describe('page editing', () => {
     expect(toCsv([['a,b', '그는 "예"'], ['줄\n바꿈', '']])).toBe('"a,b","그는 ""예"""\r\n"줄\n바꿈",""');
   });
 
-  test('원문과 나란히: 짝 수 · 짝 없는 원문은 흐리게 · 원문을 누르면 그 문단 · 스크롤을 따라 원문 · 다시 누르면 닫기', async () => {
-    texts = ['【발명의 설명】', '【기술분야】', '가', '나', '【청구범위】', '【청구항 1】', '장치.'];
-    sourceAnswer = [
-      { key: null, text: 'TITLE' },
-      { key: 'p:0001', text: '[0001] One.' },
-      { key: 'p:0002', text: '[0002] Two.' },
-      { key: 'p:0009', text: '[0009] Nine.' },
-      { key: 'claim:1', text: 'A device.' },
-    ];
-    keysAnswer = [null, null, 'p:0001', 'p:0002', null, 'claim:1', 'claim:1'];
+  const sourcePane = (root: HTMLElement) => root.querySelector<HTMLElement>('.editor-source')!;
+  const sourceSpan = (root: HTMLElement, p: number) => sourcePane(root).querySelector<HTMLElement>(`p[data-p="${p}"] [data-s]`)!;
+
+  test('원문 나란히(XLIFF): 머리 글 · 커서를 둘째 문장에 두면 원문 둘째 세그먼트가 .current 이고 역문 문장이 칠해진다 · 다시 누르면 닫기', async () => {
+    texts = ['가나다. 라마.', '바사.'];
+    sourceAnswer = xliffSource();
     const root = await open();
     q(root, '[data-action="source"]').click();
     await settle(10);
-    const pane = root.querySelector<HTMLElement>('.editor-source')!;
+    const pane = sourcePane(root);
     expect(pane.hidden).toBe(false);
-    expect(root.querySelector('.editor-status')!.textContent).toBe('원문 4곳 중 3곳 짝지음(식별번호 · 청구항 번호)');
-    expect([...pane.querySelectorAll('.unpaired')].map((p) => p.textContent)).toEqual(['[0009] Nine.']);
-    [...pane.querySelectorAll<HTMLElement>('p')].find((p) => p.textContent === 'A device.')!.click();
-    type(root, 'X');
-    await settle(500);
-    expect(last('editor_replace_text')).toEqual(['editor_replace_text', expect.objectContaining({ paragraphId: 'paragraph:5' })]);
-    // 고친 뒤 판이 바뀌면 짝을 다시 받는다(이제 p:0009 도 짝이 있다).
-    keysAnswer = [null, null, 'p:0001', 'p:0002', null, 'claim:1', 'claim:1', 'p:0009'];
-    type(root, 'Y');
-    await settle(500);
-    expect(pane.querySelectorAll('.unpaired').length).toBe(0);
-    // 화면 맨 위 = 다섯째 줄(【청구범위】 · 짝 이름 없음 → 앞 문단 「나」 · p:0002).
-    const pagesRoot = root.querySelector<HTMLElement>('.editor-pages')!;
-    pagesRoot.getBoundingClientRect = () => ({ top: 0, bottom: 800 }) as DOMRect;
-    root.querySelector<HTMLElement>('.nk-page')!.getBoundingClientRect = () => ({ top: -180 * 1.3, bottom: 900 }) as DOMRect;
-    pagesRoot.dispatchEvent(new Event('scroll'));
-    await settle(50);
-    expect(pane.querySelector('.current')!.textContent).toBe('[0002] Two.');
+    expect(pane.querySelector('.source-title')!.textContent).toBe('a.xlf · 문장 짝 2 · 문단만 0 · 손 고정 0');
+    expect(last('editor_source_pick')).toBeDefined();
+    expect(sourceSpan(root, 0).classList.contains('current')).toBe(false);
+    clickAt(root, 105, 104); // 첫 문단 둘째 문장
+    expect(sourceSpan(root, 1).classList.contains('current')).toBe(true);
+    expect(sourceSpan(root, 0).classList.contains('current')).toBe(false);
+    expect(root.querySelectorAll('.nk-src.sentence')).toHaveLength(1);
+    expect(root.querySelector<HTMLElement>('.nk-src')!.style.pointerEvents).toBe(''); // 닿음은 CSS(pointer-events: none)
+    clickAt(root, 60, 104); // 첫 문장
+    expect(sourceSpan(root, 0).classList.contains('current')).toBe(true);
+    clickAt(root, 60, 124); // 짝 없는 문단 → 칠하지 않는다
+    expect(pane.querySelectorAll('.current, .current-para')).toHaveLength(0);
+    expect(root.querySelectorAll('.nk-src')).toHaveLength(0);
     q(root, '[data-action="source"]').click();
     await settle(10);
     expect(pane.hidden).toBe(true);
+    expect(root.querySelectorAll('.nk-src')).toHaveLength(0);
+  });
+
+  test('원문 문장을 누르면 역문 짝 문장 처음에 커서가 놓인다(고침이 그 자리로 간다)', async () => {
+    texts = ['가나다. 라마.', '바사.'];
+    sourceAnswer = xliffSource();
+    const root = await open();
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    sourceSpan(root, 1).click();
+    type(root, 'X');
+    await settle(500);
+    expect(last('editor_replace_text')![1]).toEqual(expect.objectContaining({ paragraphId: 'paragraph:0', text: '가나다. X라마.' }));
+  });
+
+  test('손 고정: ⌥-누르기는 지금 커서 문장과 그 원문 문장으로 고정한다 · 커서가 없으면 안내', async () => {
+    texts = ['가나다. 라마.', '바사.'];
+    sourceAnswer = xliffSource();
+    const root = await open();
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    sourceSpan(root, 0).dispatchEvent(new MouseEvent('click', { bubbles: true, altKey: true }));
+    expect(root.querySelector('.editor-status')!.textContent).toBe('먼저 역문 문장에 커서를 두세요.');
+    expect(last('editor_source_pin')).toBeUndefined();
+    clickAt(root, 105, 104);
+    sourceSpan(root, 0).dispatchEvent(new MouseEvent('click', { bubbles: true, altKey: true }));
+    await settle(10);
+    expect(last('editor_source_pin')).toEqual([
+      'editor_source_pin',
+      { pin: { target_id: 'paragraph:0', target_sentence: 1, source_paragraph: 0, source_sentence: 0 } },
+    ]);
+    expect(sourcePane(root).querySelector('.source-title')!.textContent).toContain('손 고정 1');
+  });
+
+  test('「손 고정 지우기」는 한 번 더 눌러야 지운다 · 글을 못 읽은 PDF 는 알린다', async () => {
+    texts = ['가나다. 라마.', '바사.'];
+    sourceAnswer = xliffSource({ kind: 'pdf', name: 'a.pdf', pins: 2, pages: 10, pages_with_text: 2 });
+    const root = await open();
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    const pane = sourcePane(root);
+    expect(pane.querySelector('.source-warn')!.textContent).toBe('10쪽 중 2쪽에서만 글을 읽었습니다');
+    const unpin = [...pane.querySelectorAll<HTMLButtonElement>('.source-head button')].find((b) => b.textContent === '손 고정 지우기')!;
+    unpin.click();
+    await settle(10);
+    expect(last('editor_source_unpin_all')).toBeUndefined();
+    unpin.click();
+    await settle(10);
+    expect(calls.filter(([command]) => command === 'editor_source_unpin_all')).toHaveLength(1);
+    expect(pane.querySelector('.source-title')!.textContent).toContain('손 고정 0');
+  });
+
+  test('문서를 닫았다 열고 원문 나란히를 누르면 고르기 창 없이 기억된 원문을 연다', async () => {
+    texts = ['가나다. 라마.', '바사.'];
+    sourceAnswer = xliffSource();
+    sourceRemembered = '/d/a.xlf';
+    const root = await open();
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    expect(last('editor_source_load')).toEqual(['editor_source_load', { path: '/d/a.xlf' }]);
+    expect(last('editor_source_pick')).toBeUndefined();
+    q(root, '[data-action="close-document"]').click();
+    await settle(20);
+    expect(sourcePane(root).hidden).toBe(true);
+  });
+
+  test('판이 바뀌면 다시 정렬을 받아 원문 창을 고친다(낡은 판 결과는 버리고 다시 받는다)', async () => {
+    texts = ['가나다. 라마.', '바사.'];
+    sourceAnswer = xliffSource();
+    const root = await open();
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    clickAt(root, 60, 104);
+    calls.length = 0;
+    type(root, 'X');
+    await settle(1800);
+    expect(calls.filter(([command]) => command === 'editor_source_align').length).toBeGreaterThan(0);
+    expect(sourcePane(root).querySelectorAll('p[data-p]')).toHaveLength(2);
+  });
+
+  test('원문 열기가 실패하면 까닭을 알린다 · 읽는 중에는 안내를 보인다', async () => {
+    sourceLoadError = { code: 'verification_failed', phase: 'source' };
+    sourceRemembered = '/d/a.xlf';
+    const root = await open();
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    expect(root.querySelector('.editor-status')!.textContent).toContain('원문 열기 실패');
+    expect(sourcePane(root).hidden).toBe(true);
   });
 
   test('찾기 옵션: Aa · 단어 · .* 토글이 찾기 조건에 실리고 · 정규식 모두 바꾸기는 조건을 넘긴다 · 잘못된 정규식은 까닭', async () => {
@@ -2667,6 +2785,26 @@ describe('파일 끌어다 놓기', () => {
     expect(byButton).toEqual(['editor_replace_text', 'editor_open']);
     expect(byDrop).toEqual(byButton);
     expect(last('editor_open_dropped')).toEqual(['editor_open_dropped', { path: '/a/명세서.HLT' }]);
+  });
+
+  test('원문 창 위에 놓은 .pdf · .docx · XLIFF 는 원문으로 걸린다 · 모르는 확장자는 알린다', async () => {
+    texts = ['가나다. 라마.', '바사.'];
+    sourceAnswer = xliffSource();
+    const root = await open();
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    root.querySelector<HTMLElement>('.editor-source')!.getBoundingClientRect = () => ({ left: 0, right: 100, top: 0, bottom: 100 }) as DOMRect;
+    for (const name of ['a.pdf', 'b.docx', 'c.mxliff']) {
+      calls.length = 0;
+      drop([`/a/${name}`]);
+      await settle(30);
+      expect(last('editor_source_load')).toEqual(['editor_source_load', { path: `/a/${name}` }]);
+    }
+    calls.length = 0;
+    drop(['/a/메모.txt']);
+    await settle(30);
+    expect(root.querySelector('.editor-status')!.textContent).toContain('열 수 없는 파일입니다 — 메모.txt');
+    expect(calls.filter(([command]) => /source/.test(command))).toEqual([]);
   });
 
   test('모르는 파일 · 걸 수 없는 원문은 이름을 알리고 백엔드를 부르지 않는다', async () => {

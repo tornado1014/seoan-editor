@@ -362,11 +362,6 @@ export const editorBatchGenerate = () => invoke<BatchRowDto[] | null>('editor_ba
 export const editorBatchCheck = () => invoke<BatchCheckRowDto[] | null>('editor_batch_check');
 export const editorBatchStop = () => invoke<void>('editor_batch_stop');
 /** 표를 CSV 로 저장(이름을 묻는다 · 취소 = `null`). */
-/** 원문과 나란히 보기: 원문 문단 + 짝 이름(`p:0001` · `claim:3`). */
-export type SourceParagraphDto = { key: string | null; text: string };
-export const editorSourceOpen = () => invoke<SourceParagraphDto[] | null>('editor_source_open');
-/** 놓은 원문(.docx). */
-export const editorSourceOpenPath = (path: string) => invoke<SourceParagraphDto[]>('editor_source_open_path', { path });
 /**
  * 원문 창(문장 단위). 모든 문장 범위 `[start, end)` 는 UTF-16 코드 단위 — JS 문자열 오프셋 그대로 쓴다(변환은 Rust 가 했다).
  * 손 고정 `PinDto` 는 문장 번호(0부터)라 단위 변환이 없다.
