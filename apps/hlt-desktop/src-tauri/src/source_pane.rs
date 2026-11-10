@@ -217,6 +217,28 @@ fn slot_error(phase: &str) -> CoreError {
     CoreError::new(ErrorCode::VerificationFailed, phase, false)
 }
 
+/// 한 문서를 가리키는 열쇠: (문서 경로, 세션 표지). 세션 표지 = 판 번호의 윗부분 — 세션마다 달라 경로 없는 문서도 가른다.
+type DocKey = (Option<PathBuf>, Option<u64>);
+
+fn doc_key(slot: &Slot) -> DocKey {
+    (
+        slot.source.clone(),
+        slot.session.as_ref().map(|s| s.revision() >> 32),
+    )
+}
+
+/// 원문을 읽기 시작할 때의 문서가 아직 이 탭의 문서인가 — 아니면 `editor_closed` 로 거절한다(원문 · 손 고정은 넣지도 적지도 않는다).
+fn admit_source(slot: &Slot, key: &DocKey) -> Result<(), CoreError> {
+    if slot.session.is_none() || doc_key(slot) != *key {
+        return Err(CoreError::new(
+            ErrorCode::PathNotAllowed,
+            "editor_closed",
+            false,
+        ));
+    }
+    Ok(())
+}
+
 /// 지금 문서 문단 · 판 번호 · 든 원문을 떠 간다. 원문이 없으면 `None`, 문서가 없으면 오류.
 fn snapshot(slot: &Slot) -> Result<Option<Snapshot>, CoreError> {
     let Some(held) = &slot.held else {
@@ -263,6 +285,9 @@ fn persist_to(file: &Path, slot: &Slot) -> Result<(), String> {
 /// 옛 열쇠가 있으면 새 열쇠로 옮기고, 없는데 든 원문이 있으면 새 열쇠로 적는다.
 pub fn retarget(file: Option<&Path>, slot: &mut Slot, new: PathBuf) -> Result<(), String> {
     let old = slot.source.replace(new.clone());
+    if old.as_deref() == Some(new.as_path()) {
+        return Ok(()); // 같은 경로로 다시 저장(⌘S) — 기억 파일을 다시 쓰지 않는다
+    }
     let Some(file) = file else {
         return Ok(());
     };
@@ -301,10 +326,11 @@ async fn load(
 ) -> Result<SourceDto, CoreError> {
     kind_of(&path)?;
     // 이 문서에 같은 원문으로 기억해 둔 손 고정(지문이 맞을 때만 돌아온다).
-    let (file, doc) = (
+    let (file, key) = (
         memory_file(app),
-        with_slot(state, window, |slot| Ok(slot.source.clone()))?,
+        with_slot(state, window, |slot| Ok(doc_key(slot)))?,
     );
+    let doc = key.0.clone();
     let wanted = path.clone();
     let held = tauri::async_runtime::spawn_blocking(move || {
         let mut held = read_source(&wanted)?;
@@ -319,13 +345,8 @@ async fn load(
     .await
     .map_err(|_| slot_error("worker"))??;
     let (snapshot, mut dto) = with_slot(state, window, |slot| {
-        if slot.session.is_none() {
-            return Err(CoreError::new(
-                ErrorCode::PathNotAllowed,
-                "editor_closed",
-                false,
-            ));
-        }
+        // 읽는 사이 같은 탭의 문서가 바뀌었으면(저장 이름 · 다른 문서) 이 원문은 그 문서 것이 아니다.
+        admit_source(slot, &key)?;
         let dto = SourceDto {
             name: held
                 .path
@@ -689,6 +710,69 @@ mod tests {
         retarget(Some(&file), &mut slot, b.clone()).unwrap();
         assert_eq!(source_memory::recall(&file, &b).unwrap().pins, vec![pin0()]);
         assert_eq!(source_memory::recall(&file, &a), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn new_hlt(dir: &Path, name: &str) -> EditorSession {
+        let hlt = dir.join(name);
+        hlt_core::save_new_specification(&hlt, hlt_core::SpecKind::Patent, Default::default())
+            .unwrap();
+        EditorSession::open(&hlt).unwrap()
+    }
+
+    #[test]
+    fn a_source_read_for_another_document_is_refused_and_remembers_nothing() {
+        let dir = std::env::temp_dir().join(format!("seoan-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("source-memory.json");
+        let (a, b) = (dir.join("A.HLT"), dir.join("B.HLT"));
+        let mut slot = Slot::default();
+        slot.swap_session(Some(new_hlt(&dir, "A.HLT")));
+        slot.source = Some(a.clone());
+        let key = doc_key(&slot);
+        // 같은 문서면 받아들인다.
+        assert!(admit_source(&slot, &key).is_ok());
+        // 읽는 사이 같은 탭에서 문서 B 로 바뀌었다(열쇠 · 세션 둘 다).
+        slot.swap_session(Some(new_hlt(&dir, "B.HLT")));
+        slot.source = Some(b.clone());
+        // `load` 의 순서 그대로: 거절되면 원문을 넣지도 적지도 않는다.
+        let error = admit_source(&slot, &key).unwrap_err();
+        assert_eq!(error.phase, "editor_closed");
+        assert!(slot.held.is_none());
+        assert!(!file.exists());
+        // 경로만 바뀐 경우(다른 이름으로 저장)와 경로 없는 문서끼리 바뀐 경우도 거절한다.
+        let mut renamed = Slot::default();
+        renamed.swap_session(Some(new_hlt(&dir, "C.HLT")));
+        renamed.source = Some(a);
+        let key = doc_key(&renamed);
+        renamed.source = Some(b);
+        assert!(admit_source(&renamed, &key).is_err());
+        let mut pathless = Slot::default();
+        pathless.swap_session(Some(new_hlt(&dir, "D.HLT")));
+        let key = doc_key(&pathless);
+        pathless.swap_session(Some(new_hlt(&dir, "E.HLT")));
+        assert!(admit_source(&pathless, &key).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn saving_under_the_same_path_does_not_rewrite_the_memory_file() {
+        let dir = std::env::temp_dir().join(format!("seoan-retarget-c-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = dir.join("source-memory.json");
+        let mut slot = Slot::default();
+        slot.held = Some(held_from_file(&dir, vec![pin0()]));
+        let a = dir.join("A.HLT");
+        std::fs::write(&a, "x").unwrap();
+        slot.source = Some(a.clone());
+        retarget(Some(&file), &mut slot, a.clone()).unwrap();
+        assert!(!file.exists(), "같은 경로면 아무것도 쓰지 않는다");
+        // 다른 경로로는 종전처럼 적는다.
+        let b = dir.join("B.HLT");
+        std::fs::write(&b, "y").unwrap();
+        retarget(Some(&file), &mut slot, b.clone()).unwrap();
+        assert!(source_memory::recall(&file, &b).is_some());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
