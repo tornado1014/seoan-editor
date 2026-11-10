@@ -759,6 +759,8 @@ export function mountEditor(root: HTMLElement): void {
 
   function layout(next: EditorViewDto, keepScroll: boolean) {
     const scroll = pagesRoot.scrollTop;
+    // 쪽 상자를 새로 짓는데(keepScroll 거짓) 보기 객체가 다르면 다른 문서다(배율 바꿈은 같은 객체로 다시 짓는다).
+    const newDocument = !keepScroll && view !== null && next !== view;
     view = next;
     deskEmpty.hidden = true;
     const replaced = next.cp949_substitutions ?? [];
@@ -791,8 +793,8 @@ export function mountEditor(root: HTMLElement): void {
     }
     if (keepScroll) pagesRoot.scrollTop = scroll;
     renderOutline(next);
-    if (pinned.shown) pinned.render(next.paragraphs);
-    else if (settings?.pinned_on) showPinned();
+    if (pinned.shown && !newDocument) pinned.render(next.paragraphs);
+    else if (pinned.shown || pinnedWanted) showPinned();
     void refreshClaims(next);
     void refreshKeys(next);
     // 자동 저장: 판이 바뀔 때마다(고침 · 되돌리기) 2분을 다시 센다 — 손을 멈추면 복구본을 둔다(고친 것이 없으면 지운다).
@@ -940,6 +942,8 @@ export function mountEditor(root: HTMLElement): void {
       if (page !== undefined) pageHost(page)?.scrollIntoView({ block: 'start' });
     },
   });
+  /** 고정 창을 켜 둘지 — 단추가 동기로 바꾼다(설정은 시작할 때 · 처음 받을 때만 씨앗). 저장이 끝나기 전에 온 판이 닫은 창을 다시 열지 않게. */
+  let pinnedWanted = false;
   function showPinned() {
     if (!view) return;
     pinned.render(view.paragraphs);
@@ -3093,7 +3097,10 @@ export function mountEditor(root: HTMLElement): void {
     autosaveMs = Math.max(1, next.autosave_minutes) * 60_000;
     setPageZoom(next.zoom);
     pinnedHost.style.height = `${next.pinned_height}px`;
-    if (first && next.pinned_on && view && !pinned.shown) showPinned();
+    if (first) {
+      pinnedWanted = next.pinned_on;
+      if (pinnedWanted && view && !pinned.shown) showPinned();
+    }
     if (first || marksChanged) {
       showMarks = next.marks_default;
       q<HTMLButtonElement>('[data-action="marks"]').setAttribute('aria-pressed', String(showMarks));
@@ -3997,9 +4004,11 @@ export function mountEditor(root: HTMLElement): void {
       }
       case 'pinned': {
         if (pinned.shown) {
+          pinnedWanted = false;
           hidePinned();
           void saveSettings({ pinned_on: false });
         } else {
+          pinnedWanted = true;
           showPinned();
           void saveSettings({ pinned_on: true });
         }

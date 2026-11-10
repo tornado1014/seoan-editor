@@ -89,6 +89,8 @@ let basisAnswer: unknown = null;
 let submitAnswer: unknown[] = [];
 let settingsAnswer: unknown = null;
 let historyAnswer: unknown[] = [];
+let historyOpened: EditorViewDto | null = null;
+let settingsGate: Promise<void> | null = null;
 let saveError: unknown = null;
 /** 서열목록 넣기 답: 'insert' = 넣는다 · 'cancel' = 파일 고르기 취소 · 그 밖 = 그 값을 던진다. */
 let sequenceAnswer: unknown = 'insert';
@@ -115,6 +117,8 @@ beforeEach(() => {
   submitAnswer = [];
   settingsAnswer = null;
   historyAnswer = [];
+  historyOpened = null;
+  settingsGate = null;
   saveError = null;
   sequenceAnswer = 'insert';
   calls.length = 0;
@@ -277,11 +281,11 @@ beforeEach(() => {
       case 'settings_get':
         return settingsAnswer;
       case 'settings_set':
-        return args!.settings;
+        return settingsGate ? settingsGate.then(() => args!.settings) : args!.settings;
       case 'editor_history_list':
         return historyAnswer;
       case 'editor_history_open':
-        return null;
+        return historyOpened;
       case 'editor_open_read_only':
         return { ...view(texts), editable: false, read_only: true };
       case 'editor_close_document':
@@ -1442,6 +1446,58 @@ describe('page editing', () => {
     expect(pane.hidden).toBe(false);
     expect([...pane.querySelectorAll('p')].map((p) => p.textContent)).toEqual(['【청구범위】', '【청구항 1】', '다른 문서']);
     await settle(500);
+  });
+
+  test('고정 창: 탭의 문서가 다른 문서로 바뀌면 새 문서의 청구범위에서 다시 시작한다', async () => {
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetTop');
+    Object.defineProperty(HTMLElement.prototype, 'offsetTop', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.parentElement ? [...this.parentElement.children].indexOf(this) * 20 : 0;
+      },
+    });
+    try {
+      texts = ['【발명의 설명】', '가', '나', '【청구범위】', '【청구항 1】'];
+      settingsAnswer = { ...SETTINGS, zoom: 1 };
+      historyAnswer = [{ saved: '2026-10-24 13:00:00', size: 4096 }];
+      const root = await open();
+      await settle(10);
+      q(root, '[data-action="pinned"]').click();
+      await settle(10);
+      const body = root.querySelector<HTMLElement>('.pinned-body')!;
+      expect(body.scrollTop).toBe(60); // 문서 A: 청구범위(넷째 문단)에서 시작
+      body.scrollTop = 0; // 청구범위에서 멀어졌다
+      texts = ['머리', '【청구범위】', '【청구항 1】', '다른 문서'];
+      historyOpened = view(texts); // 같은 탭의 보기가 다른 문서로 바뀐다(clearDocument 를 거치지 않는다)
+      q(root, '[data-action="history"]').click();
+      await settle(10);
+      root.querySelector<HTMLButtonElement>('.history-open')!.click();
+      await settle(10);
+      expect(body.querySelector('p[data-id="paragraph:3"]')!.textContent).toBe('다른 문서');
+      expect(body.scrollTop, '새 문서의 청구범위(둘째 문단)에서 시작').toBe(20);
+      await settle(500);
+    } finally {
+      if (original) Object.defineProperty(HTMLElement.prototype, 'offsetTop', original);
+    }
+  });
+
+  test('고정 창: 끄고 설정 저장이 끝나기 전에 판이 와도 닫힌 채다', async () => {
+    texts = ['【청구범위】', '가나다'];
+    settingsAnswer = { ...SETTINGS, zoom: 1, pinned_on: true };
+    const root = await open();
+    await settle(10);
+    const pane = root.querySelector<HTMLElement>('.editor-pinned')!;
+    expect(pane.hidden).toBe(false);
+    let release = () => {};
+    settingsGate = new Promise<void>((resolve) => (release = resolve));
+    q(root, '[data-action="pinned"]').click(); // 끈다 — 저장은 아직 끝나지 않았다
+    clickAt(root, 63, 104);
+    type(root, 'X');
+    await settle(500); // 고침 → 새 판이 온다
+    expect(pane.hidden).toBe(true);
+    release();
+    await settle(10);
+    expect(pane.hidden).toBe(true);
   });
 
   test('고정 창: 설정 pinned_on 이 참이면 문서를 열 때 켜진다', async () => {
