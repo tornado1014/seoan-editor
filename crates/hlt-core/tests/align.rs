@@ -527,3 +527,87 @@ fn leading_figure_numbers_must_agree_before_a_sentence_pair() {
     assert_eq!(al.pairs.len(), 2);
     assert!(al.pairs.iter().all(|p| p.grade == Grade::Sentence));
 }
+
+// ---- 고침 1차 보완 ----
+
+#[test]
+fn only_the_first_unit_of_a_claim_loses_its_leading_number() {
+    // 한 문단 안 둘째 줄 맨 앞 「13.」 은 본문 — 증거로 남아 역문(없음)과 어긋나면 내려간다.
+    let mut full = vec!["What is claimed is:".to_string()];
+    for n in 1..12 {
+        full.push(format!("{n}. A thing."));
+    }
+    full.push("12. A device comprising:\n13. a layer;".into());
+    let mut tgt: Vec<EditorParagraph> = Vec::new();
+    for n in 1..12 {
+        tgt.push(para(&format!("h{n}"), &format!("【청구항 {n}】"), None));
+        tgt.push(para(&format!("b{n}"), "물건.", None));
+    }
+    tgt.push(para("h", "【청구항 12】", None));
+    tgt.push(para("c0", "장치로서,", None));
+    tgt.push(para("c1", "층;", None));
+    let al = align_inferred(&tgt, &full, &[]);
+    assert!(
+        al.pairs
+            .iter()
+            .filter(|p| p.target_id == "c0" || p.target_id == "c1")
+            .all(|p| p.grade == Grade::Paragraph)
+    );
+}
+
+#[test]
+fn a_label_on_only_one_side_does_not_demote() {
+    // 「도 1을 참조하면」 ↔ 「Referring to FIG. 1」 — 원문은 낱말로 시작하지 않는다.
+    let target = [para("a", "도 1을 참조하면 장치가 보인다.", None)];
+    let al = align_inferred(
+        &target,
+        &strings(&["Referring to FIG. 1, the device is seen."]),
+        &[],
+    );
+    assert_eq!(al.pairs[0].grade, Grade::Sentence);
+    // 반대: 원문만 「FIG. 2」 로 시작하고 역문은 낱말이 아니다.
+    let target = [para("a", "장치가 도시되어 있다.", None)];
+    let al = align_inferred(&target, &strings(&["FIG. 2 shows the device."]), &[]);
+    assert_eq!(al.pairs[0].grade, Grade::Sentence);
+}
+
+#[test]
+fn a_figure_label_without_its_number_demotes() {
+    let target = [para("a", "도 1은 장치의 도면이다.", None)];
+    let al = align_inferred(
+        &target,
+        &strings(&["FIG. shows a view of the device."]),
+        &[],
+    );
+    assert!(al.pairs.iter().all(|p| p.grade != Grade::Sentence));
+    let al = align_inferred(
+        &target,
+        &strings(&["FIGS. and show views of the device."]),
+        &[],
+    );
+    assert!(al.pairs.iter().all(|p| p.grade != Grade::Sentence));
+}
+
+#[test]
+fn fig_is_a_whole_word_check() {
+    let target = [para("a", "도 1은 비유적 표현이다.", None)];
+    let al = align_inferred(&target, &strings(&["FIGURATIVE language is used."]), &[]);
+    assert_eq!(al.pairs[0].grade, Grade::Sentence);
+}
+
+#[test]
+fn claim_lines_are_exempt_from_the_label_check() {
+    let target = [
+        para("h", "【청구항 3】", None),
+        para("c0", "장치로서,", None),
+        para("c1", "도 1의 기판;", None),
+    ];
+    let source = strings(&[
+        "What is claimed is:",
+        "3. A device comprising:",
+        "fig. 2 a substrate;",
+    ]);
+    let al = align_inferred(&target, &source, &[]);
+    assert_eq!(al.pairs.len(), 2);
+    assert!(al.pairs.iter().all(|p| p.grade == Grade::Sentence));
+}

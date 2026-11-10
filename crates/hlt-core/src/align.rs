@@ -485,8 +485,9 @@ fn emit_group(
             let te = evidence(&slice(&cx.target[t].text, cx.tsent[t][tk as usize]));
             let st = slice(&cx.source[s], cx.ssent[s][sk as usize]);
             let mut st = strip_number_prefix(&st);
-            if claim && sk == 0 {
-                // 원문 청구항 첫 줄의 「12.」 는 항 번호 — 역문에는 없으니 증거로 세지 않는다.
+            if claim && (s, sk) == sunits[0] {
+                // 청구항 묶음의 맨 처음 칸만: 그 「12.」 는 항 번호 — 역문에는 없으니 증거로 세지 않는다.
+                // (다른 줄 맨 앞 숫자는 본문이다.)
                 st = strip_claim_number(st);
             }
             let tt = slice(&cx.target[t].text, cx.tsent[t][tk as usize]);
@@ -576,6 +577,15 @@ fn lead_label(text: &str) -> Option<(String, String)> {
     (!digits.is_empty()).then_some((word, digits))
 }
 
+/// 「FIG」 · 「FIGS」 · 「FIGs」 낱말로 시작하는가(「FIGURATIVE」 는 아니다).
+fn starts_with_fig(text: &str) -> bool {
+    let Some(rest) = text.trim_start().strip_prefix("FIG") else {
+        return false;
+    };
+    let rest = rest.strip_prefix(['s', 'S']).unwrap_or(rest);
+    !rest.starts_with(char::is_alphabetic)
+}
+
 /// 앞 번호가 어긋나면 안 된다 — 한 자리 번호는 숫자 증거가 아니라서 한 칸 밀린 도면 · 양태 설명이 짝 지어진다.
 /// 양쪽이 「낱말 + 번호」로 시작할 때만 견준다(「도 6을 참조하면」 ↔ 「Referring to FIG. 6」 은 원문이 낱말로 시작하지
 /// 않는다). 원문이 「FIG.」 로 시작하는데 번호가 없으면(PDF 가 번호를 흘린 것) 짝 짓지 않는다.
@@ -583,9 +593,7 @@ fn lead_label(text: &str) -> Option<(String, String)> {
 fn labels_agree(target: &str, source: &str) -> bool {
     match (lead_label(target), lead_label(source)) {
         (Some((word, number)), Some(s)) if !word.is_empty() && word != "제" => s.1 == number,
-        (Some((word, _)), None) if !word.is_empty() && word != "제" => {
-            !source.trim_start().starts_with("FIG")
-        }
+        (Some((word, _)), None) if !word.is_empty() && word != "제" => !starts_with_fig(source),
         _ => true,
     }
 }
