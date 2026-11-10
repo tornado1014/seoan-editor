@@ -218,7 +218,7 @@ pub(crate) struct Given<'a> {
     pub free: &'a [bool],
     /// 1단계가 이미 쓴 원문 문단 — 문장 짝 금지(문단 짝만) · 차례 채움 후보 아님.
     pub used: &'a [bool],
-    /// 1단계 짝이 가리키는 (편집 문단, 원문 문단) — 구간을 가르는 가장 센 닻(짝은 더 만들지 않는다).
+    /// 1단계 짝이 가리키는 모든 (편집 문단, 원문 문단) — 구간을 가르는 가장 센 경계(짝은 더 만들지 않는다).
     pub fixed: &'a [(usize, usize)],
 }
 
@@ -288,11 +288,14 @@ pub(crate) fn infer(
     };
     let mut anchors: BTreeMap<usize, usize> = BTreeMap::new();
     // 1단계 짝(밖에서 줌)이 가리키는 닻 — 구간만 가르고 짝은 내보내지 않는다.
-    // 1단계 짝(밖에서 줌)이 가리키는 닻 — 구간만 가르고 짝은 내보내지 않는다.
+    // 한 문단이 여러 묶음에(또는 한 묶음이 여러 문단에) 맞은 1단계 짝은 닻이 못 되는 것도 경계로는 남긴다.
     let mut fixed_t: Vec<usize> = Vec::new();
+    let mut extra: Vec<(usize, usize)> = Vec::new();
     for &(t, s) in given.map_or(&[][..], |g| g.fixed) {
         if add_anchor(&mut anchors, t, s) {
             fixed_t.push(t);
+        } else {
+            extra.push((t, s));
         }
     }
     let mut pinned: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
@@ -358,7 +361,18 @@ pub(crate) fn infer(
         }
     }
 
-    let points: Vec<(usize, usize)> = anchors.iter().map(|(&t, &s)| (t, s)).collect();
+    // 구간 경계: 닻 + 닻이 못 된 1단계 짝(차례가 어긋나지 않는 것만 · 같은 칸 경계는 허용).
+    let mut points: Vec<(usize, usize)> = anchors.iter().map(|(&t, &s)| (t, s)).collect();
+    for &(t, s) in &extra {
+        if points
+            .iter()
+            .all(|&(a, b)| a == t || (a < t && b <= s) || (a > t && b >= s))
+        {
+            points.push((t, s));
+        }
+    }
+    points.sort_unstable();
+    points.dedup();
     // 차례로 매긴 짝 이름 닻: 더 센 경계(키 닻 제외) 사이 구간마다 편집 쪽 이름 문단 수 ≠ 원문 인쇄 번호 문단 수면 약한 닻.
     let mut weak_t: Vec<usize> = Vec::new();
     if numberless && !key_t.is_empty() {

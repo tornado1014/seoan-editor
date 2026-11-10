@@ -723,18 +723,14 @@ pub fn align_xliff(target: &[EditorParagraph], segments: &[Segment], pins: &[Pin
     //    문장 칸에서 뺀다: 번역이 빈 세그먼트, 1단계에 안 맞은 원문과 같은 번역(번호 · 기호류).
     let mut free = vec![true; target.len()];
     let mut used = vec![false; source.len()];
-    let mut first_source: std::collections::BTreeMap<usize, u32> =
-        std::collections::BTreeMap::new();
+    let mut fixed: Vec<(usize, usize)> = Vec::new();
     for (t, _, p) in &pairs {
         free[*t] = false;
         used[p.source_paragraph as usize] = true;
-        let at = first_source.entry(*t).or_insert(p.source_paragraph);
-        *at = (*at).min(p.source_paragraph);
+        fixed.push((*t, p.source_paragraph as usize));
     }
-    let fixed: Vec<(usize, usize)> = first_source
-        .iter()
-        .map(|(&t, &s)| (t, s as usize))
-        .collect();
+    fixed.sort_unstable();
+    fixed.dedup();
     let mut kept: Vec<Vec<u32>> = vec![Vec::new(); source.len()];
     let mut ssent: Vec<Vec<(u32, u32)>> = vec![Vec::new(); source.len()];
     for k in 0..n {

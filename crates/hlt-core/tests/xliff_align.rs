@@ -941,3 +941,53 @@ fn stage_two_ordinal_keys_are_trusted_only_where_the_counts_agree() {
         [sentence_pair("p2", 0, 1, 0), sentence_pair("p2", 1, 1, 1)]
     );
 }
+
+#[test]
+fn a_group_split_over_two_paragraphs_bounds_what_lies_between_them() {
+    // 묶음 g 가 문서 문단 t1 · t2 에 맞았다. 그 사이 짝 없는 tx 는 g 뒤 묶음 h 와 차례 채움이 되면 t2 의 짝을 가로지른다.
+    // 정답: 가로지르지 않는다 — tx 는 짝 없음(g 는 이미 쓴 묶음이라 문장 짝 불가 · tx 의 원문은 모른다).
+    let doc = vec![
+        para("t1", "첫째 문단 글이 여기 있다."),
+        para("tx", "아무 묶음에도 안 맞는 글이다."),
+        para("t2", "둘째 문단 글이 여기 있다."),
+    ];
+    let segs = vec![
+        seg("One.", "첫째 문단 글이 여기 있다.", Some("g")),
+        seg("Two.", "둘째 문단 글이 여기 있다.", Some("g")),
+        seg("Other.", "다른 문장이 다.", Some("h")),
+    ];
+    let a = align_xliff(&doc, &segs, &[]);
+    assert_eq!(of(&a, "t1"), [sentence_pair("t1", 0, 0, 0)]);
+    assert_eq!(of(&a, "t2"), [sentence_pair("t2", 0, 0, 1)]);
+    assert!(of(&a, "tx").is_empty(), "{:?}", of(&a, "tx"));
+}
+
+#[test]
+fn a_number_anchor_into_a_used_group_gives_a_paragraph_pair_at_most() {
+    // t1 이 묶음 g1 · g2 에 맞았다(g2 는 최소가 아닌 쓴 묶음). 문단 b 가 식별번호로 g2 에 닻이면 문단 짝까지만.
+    let doc = vec![
+        numbered("t1", "첫째 글이 있다. 둘째 글이 있다.", "0001"),
+        numbered("b", "전혀 다른 글이다.", "0002"),
+    ];
+    let segs = vec![
+        seg("[0001] One.", "첫째 글이 있다.", Some("g1")),
+        seg("[0002] Two.", "둘째 글이 있다.", Some("g2")),
+    ];
+    let a = align_xliff(&doc, &segs, &[]);
+    assert_eq!(of(&a, "t1").len(), 2);
+    assert!(
+        of(&a, "b").iter().all(|p| p.4 == Grade::Paragraph),
+        "{:?}",
+        of(&a, "b")
+    );
+    let mut used: Vec<(u32, Option<u32>)> = a
+        .pairs
+        .iter()
+        .filter(|p| p.grade == Grade::Sentence)
+        .map(|p| (p.source_paragraph, p.source_sentence))
+        .collect();
+    used.sort();
+    let n = used.len();
+    used.dedup();
+    assert_eq!(used.len(), n);
+}
