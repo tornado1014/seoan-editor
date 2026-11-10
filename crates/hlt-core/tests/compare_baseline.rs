@@ -189,3 +189,28 @@ fn the_comparison_table_path_is_not_touched_by_similarity_pairing() {
     let mut session = EditorSession::open(&path).unwrap();
     assert_eq!(session.amendment_table(), None);
 }
+
+#[test]
+fn a_table_against_a_word_baseline_pairs_like_the_screen_and_has_no_figure_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut session, word, target) = unnumbered_hlt_and_numbered_word(dir.path());
+    session.compare_with(&word).unwrap();
+    assert!(session.compared_is_word());
+    // 같은 글이면 표가 비고, 한 곳만 고치면 그 한 줄만(화면 비교와 같은 짝짓기).
+    assert_eq!(session.amendment_table_against("file").unwrap(), vec![]);
+    let text = session
+        .paragraphs()
+        .into_iter()
+        .find(|p| p.id == target)
+        .unwrap()
+        .text;
+    session
+        .replace_text(&target, &format!("{text} 덧붙인 말이다."))
+        .unwrap();
+    let marks = session.amendment_marks_against_file().unwrap();
+    let rows = session.amendment_table_against("file").unwrap();
+    assert_eq!(rows.len(), marks.changed.len(), "{rows:?} {marks:?}");
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert!(rows[0].deleted.is_empty() && !rows[0].inserted.is_empty());
+    assert!(rows.iter().all(|row| !row.label.starts_with("도 ")));
+}

@@ -303,7 +303,8 @@ export interface AmendmentDoneDto {
 }
 export const editorExportAmendment = () => invoke<AmendmentDoneDto | null>('editor_export_amendment');
 /** 보정 전후 대비표(워드): 저장한 자리 · 고르기를 취소하면 `null`. */
-export const editorExportComparisonTable = () => invoke<string | null>('editor_export_comparison_table');
+export const editorExportComparisonTable = (base?: string, baseName?: string) =>
+  invoke<string | null>('editor_export_comparison_table', { base: base ?? null, baseName: baseName ?? null });
 /** 최종본에 든 보정서(xresult 차례 · 제출/제외). */
 export interface FinAmendmentStatusDto {
   name: string;

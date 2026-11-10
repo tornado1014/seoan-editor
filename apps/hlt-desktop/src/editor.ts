@@ -3855,7 +3855,10 @@ export function mountEditor(root: HTMLElement): void {
 
   async function comparisonTable() {
     try {
-      const path = await editorExportComparisonTable();
+      // 기준 「연 뒤 고친 것」(기본)은 옛 길 그대로(최종본이 아니면 백엔드가 알린다) · 그 밖에는 고른 기준.
+      const picked = amendBase.value;
+      const base = picked === '' ? undefined : picked === 'history' ? 'file' : picked;
+      const path = await editorExportComparisonTable(base, base ? baseName() : undefined);
       if (path) say(`보정 전후 대비표를 저장했습니다. ${path}`);
     } catch (error) {
       fail('대비표', error);
@@ -4628,6 +4631,7 @@ function describe(error: unknown): string {
       amendment_needs_final: '최종본(.fin)으로 연 문서나 저장한 문서파일(.HLT)에서 보정서를 만듭니다',
       fin_states_need_final: '보정서 상태는 최종본(.fin)으로 연 문서에서 바꿉니다',
       amendment_table_empty: '견줄 보정 전 상태가 없거나 바뀐 곳이 없습니다(최종본으로 연 문서에서 고친 뒤 쓰세요)',
+      amendment_table_no_base: '고른 기준으로는 대비표를 만들 수 없습니다 — 「다른 파일…」이나 「이전 판…」을 다시 고르거나, 최종본(.fin)으로 연 문서에서 쓰세요',
       item_missing: '그 번호의 식별항목이 없습니다',
       open_elsewhere: '그 파일은 다른 탭에 열려 있습니다 — 그 탭에서 저장하거나 닫은 뒤 하세요',
       read_only_save: '읽기 전용으로 연 문서입니다 — 「다른 이름으로 저장」으로 사본을 만드세요',

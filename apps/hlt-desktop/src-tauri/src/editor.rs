@@ -2587,25 +2587,66 @@ pub async fn editor_set_fin_amendments(
     open_path(&state, &window, fin).await
 }
 
-/// 보정 전후 대비표(워드): 연 상태(최종본 · 보정서 기준)에 견준 바뀐 항목 · 보정 전 · 보정 후. 저장 자리를 묻는다.
-/// 견줄 것이 없으면 `amendment_table_empty` · 고르기를 취소하면 `None`.
+/// 보정 전후 대비표(워드): 고른 기준(`base` — `None` = 연 상태(최종본 · 보정서 기준) · `"file"` = 고른 파일 · 이전 판 · 워드 ·
+/// `"original"` · `"opened"`)에 견준 바뀐 항목 · 보정 전 · 보정 후. 저장 자리를 묻는다. `base_name` = 제목에 쓸 기준 이름.
+/// 견줄 것이 없으면 `amendment_table_no_base` · 바뀐 곳이 없으면 `amendment_table_empty`(`None` 길은 옛 그대로) · 고르기를 취소하면 `None`.
 #[tauri::command]
 pub async fn editor_export_comparison_table(
     window: Window,
     app: AppHandle,
     state: State<'_, EditorState>,
+    base: Option<String>,
+    base_name: Option<String>,
 ) -> Result<Option<String>, CoreError> {
-    let rows = with_session(&state, &window, |session| Ok(session.amendment_table()))?
-        .filter(|rows| !rows.is_empty())
-        .ok_or_else(|| refused("amendment_table_empty"))?;
+    let (rows, word) = with_session(&state, &window, |session| {
+        let rows = match base.as_deref() {
+            None => session.amendment_table(),
+            Some(base) => session.amendment_table_against(base),
+        };
+        Ok((
+            rows,
+            base.as_deref() == Some("file") && session.compared_is_word(),
+        ))
+    })?;
+    let rows = rows.ok_or_else(|| {
+        refused(if base.is_some() {
+            "amendment_table_no_base"
+        } else {
+            "amendment_table_empty"
+        })
+    })?;
+    if rows.is_empty() {
+        return Err(refused("amendment_table_empty"));
+    }
     let name = stem(&window.title().unwrap_or_default());
     let Some(path) = pick_save(&app, &format!("{name}_대비표.docx"), "docx") else {
         return Ok(None);
     };
-    let bytes = hlt_core::comparison_table_docx(&format!("보정 전후 대비표 — {name}"), &rows)?;
+    let bytes = hlt_core::comparison_table_docx(
+        &table_title(&name, base.as_deref(), base_name.as_deref(), word),
+        &rows,
+    )?;
     write_replacing(&path, &bytes)
         .map_err(|_| CoreError::new(ErrorCode::IoError, "comparison_table", false))?;
     Ok(Some(path.display().to_string()))
+}
+
+/// 대비표 제목: 기준을 안 고른 길(`base` 없음)은 옛 제목 그대로 · 고른 기준은 이름을 밝히고, 워드면 그림을 견주지 않았음을 덧붙인다.
+fn table_title(name: &str, base: Option<&str>, base_name: Option<&str>, word: bool) -> String {
+    let Some(base) = base else {
+        return format!("보정 전후 대비표 — {name}");
+    };
+    let label = match (base, base_name) {
+        ("original", _) => "원출원",
+        ("opened", _) => "연 뒤 고친 것",
+        (_, Some(given)) if !given.is_empty() => given,
+        _ => "다른 파일",
+    };
+    let mut title = format!("전후 대비표 — {name}(기준: {label})");
+    if word {
+        title.push_str(" — 워드에는 그림이 없어 도면 항목은 견주지 않았습니다.");
+    }
+    title
 }
 
 /// 있는 파일도 덮는다 — 옆 임시 파일(`이름.확장자.tmp`)에 다 쓴 뒤 바꿔 끼워, 실패해도 반쯤 쓴 파일 대신 옛 파일이 남는다.
@@ -2674,6 +2715,25 @@ fn system_batang() -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn comparison_table_titles() {
+        assert_eq!(
+            table_title("가", None, Some("x"), true),
+            "보정 전후 대비표 — 가"
+        );
+        assert_eq!(
+            table_title("가", Some("file"), Some("파일: 나.HLT"), false),
+            "전후 대비표 — 가(기준: 파일: 나.HLT)"
+        );
+        assert_eq!(
+            table_title("가", Some("original"), None, false),
+            "전후 대비표 — 가(기준: 원출원)"
+        );
+        assert!(
+            table_title("가", Some("file"), Some("나.docx"), true).ends_with("견주지 않았습니다.")
+        );
+    }
 
     #[test]
     fn bakes_over_a_file_the_save_dialog_agreed_to_replace() {

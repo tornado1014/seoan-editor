@@ -1901,3 +1901,77 @@ fn inserts_a_figure_range_and_a_standard_heading_where_the_guide_puts_it() {
     let first = session.paragraphs()[3].id.clone();
     session.insert_item(&first, false, "실시예", "1").unwrap();
 }
+
+/// 대비표(최종본 길)가 만드는 `word/document.xml` 을 고정한다 — 기준 고르기를 일반화해도 이 길의 산출은 그대로여야 한다.
+fn comparison_table_document_xml(rows: &[hlt_core::AmendRow]) -> String {
+    use std::io::Read;
+    let bytes = hlt_core::comparison_table_docx("보정 전후 대비표 — 시험", rows).unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut xml = String::new();
+    zip.by_name("word/document.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    xml
+}
+
+#[test]
+fn the_final_version_comparison_table_stays_byte_identical() {
+    let temp = tempfile::tempdir().unwrap();
+    let fin = synthetic_fin(temp.path());
+    let mut session = EditorSession::open(&fin).unwrap();
+    let first = session
+        .paragraphs()
+        .into_iter()
+        .find(|p| p.text.contains("시험 장치에 관한"))
+        .unwrap();
+    session
+        .replace_text(&first.id, "본 발명은 검사 장치에 관한 것이다.")
+        .unwrap();
+    let rows = session.amendment_table().unwrap();
+    let xml = comparison_table_document_xml(&rows);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(
+        xml,
+        include_str!("fixtures/comparison_table_final.xml").trim_end()
+    );
+}
+
+#[test]
+fn a_table_against_a_chosen_file_marks_the_deleted_and_inserted_text() {
+    let temp = tempfile::tempdir().unwrap();
+    let fin = synthetic_fin(temp.path());
+    let mut session = EditorSession::open(&fin).unwrap();
+    // 고른 파일이 없으면 표도 없다 · 기준 「연 뒤 고친 것」은 최종본 길과 같다.
+    assert_eq!(session.amendment_table_against("file"), None);
+    session.compare_with(&fin).unwrap();
+    assert_eq!(session.amendment_table_against("file").unwrap(), vec![]);
+    let first = session
+        .paragraphs()
+        .into_iter()
+        .find(|p| p.text.contains("시험 장치에 관한"))
+        .unwrap();
+    session
+        .replace_text(&first.id, "본 발명은 검사 장치에 관한 것이다.")
+        .unwrap();
+    let rows = session.amendment_table_against("file").unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows, session.amendment_table().unwrap());
+    let xml = comparison_table_document_xml(&rows);
+    assert!(xml.contains("<w:strike/></w:rPr><w:t xml:space=\"preserve\">시험</w:t>"));
+    assert!(xml.contains("<w:u w:val=\"single\"/></w:rPr><w:t xml:space=\"preserve\">검사</w:t>"));
+    // 「연 뒤 고친 것」 · 「원출원」 도 같은 길로 표가 난다.
+    assert_eq!(session.amendment_table_against("opened").unwrap(), rows);
+    assert!(session.amendment_table_against("original").is_some());
+}
+
+#[test]
+fn a_table_against_the_opened_state_needs_a_final_version() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("명세서.HLT");
+    hlt_core::save_new_specification(&path, hlt_core::SpecKind::Patent, Default::default())
+        .unwrap();
+    let mut session = EditorSession::open(&path).unwrap();
+    assert_eq!(session.amendment_table_against("opened"), None);
+    assert_eq!(session.amendment_table_against("original"), None);
+}

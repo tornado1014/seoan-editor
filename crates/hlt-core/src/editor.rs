@@ -49,6 +49,8 @@ pub struct EditorSession {
     original: Option<(Vec<EditorParagraph>, crate::FigureSignatures)>,
     /// 「다른 파일」 기준(고른 파일을 열어 담아 둔 문단 · 그림 서명).
     compared: Option<(Vec<EditorParagraph>, crate::FigureSignatures)>,
+    /// 「다른 파일」 기준이 워드인가(그림이 없다).
+    compared_word: bool,
     /// 읽기 전용으로 열었다(원본 보호) — 화면이 고침을 막는다. 고칠 수 있는 서식인가(`editable`)와는 따로다.
     pub read_only: bool,
 }
@@ -291,6 +293,7 @@ impl EditorSession {
             source: package.then(|| source.to_path_buf()),
             original: None,
             compared: None,
+            compared_word: false,
             read_only: false,
         }
         .with_spans()
@@ -1949,7 +1952,11 @@ impl EditorSession {
 
     /// 보정 전후 대비표 — 연 상태(보정서와 같은 최종본)에 견준 바뀐 요소들.
     pub fn amendment_table(&mut self) -> Option<Vec<crate::AmendRow>> {
-        let (mut baseline, figures) = self.baseline_for(false)?;
+        self.amendment_table_from(false)
+    }
+
+    fn amendment_table_from(&mut self, original: bool) -> Option<Vec<crate::AmendRow>> {
+        let (mut baseline, figures) = self.baseline_for(original)?;
         let mut now = self.paragraphs();
         crate::number_unnumbered(&mut baseline, &mut now);
         Some(crate::amendment_table(
@@ -1960,6 +1967,31 @@ impl EditorSession {
         ))
     }
 
+    /// 고른 기준에 견준 대비표: `"file"` = `compare_with` 로 고른 것(화면 비교와 같은 짝짓기 · 워드면 도면 줄은 뺀다) ·
+    /// `"original"` · 그 밖(`"opened"`) = 최종본 길. 기준이 없으면 `None`.
+    pub fn amendment_table_against(&mut self, base: &str) -> Option<Vec<crate::AmendRow>> {
+        match base {
+            "file" => {
+                self.settle();
+                let (mut baseline, figures) = self.compared.clone()?;
+                let mut now = self.paragraphs();
+                crate::number_for_comparison(&mut baseline, &mut now);
+                let mut rows =
+                    crate::amendment_table(&baseline, &now, &figures, &self.figure_signatures());
+                if self.compared_word {
+                    rows.retain(|row| !row.label.starts_with("도 "));
+                }
+                Some(rows)
+            }
+            other => self.amendment_table_from(other == "original"),
+        }
+    }
+
+    /// 「다른 파일」 기준이 워드인가.
+    pub fn compared_is_word(&self) -> bool {
+        self.compared.is_some() && self.compared_word
+    }
+
     /// 다른 파일을 비교 기준으로 연다(사본으로 · 원본은 안 건드린다). 그 뒤 `amendment_marks_against_file`.
     pub fn compare_with(&mut self, path: &Path) -> Result<(), CoreError> {
         if path
@@ -1968,11 +2000,13 @@ impl EditorSession {
         {
             // 워드는 그림 서명이 없다 — 빈 서명이면 그림은 견주지 않는다(전부 바뀜으로 뜨지 않게).
             self.compared = Some((crate::docx_baseline(path)?, Default::default()));
+            self.compared_word = true;
             return Ok(());
         }
         let mut other = EditorSession::open(path)?;
         other.settle();
         self.compared = Some((other.paragraphs(), other.figure_signatures()));
+        self.compared_word = false;
         Ok(())
     }
 

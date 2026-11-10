@@ -2107,6 +2107,29 @@ describe('page editing', () => {
     expect(base.value).toBe('original');
   });
 
+  test('대비표: 기본 기준은 옛 길 그대로 · 고른 기준(원출원 · 다른 파일)은 base 와 기준 이름을 넘긴다', async () => {
+    const root = await open();
+    const send = async () => {
+      handlers.get('menu-action')!({ payload: 'tool:보정 전후 대비표…' });
+      await settle(10);
+    };
+    await send();
+    expect(last('editor_export_comparison_table')).toEqual(['editor_export_comparison_table', { base: null, baseName: null }]);
+    const base = root.querySelector<HTMLSelectElement>('.amend-base')!;
+    base.value = 'original';
+    base.dispatchEvent(new Event('change'));
+    await settle(10);
+    await send();
+    expect(last('editor_export_comparison_table')).toEqual(['editor_export_comparison_table', { base: 'original', baseName: '원출원' }]);
+    marksAnswer = { paragraphs: [], changed: [], added: [], removed: [] };
+    compareAnswer = '1차본.HLT';
+    base.value = 'file';
+    base.dispatchEvent(new Event('change'));
+    await settle(10);
+    await send();
+    expect(last('editor_export_comparison_table')).toEqual(['editor_export_comparison_table', { base: 'file', baseName: '파일: 1차본.HLT' }]);
+  });
+
   test('기준을 이전 판으로 고르면 이전 판 창이 고르기 모드로 열리고 보정 표시가 그 판에 견준 것이다', async () => {
     const root = await open();
     historyAnswer = [
