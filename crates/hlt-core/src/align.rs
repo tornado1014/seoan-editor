@@ -79,9 +79,10 @@ fn trailing_connector(rest: &[char]) -> usize {
 }
 
 /// 영문 약어(소문자 · 마침표 포함) — 뒤에서 안 끊는다.
-const ABBREVIATIONS: [&str; 16] = [
+const ABBREVIATIONS: &[&str] = &[
     "fig.", "figs.", "e.g.", "i.e.", "etc.", "no.", "nos.", "al.", "approx.", "vs.", "cf.", "dr.",
-    "inc.", "ltd.", "co.", "u.s.",
+    "inc.", "ltd.", "co.", "u.s.", "pat.", "pats.", "appl.", "ser.", "eq.", "eqs.", "sec.", "ref.",
+    "refs.", "ex.", "vol.", "pp.", "p.", "ca.", "wt.", "temp.",
 ];
 
 /// `c[i]` 가 `.` `?` `!` 일 때 거기서 문장이 끝나는가.
@@ -143,6 +144,8 @@ pub struct Alignment {
     /// 글이 있는 모든 편집 문서 문단(짝 없는 것 포함) · 문서 차례 · 범위는 ⚠ 글자(char) 단위.
     pub target_sentences: Vec<(String, Vec<(u32, u32)>)>,
     pub pairs: Vec<Pair>,
+    /// 적용하지 못한 손 고정(청구항 번호가 다른 것 · 범위 밖 · 모르는 문단 · 더 센 닻이나 앞선 고정과 차례가 어긋난 것).
+    pub dropped_pins: Vec<Pin>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pin {
@@ -209,26 +212,39 @@ pub fn align_inferred(
     };
     let scand = |i: usize| !ssent[i].is_empty() && sclaim[i].is_none() && sheads[i].is_none();
 
-    // 닻: 센 것부터 — 손 고정 · 식별번호 · 표제. 차례를 어기는 것은 버린다.
+    // 닻: 센 것부터 — 손 고정 · 식별번호 · 표제. 차례를 어기는 것은 버린다(손 고정은 버린 것을 알린다).
+    let cx = Ctx {
+        target,
+        source: source_texts,
+        tsent: &tsent,
+        ssent: &ssent,
+    };
     let mut anchors: BTreeMap<usize, usize> = BTreeMap::new();
-    let mut pinned: HashMap<usize, Vec<(u32, u32)>> = HashMap::new();
-    for pin in pins {
-        let (Some(t), s) = (
-            target.iter().position(|p| p.id == pin.target_id),
-            pin.source_paragraph as usize,
-        ) else {
+    let mut pinned: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
+    let mut claim_pins: HashMap<u32, Vec<ClaimPin>> = HashMap::new();
+    let mut dropped: Vec<usize> = Vec::new();
+    for (n, pin) in pins.iter().enumerate() {
+        let s = pin.source_paragraph as usize;
+        let t = target.iter().position(|p| p.id == pin.target_id);
+        let Some(t) = t.filter(|_| s < ns) else {
+            dropped.push(n);
             continue;
         };
-        if s >= ns || !tcand(t) || !scand(s) || !add_anchor(&mut anchors, t, s) {
+        let (tk, sk) = (pin.target_sentence as usize, pin.source_sentence as usize);
+        if tk >= tsent[t].len() || sk >= ssent[s].len() {
+            dropped.push(n);
             continue;
         }
-        if (pin.target_sentence as usize) < tsent[t].len()
-            && (pin.source_sentence as usize) < ssent[s].len()
-        {
-            pinned
-                .entry(t)
-                .or_default()
-                .push((pin.target_sentence, pin.source_sentence));
+        match (tclaim[t], sclaim[s]) {
+            (Some(a), Some(b)) if a == b => {
+                claim_pins.entry(a).or_default().push((n, t, tk, s, sk))
+            }
+            (None, None)
+                if tcand(t)
+                    && scand(s)
+                    && add_anchor(&mut anchors, t, s)
+                    && add_ordered(pinned.entry(t).or_default(), (tk, sk)) => {}
+            _ => dropped.push(n),
         }
     }
     let unique = |keys: &[Option<String>], key: &str| {
@@ -264,15 +280,7 @@ pub fn align_inferred(
     let mut out: Vec<(usize, Pair)> = Vec::new();
     for (&t, &s) in &anchors {
         if theads[t].is_none() {
-            let mut at = pinned.remove(&t).unwrap_or_default();
-            at.sort_unstable();
-            emit(
-                &mut out,
-                target,
-                (t, s),
-                (tsent[t].len(), ssent[s].len()),
-                &at,
-            );
+            emit_paragraph(&mut out, &cx, (t, s), pinned.remove(&t).unwrap_or_default());
         }
     }
     // 닻 사이 구간: 문단 수가 같으면 차례로, 다르면 숫자 열이 유일하게 같은 것만.
@@ -306,64 +314,60 @@ pub fn align_inferred(
             found
         };
         for (t, s) in pairs {
-            emit(
-                &mut out,
-                target,
-                (t, s),
-                (tsent[t].len(), ssent[s].len()),
-                &[],
-            );
+            emit_paragraph(&mut out, &cx, (t, s), Vec::new());
         }
     }
 
-    // 청구항: 번호가 같은 묶음끼리 — 구성요소 줄 수가 같을 때만 줄 짝, 아니면 묶음 첫 문단끼리 문단 짝 하나.
+    // 청구항: 번호가 같은 묶음끼리(묶음을 넘어 짝짓지 않는다) — 구성요소 줄 수가 같을 때만 줄 짝, 아니면 문단 짝 하나.
     let mut numbers_seen: Vec<u32> = tclaim.iter().flatten().copied().collect();
+    numbers_seen.sort_unstable();
     numbers_seen.dedup();
     for number in numbers_seen {
+        let mut claim_pins = claim_pins.remove(&number).unwrap_or_default();
         let ts: Vec<usize> = (0..nt).filter(|&i| tclaim[i] == Some(number)).collect();
         let starts: Vec<usize> = (0..ns)
             .filter(|&i| skeys[i].as_deref() == Some(&format!("claim:{number}")))
             .collect();
-        let [start] = starts[..] else { continue };
+        let [start] = starts[..] else {
+            dropped.extend(claim_pins.iter().map(|p| p.0));
+            continue;
+        };
         let ss: Vec<usize> = (start..ns)
             .take_while(|&i| i == start || sclaim[i] == Some(number))
             .filter(|&i| !ssent[i].is_empty())
             .collect();
-        let tunits: Vec<(usize, u32)> = ts
-            .iter()
-            .flat_map(|&i| (0..tsent[i].len() as u32).map(move |k| (i, k)))
-            .collect();
-        let sunits: Vec<(usize, u32)> = ss
-            .iter()
-            .flat_map(|&i| (0..ssent[i].len() as u32).map(move |k| (i, k)))
-            .collect();
-        if !tunits.is_empty() && tunits.len() == sunits.len() {
-            for (&(t, tk), &(s, sk)) in tunits.iter().zip(&sunits) {
-                out.push((
-                    t,
-                    Pair {
-                        target_id: target[t].id.clone(),
-                        target_sentence: Some(tk),
-                        source_paragraph: s as u32,
-                        source_sentence: Some(sk),
-                        grade: Grade::Sentence,
-                    },
-                ));
-            }
-        } else if let (Some(&t), Some(&s)) =
-            (ts.iter().find(|&&i| !tsent[i].is_empty()), ss.first())
-        {
-            out.push((
-                t,
-                Pair {
-                    target_id: target[t].id.clone(),
-                    target_sentence: None,
-                    source_paragraph: s as u32,
-                    source_sentence: None,
-                    grade: Grade::Paragraph,
-                },
-            ));
+        let units = |paragraphs: &[usize], sent: &[Vec<(u32, u32)>]| -> Vec<(usize, u32)> {
+            paragraphs
+                .iter()
+                .flat_map(|&i| (0..sent[i].len() as u32).map(move |k| (i, k)))
+                .collect()
+        };
+        let (tunits, sunits) = (units(&ts, &tsent), units(&ss, &ssent));
+        if tunits.is_empty() || sunits.is_empty() {
+            dropped.extend(claim_pins.iter().map(|p| p.0));
+            continue;
         }
+        let mut at: Vec<(usize, usize)> = Vec::new();
+        claim_pins.retain(|&(n, t, tk, s, sk)| {
+            let (a, b) = (
+                tunits.iter().position(|&u| u == (t, tk as u32)),
+                sunits.iter().position(|&u| u == (s, sk as u32)),
+            );
+            let kept = a.zip(b).is_some_and(|ab| add_ordered(&mut at, ab));
+            if !kept {
+                dropped.push(n);
+            }
+            kept
+        });
+        at.sort_unstable();
+        emit_group(
+            &mut out,
+            &cx,
+            &tunits,
+            &sunits,
+            &at,
+            (tunits[0].0, sunits[0].0),
+        );
     }
     out.sort_by_key(|(t, _)| *t);
 
@@ -380,6 +384,10 @@ pub fn align_inferred(
             .map(|i| (target[i].id.clone(), tsent[i].clone()))
             .collect(),
         pairs: out.into_iter().map(|(_, p)| p).collect(),
+        dropped_pins: {
+            dropped.sort_unstable();
+            dropped.into_iter().map(|n| pins[n].clone()).collect()
+        },
     }
 }
 
@@ -397,51 +405,157 @@ fn add_anchor(anchors: &mut BTreeMap<usize, usize>, t: usize, s: usize) -> bool 
     true
 }
 
-/// 짝지은 문단 하나 → 문장 짝(문장 수가 같을 때만) 또는 문단 짝 하나. 손 고정 문장이 있으면 그 앞 · 뒤를 각각 같은 규칙으로.
-fn emit(
+/// 청구항 안 손 고정: (입력 번호, 편집 문단, 편집 문장, 원문 문단, 원문 문장).
+type ClaimPin = (usize, usize, usize, usize, usize);
+
+struct Ctx<'a> {
+    target: &'a [EditorParagraph],
+    source: &'a [String],
+    tsent: &'a [Vec<(u32, u32)>],
+    ssent: &'a [Vec<(u32, u32)>],
+}
+
+/// 손 고정 문장 쌍을 더한다 — 이미 받은 것들과 양쪽 차례가 같아야 한다(어긋나면 false).
+fn add_ordered<T: Copy + Ord>(have: &mut Vec<(T, T)>, new: (T, T)) -> bool {
+    let ok = have
+        .iter()
+        .all(|&(a, b)| (new.0 < a && new.1 < b) || (new.0 > a && new.1 > b));
+    if ok {
+        have.push(new);
+    }
+    ok
+}
+
+/// 짝지은 문단 하나(문장 칸 = 문장 번호) → 문장 짝 또는 문단 짝 하나.
+fn emit_paragraph(
     out: &mut Vec<(usize, Pair)>,
-    target: &[EditorParagraph],
+    cx: &Ctx,
     (t, s): (usize, usize),
-    (tn, sn): (usize, usize),
-    pins: &[(u32, u32)],
+    mut pins: Vec<(usize, usize)>,
 ) {
-    let pair = |tk: Option<u32>, sk: Option<u32>, grade| {
+    pins.sort_unstable();
+    let units = |n: usize, p: usize| (0..n as u32).map(|k| (p, k)).collect::<Vec<_>>();
+    let (tu, su) = (units(cx.tsent[t].len(), t), units(cx.ssent[s].len(), s));
+    emit_group(out, cx, &tu, &su, &pins, (t, s));
+}
+
+/// 문장 칸 목록(문단 하나 또는 청구항 하나) 짝짓기: 문장 수가 같고 숫자 증거가 어긋나지 않을 때만 문장 짝,
+/// 아니면 `fallback` 문단 짝 하나. 손 고정(문장 칸 번호 쌍)이 있으면 고정 앞 · 뒤를 각각 같은 규칙으로 —
+/// 이때 어긋난 구간은 그 구간 짝만 버린다(고정 자체는 남는다). 숫자 검문은 고정 쌍에는 적용하지 않는다.
+fn emit_group(
+    out: &mut Vec<(usize, Pair)>,
+    cx: &Ctx,
+    tunits: &[(usize, u32)],
+    sunits: &[(usize, u32)],
+    pins: &[(usize, usize)],
+    fallback: (usize, usize),
+) {
+    let pair = |a: usize, b: usize| {
+        let ((t, tk), (s, sk)) = (tunits[a], sunits[b]);
         (
             t,
             Pair {
-                target_id: target[t].id.clone(),
-                target_sentence: tk,
+                target_id: cx.target[t].id.clone(),
+                target_sentence: Some(tk),
                 source_paragraph: s as u32,
-                source_sentence: sk,
-                grade,
+                source_sentence: Some(sk),
+                grade: Grade::Sentence,
             },
         )
     };
-    let mut kept: Vec<(u32, u32)> = Vec::new();
-    for &(a, b) in pins {
-        if kept.last().is_none_or(|&(la, lb)| a > la && b > lb) {
-            kept.push((a, b));
+    let consistent = |ta: usize, sa: usize, len: usize| {
+        (0..len).all(|k| {
+            let ((t, tk), (s, sk)) = (tunits[ta + k], sunits[sa + k]);
+            let te = evidence(&slice(&cx.target[t].text, cx.tsent[t][tk as usize]));
+            let se = evidence(strip_number_prefix(&slice(
+                &cx.source[s],
+                cx.ssent[s][sk as usize],
+            )));
+            te == se
+        })
+    };
+    let mut bounds = pins.to_vec();
+    bounds.push((tunits.len(), sunits.len())); // 끝 울타리: 뒤 구간을 같은 식으로 처리한다
+    let (mut ta, mut sa) = (0, 0);
+    let mut segments = Vec::new();
+    for (i, &(a, b)) in bounds.iter().enumerate() {
+        if a - ta == b - sa && consistent(ta, sa, a - ta) {
+            segments.extend((0..a - ta).map(|k| pair(ta + k, sa + k)));
+        } else if pins.is_empty() {
+            segments.clear();
+            break;
         }
-    }
-    if kept.is_empty() {
-        if tn == sn {
-            out.extend((0..tn as u32).map(|k| pair(Some(k), Some(k), Grade::Sentence)));
-        } else {
-            out.push(pair(None, None, Grade::Paragraph));
-        }
-        return;
-    }
-    let (mut ta, mut sa) = (0_u32, 0_u32);
-    kept.push((tn as u32, sn as u32)); // 끝 울타리: 뒤 구간을 같은 식으로 처리한다
-    for (i, &(a, b)) in kept.iter().enumerate() {
-        if a - ta == b - sa {
-            out.extend((0..a - ta).map(|k| pair(Some(ta + k), Some(sa + k), Grade::Sentence)));
-        }
-        if i + 1 < kept.len() {
-            out.push(pair(Some(a), Some(b), Grade::Sentence));
+        if i + 1 < bounds.len() {
+            segments.push(pair(a, b));
         }
         (ta, sa) = (a + 1, b + 1);
     }
+    if segments.is_empty() {
+        let (t, s) = fallback;
+        out.push((
+            t,
+            Pair {
+                target_id: cx.target[t].id.clone(),
+                target_sentence: None,
+                source_paragraph: s as u32,
+                source_sentence: None,
+                grade: Grade::Paragraph,
+            },
+        ));
+    } else {
+        out.extend(segments);
+    }
+}
+
+fn slice(text: &str, (s, e): (u32, u32)) -> String {
+    text.chars()
+        .skip(s as usize)
+        .take((e - s) as usize)
+        .collect()
+}
+
+/// 원문 문단 앞 `[0001]` 식별번호를 뺀 글.
+fn strip_number_prefix(text: &str) -> &str {
+    let rest = text.trim_start();
+    match rest.strip_prefix('[').and_then(|r| r.split_once(']')) {
+        Some((inner, after))
+            if inner.starts_with(|c: char| c.is_ascii_digit())
+                && inner.chars().all(|c| c.is_ascii_alphanumeric()) =>
+        {
+            after
+        }
+        _ => text,
+    }
+}
+
+/// 숫자 증거: 글 안 두 자리 이상 숫자 덩이를 차례로(`0.5` · `5,000,000` 은 한 덩이 · 쉼표 뺌). 한 자리는 뺀다 —
+/// 국문은 순서를 숫자(제1 · 제2)로, 영문은 낱말(first · second)로 쓴다.
+fn evidence(text: &str) -> Vec<String> {
+    let c: Vec<char> = text.chars().collect();
+    let (mut out, mut i) = (Vec::new(), 0);
+    while i < c.len() {
+        if !c[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let mut token = String::new();
+        while i < c.len() {
+            if c[i].is_ascii_digit() {
+                token.push(c[i]);
+            } else if matches!(c[i], '.' | ',') && c.get(i + 1).is_some_and(char::is_ascii_digit) {
+                if c[i] == '.' {
+                    token.push('.');
+                }
+            } else {
+                break;
+            }
+            i += 1;
+        }
+        if token.len() >= 2 {
+            out.push(token);
+        }
+    }
+    out
 }
 
 /// 문단 안 `\d+[a-z]?` 를 차례로 모은 열(「도 3」 ≡ 「FIG. 3」).
