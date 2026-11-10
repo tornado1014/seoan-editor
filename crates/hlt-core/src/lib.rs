@@ -1,5 +1,6 @@
 #![allow(clippy::result_large_err)]
 
+mod align;
 mod amend_marks;
 mod baseline;
 mod batch;
@@ -58,6 +59,7 @@ mod variable_edit;
 mod verify;
 mod write;
 
+pub use align::{Alignment, Grade, Lang, Pair, Pin, SourcePara, align_inferred, sentences};
 pub use amend_marks::{
     AmendRow, AmendmentMarks, BasisHit, CitationIssue, CitationKind, ClaimBasis, FigureSignatures,
     ParagraphMark, PhraseBasis, amendment_basis, amendment_marks, amendment_marks_with,
