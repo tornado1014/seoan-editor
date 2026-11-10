@@ -566,11 +566,22 @@ fn single(doc: &str, seg_text: &str) -> hlt_core::Alignment {
 #[test]
 fn a_match_must_end_on_a_boundary() {
     // 다른 문장의 앞 조각 · 조사가 붙은 말 중간은 맞춤이 아니다.
-    // (2단계가 한 문단 ↔ 한 묶음을 차례로 채워 문단 짝을 낼 수는 있다 — 문장 짝만 없어야 한다.)
-    let no_sentence = |a: hlt_core::Alignment| a.pairs.iter().all(|p| p.grade != Grade::Sentence);
-    assert!(no_sentence(single("도 1A는 평면도이다.", "도 1")));
-    assert!(no_sentence(single("도 1은 평면도이다.", "도 1")));
-    assert!(no_sentence(single("FIG. 1A shows a device.", "FIG. 1")));
+    // (2단계가 한 문단 ↔ 한 묶음을 차례로 채워 문장 짝을 낼 수는 있다 — 1단계 적중 범위(글 앞 조각)가 아니라
+    // 문서 가르기 범위 전체여야 한다.)
+    let whole = |doc: &str| {
+        let a = single(
+            doc,
+            if doc.starts_with("FIG") {
+                "FIG. 1"
+            } else {
+                "도 1"
+            },
+        );
+        a.target_sentences[0].1 == [(0, doc.chars().count() as u32)]
+    };
+    assert!(whole("도 1A는 평면도이다."));
+    assert!(whole("도 1은 평면도이다."));
+    assert!(whole("FIG. 1A shows a device."));
     // 다음 글자가 문장부호이면 맞춤.
     let a = single("A는 B이다. C는 D이다.", "A는 B이다");
     assert_eq!(pairs_of(&a), [sentence_pair("a", 0, 0, 0)]);
@@ -731,7 +742,7 @@ fn a_stage_one_match_keeps_its_range_and_stage_two_fills_only_the_rest() {
 }
 
 #[test]
-fn order_filled_stage_two_paragraphs_without_numerals_stay_paragraph_pairs() {
+fn order_filled_stage_two_paragraphs_without_numerals_keep_sentence_pairs() {
     let doc = vec![
         para("h1", "【기술분야】"),
         para("x", "장치가 도시되었다. 층이 있다."),
@@ -747,8 +758,14 @@ fn order_filled_stage_two_paragraphs_without_numerals_stay_paragraph_pairs() {
         seg("Background", "배경 기술", Some("h2")),
     ]);
     let a = align_xliff(&doc, &segs, &[]);
-    assert_eq!(of(&a, "x"), [paragraph_pair("x", 1)]);
-    assert_eq!(of(&a, "y"), [paragraph_pair("y", 2)]);
+    assert_eq!(
+        of(&a, "x"),
+        [sentence_pair("x", 0, 1, 0), sentence_pair("x", 1, 1, 1)]
+    );
+    assert_eq!(
+        of(&a, "y"),
+        [sentence_pair("y", 0, 2, 0), sentence_pair("y", 1, 2, 1)]
+    );
     // 같은 도면부호가 양쪽에 있으면 문장 짝.
     let doc = vec![
         para("h1", "【기술분야】"),
@@ -885,5 +902,42 @@ fn a_group_split_over_two_document_paragraphs_keeps_both_stage_one_pairs() {
     let a = align_xliff(&doc, &segs, &[]);
     assert_eq!(of(&a, "a1"), [sentence_pair("a1", 0, 0, 0)]);
     assert_eq!(of(&a, "a2"), [sentence_pair("a2", 0, 0, 1)]);
-    assert_eq!(of(&a, "b"), [paragraph_pair("b", 1)]);
+    assert_eq!(of(&a, "b"), [sentence_pair("b", 0, 1, 0)]);
+}
+
+fn plain_body(n: usize) -> Vec<EditorParagraph> {
+    let mut doc = vec![para("d", "【발명의 설명】")];
+    for i in 1..=n {
+        doc.push(para(&format!("p{i}"), "장치가 도시되었다. 층이 있다."));
+    }
+    doc
+}
+
+fn three_groups() -> Vec<Segment> {
+    (1..=3)
+        .flat_map(|n| {
+            group(
+                n,
+                &[
+                    ("The device is shown.", "장치가 도시된다."),
+                    ("A layer exists.", "층이 존재한다."),
+                ],
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn stage_two_ordinal_keys_are_trusted_only_where_the_counts_agree() {
+    // 번호 저장이 없는 문서: 본문 4 ↔ 묶음(인쇄 번호) 3 → 차례가 밀렸으니 약한 닻 — 증거 없으면 문단 짝.
+    let a = align_xliff(&plain_body(4), &three_groups(), &[]);
+    for (id, g) in [("p1", 0), ("p2", 1), ("p3", 2)] {
+        assert_eq!(of(&a, id), [paragraph_pair(id, g)], "{id}");
+    }
+    // 4 ↔ 4 가 아니라 3 ↔ 3 이면 직접 닻 — 문장 짝.
+    let a = align_xliff(&plain_body(3), &three_groups(), &[]);
+    assert_eq!(
+        of(&a, "p2"),
+        [sentence_pair("p2", 0, 1, 0), sentence_pair("p2", 1, 1, 1)]
+    );
 }

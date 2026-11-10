@@ -630,13 +630,14 @@ fn gap_fixture() -> ([EditorParagraph; 5], Vec<String>) {
 }
 
 #[test]
-fn order_filled_paragraphs_without_numeric_evidence_get_one_paragraph_pair() {
+fn order_filled_paragraphs_without_numerals_keep_sentence_pairs() {
+    // 닻 사이를 차례로 채운 문단은 문장 수가 같고 문장별 숫자 관문을 지나면(증거가 비어도) 문장 짝.
     let (target, source) = gap_fixture();
     let al = align_inferred(&target, &source, &[]);
     for id in ["x", "y", "z"] {
         let p = pair_summary(&al, id);
-        assert_eq!(p.len(), 1, "{id}");
-        assert_eq!(p[0].3, Grade::Paragraph, "{id}");
+        assert_eq!(p.len(), 2, "{id}");
+        assert!(p.iter().all(|q| q.3 == Grade::Sentence), "{id}");
     }
 }
 
@@ -701,4 +702,119 @@ fn a_pinned_paragraph_keeps_sentence_pairs_without_numerals() {
     let p = pair_summary(&al, "x");
     assert_eq!(p.len(), 2);
     assert!(p.iter().all(|q| q.3 == Grade::Sentence));
+}
+
+// ---- 차례로 매긴 짝 이름 닻: 구간별 개수가 같을 때만 직접 닻 ----
+
+/// 상세설명 본문 문단(식별번호 저장 없음 → 짝 이름은 차례) + 원문 문단(`[000N]` 인쇄).
+fn body(ids: &[&str], texts: &[&str], stored: bool) -> Vec<EditorParagraph> {
+    let mut v = vec![para("d", "【발명의 설명】", None)];
+    for (i, (id, t)) in ids.iter().zip(texts).enumerate() {
+        v.push(para(
+            id,
+            t,
+            stored.then(|| format!("{:04}", i + 1)).as_deref(),
+        ));
+    }
+    v
+}
+
+fn printed(texts: &[&str]) -> Vec<String> {
+    texts
+        .iter()
+        .enumerate()
+        .map(|(i, t)| format!("[{:04}] {t}", i + 1))
+        .collect()
+}
+
+const TWO: &str = "가 문장이다. 나 문장이다.";
+const TWO_EN: &str = "First one. Second one.";
+
+#[test]
+fn ordinal_keys_are_weak_where_the_counts_differ() {
+    // 편집 문서 본문 6, 원문 인쇄 번호 5 — 차례 번호가 어디선가 밀렸다.
+    let ids = ["a", "b", "c", "d2", "e", "f"];
+    let t = body(
+        &ids,
+        &[TWO, TWO, "장치(110)가 있다. 층이 있다.", TWO, TWO, TWO],
+        false,
+    );
+    let s = printed(&[
+        TWO_EN,
+        TWO_EN,
+        "A device 110 exists. A layer exists.",
+        TWO_EN,
+        TWO_EN,
+    ]);
+    let al = align_inferred(&t, &s, &[]);
+    assert_eq!(pair_summary(&al, "a"), [(None, 0, None, Grade::Paragraph)]);
+    assert_eq!(pair_summary(&al, "b"), [(None, 1, None, Grade::Paragraph)]);
+    // 같은 도면부호가 문단 양쪽에 있으면 문장 짝.
+    assert_eq!(pair_summary(&al, "c").len(), 2);
+    assert!(
+        pair_summary(&al, "c")
+            .iter()
+            .all(|q| q.3 == Grade::Sentence)
+    );
+}
+
+#[test]
+fn ordinal_keys_stay_direct_where_the_counts_agree() {
+    let ids = ["a", "b", "c", "d2", "e"];
+    let t = body(&ids, &[TWO; 5], false);
+    let al = align_inferred(&t, &printed(&[TWO_EN; 5]), &[]);
+    for id in ids {
+        assert_eq!(pair_summary(&al, id).len(), 2, "{id}");
+        assert!(
+            pair_summary(&al, id).iter().all(|q| q.3 == Grade::Sentence),
+            "{id}"
+        );
+    }
+}
+
+#[test]
+fn stored_identification_numbers_are_always_direct() {
+    let ids = ["a", "b", "c", "d2", "e", "f"];
+    let t = body(&ids, &[TWO; 6], true);
+    let al = align_inferred(&t, &printed(&[TWO_EN; 5]), &[]);
+    for id in ["a", "b", "c", "d2", "e"] {
+        assert!(
+            pair_summary(&al, id).iter().all(|q| q.3 == Grade::Sentence),
+            "{id}"
+        );
+        assert_eq!(pair_summary(&al, id).len(), 2, "{id}");
+    }
+}
+
+#[test]
+fn only_the_span_whose_counts_differ_is_weakened() {
+    // 유일 표제가 구간을 가른다 — 앞 구간은 3 ↔ 3, 뒤 구간은 4 ↔ 3.
+    let mut t = vec![para("d", "【발명의 설명】", None)];
+    for id in ["a1", "a2", "a3"] {
+        t.push(para(id, TWO, None));
+    }
+    t.push(para("h", "【도면의 간단한 설명】", None));
+    for id in ["b1", "b2", "b3", "b4"] {
+        t.push(para(id, TWO, None));
+    }
+    let mut s: Vec<String> = Vec::new();
+    for n in 1..=3 {
+        s.push(format!("[{n:04}] {TWO_EN}"));
+    }
+    s.push("Brief Description of Drawings".into());
+    for n in 4..=6 {
+        s.push(format!("[{n:04}] {TWO_EN}"));
+    }
+    let al = align_inferred(&t, &s, &[]);
+    for id in ["a1", "a2", "a3"] {
+        assert!(
+            pair_summary(&al, id).iter().all(|q| q.3 == Grade::Sentence),
+            "{id}"
+        );
+        assert_eq!(pair_summary(&al, id).len(), 2, "{id}");
+    }
+    for id in ["b1", "b2", "b3"] {
+        assert_eq!(pair_summary(&al, id).len(), 1, "{id}");
+        assert_eq!(pair_summary(&al, id)[0].3, Grade::Paragraph, "{id}");
+    }
 }

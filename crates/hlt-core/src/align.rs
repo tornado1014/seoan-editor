@@ -288,6 +288,7 @@ pub(crate) fn infer(
     };
     let mut anchors: BTreeMap<usize, usize> = BTreeMap::new();
     // 1단계 짝(밖에서 줌)이 가리키는 닻 — 구간만 가르고 짝은 내보내지 않는다.
+    // 1단계 짝(밖에서 줌)이 가리키는 닻 — 구간만 가르고 짝은 내보내지 않는다.
     let mut fixed_t: Vec<usize> = Vec::new();
     for &(t, s) in given.map_or(&[][..], |g| g.fixed) {
         if add_anchor(&mut anchors, t, s) {
@@ -329,6 +330,9 @@ pub(crate) fn infer(
         let first = at.next()?.0;
         at.next().is_none().then_some(first)
     };
+    // 식별번호가 저장돼 있지 않은 문서의 짝 이름은 차례로 매긴 것 — 구간별 개수가 맞을 때만 직접 닻이다.
+    let numberless = target.iter().all(|p| p.number.is_none());
+    let mut key_t: Vec<usize> = Vec::new();
     for (t, key) in tkeys.iter().enumerate() {
         let Some(key) = key.as_deref().filter(|k| !k.starts_with("claim:")) else {
             continue;
@@ -337,7 +341,10 @@ pub(crate) fn infer(
             && tcand(t)
             && scand(s)
         {
-            add_anchor(&mut anchors, t, s);
+            let stronger = anchors.contains_key(&t);
+            if add_anchor(&mut anchors, t, s) && !stronger {
+                key_t.push(t);
+            }
         }
     }
     for kind in 0..HEADINGS {
@@ -351,6 +358,35 @@ pub(crate) fn infer(
         }
     }
 
+    let points: Vec<(usize, usize)> = anchors.iter().map(|(&t, &s)| (t, s)).collect();
+    // 차례로 매긴 짝 이름 닻: 더 센 경계(키 닻 제외) 사이 구간마다 편집 쪽 이름 문단 수 ≠ 원문 인쇄 번호 문단 수면 약한 닻.
+    let mut weak_t: Vec<usize> = Vec::new();
+    if numberless && !key_t.is_empty() {
+        let mut strong: Vec<(i64, i64)> = vec![(-1, -1)];
+        strong.extend(
+            points
+                .iter()
+                .filter(|(t, _)| !key_t.contains(t))
+                .map(|&(t, s)| (t as i64, s as i64)),
+        );
+        strong.push((nt as i64, ns as i64));
+        for w in strong.windows(2) {
+            let tr = (w[0].0 + 1) as usize..w[1].0 as usize;
+            let sr = (w[0].1 + 1) as usize..w[1].1 as usize;
+            let keyed = |keys: &[Option<String>], i: usize| {
+                keys[i].as_deref().is_some_and(|k| k.starts_with("p:"))
+            };
+            let tc = tr
+                .clone()
+                .filter(|&i| keyed(&tkeys, i) && !tsent[i].is_empty() && free(i))
+                .count();
+            let sc = sr.filter(|&i| keyed(&skeys, i) && !used(i)).count();
+            if tc != sc {
+                weak_t.extend(key_t.iter().copied().filter(|t| tr.contains(t)));
+            }
+        }
+    }
+
     let mut out: Vec<(usize, Pair)> = Vec::new();
     for (&t, &s) in &anchors {
         if theads[t].is_none() && !fixed_t.contains(&t) {
@@ -359,13 +395,13 @@ pub(crate) fn infer(
                 &cx,
                 (t, s),
                 pinned.remove(&t).unwrap_or_default(),
-                false,
+                weak_t.contains(&t),
             );
         }
     }
     // 닻 사이 구간: 문단 수가 같으면 차례로, 다르면 숫자 열이 유일하게 같은 것만.
     let mut bounds: Vec<(i64, i64)> = vec![(-1, -1)];
-    bounds.extend(anchors.iter().map(|(&t, &s)| (t as i64, s as i64)));
+    bounds.extend(points.iter().map(|&(t, s)| (t as i64, s as i64)));
     bounds.push((nt as i64, ns as i64));
     for w in bounds.windows(2) {
         let ts: Vec<usize> = ((w[0].0 + 1) as usize..w[1].0 as usize)
@@ -374,9 +410,7 @@ pub(crate) fn infer(
         let ss: Vec<usize> = ((w[0].1 + 1) as usize..w[1].1 as usize)
             .filter(|&i| scand(i) && !used(i))
             .collect();
-        // 차례로 채운 짝(ordered)은 닻이 아니라 순서가 근거다 — 숫자 증거가 있어야 문장 짝이 된다.
-        let ordered = ts.len() == ss.len();
-        let pairs: Vec<(usize, usize)> = if ordered {
+        let pairs: Vec<(usize, usize)> = if ts.len() == ss.len() {
             ts.into_iter().zip(ss).collect()
         } else {
             let tn: Vec<Vec<String>> = ts.iter().map(|&i| numbers(&target[i].text)).collect();
@@ -396,7 +430,7 @@ pub(crate) fn infer(
             found
         };
         for (t, s) in pairs {
-            emit_paragraph(&mut out, &cx, (t, s), Vec::new(), ordered);
+            emit_paragraph(&mut out, &cx, (t, s), Vec::new(), false);
         }
     }
 
@@ -506,18 +540,19 @@ fn add_ordered<T: Copy + Ord>(have: &mut Vec<(T, T)>, new: (T, T)) -> bool {
 }
 
 /// 짝지은 문단 하나(문장 칸 = 문장 번호) → 문장 짝 또는 문단 짝 하나.
-/// `ordered`: 닻 사이를 차례로 채워 짝지은 문단 — 문단 전체의 숫자 증거가 양쪽 비어 있지 않고 같을 때만 문장 짝 후보.
+/// `weak`: 믿기 어려운 닻(차례로 매긴 짝 이름 · 구간 개수 불일치)으로 짝지은 문단 — 문단 전체의 숫자 증거가 양쪽 비어 있지 않고
+/// 같을 때만 문장 짝 후보(그 뒤 기존 조건).
 fn emit_paragraph(
     out: &mut Vec<(usize, Pair)>,
     cx: &Ctx,
     (t, s): (usize, usize),
     mut pins: Vec<(usize, usize)>,
-    ordered: bool,
+    weak: bool,
 ) {
     pins.sort_unstable();
     let units = |n: usize, p: usize| (0..n as u32).map(|k| (p, k)).collect::<Vec<_>>();
     let (tu, su) = (units(cx.tsent[t].len(), t), units(cx.ssent[s].len(), s));
-    if ordered {
+    if weak {
         let all = |texts: &[String]| texts.iter().flat_map(|x| evidence(x)).collect::<Vec<_>>();
         let te = all(&tu
             .iter()
