@@ -17,6 +17,8 @@ pub struct EditorSession {
     dir: tempfile::TempDir,
     versions: Vec<Version>,
     current: usize,
+    /// 판이 바뀔 때마다(`reload`) 느는 번호.
+    revision: u64,
     /// 연 판 · 마지막으로 저장한 판(그 판이 되돌리기 뒤 새 고침으로 버려지면 `None`). 지금 판과 다르면 「고친 것이 있다」.
     saved: Option<usize>,
     /// 다시 굽는 법. 없으면 보기 전용(내장 틀도 원본 틀도 못 쓰는 서식).
@@ -256,6 +258,7 @@ impl EditorSession {
                 generated: false,
             }],
             current: 0,
+            revision: 0,
             saved: Some(0),
             dialect,
             document,
@@ -2061,6 +2064,19 @@ impl EditorSession {
         crate::claim_parents(&self.claims())
     }
 
+    /// 상시 점검: 제출 전 점검을 오류 · 경고로 가른 것. 문서를 바꾸지 않는다.
+    pub fn live_checks(&self) -> Vec<crate::LiveIssue> {
+        self.submission_checks()
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+
+    /// 판 번호 — 열기 · 고침 · 되돌리기 · 다시 하기마다 늘어난다(화면이 오래된 점검 결과를 버린다).
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     /// 제출 전 점검(빈 식별번호 · 도면 대응 · 안 쓰인 부호 · 청구항 인용).
     pub fn submission_checks(&self) -> Vec<crate::SubmitIssue> {
         let paragraphs = self.paragraphs();
@@ -2902,6 +2918,7 @@ impl EditorSession {
     /// 지금 판을 판독해 쪽 그림을 만든다. 모델이 있으면 문단 id 를 판독 id(문단 차례)에 맞추고 서식 구간도 모델에서 뽑는다
     /// (서식 목록 판독 2초를 아낀다). 문단 수가 안 맞으면 모델을 버린다(다음 고침에서 파일로 다시 해석).
     fn reload(&mut self) -> Result<(), CoreError> {
+        self.revision += 1;
         let (document, plan) = load(self.path(), self.print)?;
         self.document = document;
         self.plan = plan;

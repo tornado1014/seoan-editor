@@ -140,6 +140,45 @@ pub fn submission_checks(
     out
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Severity {
+    Error,
+    Warning,
+}
+
+/// 오류 = 매뉴얼 오류코드가 붙었고 「확인용」 넷이 아닌 것 · 청구항 인용 문제. 나머지는 경고.
+pub fn severity(issue: &SubmitIssue) -> Severity {
+    let coded = issue
+        .code
+        .is_some_and(|code| !crate::kipo_rules::CONFIRM_ONLY.contains(&code));
+    if coded || issue.kind == SubmitKind::Citation {
+        Severity::Error
+    } else {
+        Severity::Warning
+    }
+}
+
+/// 상시 점검 한 건(편집하는 동안 화면에 켜 두는 점검).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LiveIssue {
+    pub severity: Severity,
+    pub code: Option<&'static str>,
+    pub paragraph_id: Option<String>,
+    pub detail: String,
+}
+
+impl From<SubmitIssue> for LiveIssue {
+    fn from(issue: SubmitIssue) -> Self {
+        Self {
+            severity: severity(&issue),
+            code: issue.code,
+            paragraph_id: issue.paragraph_id,
+            detail: issue.detail,
+        }
+    }
+}
+
 /// 요약 글자 한도(공백 빼고).
 const ABSTRACT_LIMIT: usize = 400;
 /// 아래 표제를 묶기만 하는 표제(바로 다음이 표제여도 된다).

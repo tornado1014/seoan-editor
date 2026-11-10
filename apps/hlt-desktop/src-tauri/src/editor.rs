@@ -1830,6 +1830,30 @@ pub async fn editor_submission_checks(
     })
 }
 
+#[derive(Serialize)]
+pub struct LiveChecksDto {
+    pub revision: u64,
+    pub issues: Vec<hlt_core::LiveIssue>,
+}
+
+/// 상시 점검(편집하는 동안) — 문서를 바꾸지 않는다 · 의견서(종류 7)는 볼 것이 없다.
+#[tauri::command]
+pub async fn editor_live_checks(
+    window: Window,
+    state: State<'_, EditorState>,
+) -> Result<LiveChecksDto, CoreError> {
+    with_session(&state, &window, |session| {
+        Ok(LiveChecksDto {
+            revision: session.revision(),
+            issues: if session.document.summary.document_type_raw & 0x7fff == 7 {
+                Vec::new()
+            } else {
+                session.live_checks()
+            },
+        })
+    })
+}
+
 /// 그림 바꾸기(도면 보정): JPG · TIFF 를 골라 판독 그림 `image` 자리에 · 고르기를 취소하면 문서는 그대로.
 #[tauri::command]
 pub async fn editor_replace_picture(

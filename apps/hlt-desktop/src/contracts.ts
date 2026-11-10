@@ -410,6 +410,10 @@ export type SubmitKindDto =
   | 'format';
 /** 제출 전 점검 한 줄(가 볼 문단 · 없으면 문서 전체의 일 · 통특기 매뉴얼 오류코드가 있으면 `code`). */
 export type SubmitIssueDto = { kind: SubmitKindDto; code?: string; paragraph_id: string | null; detail: string };
+export type SeverityDto = 'error' | 'warning';
+export type LiveIssueDto = { severity: SeverityDto; code: string | null; paragraph_id: string | null; detail: string };
+export type LiveChecksDto = { revision: number; issues: LiveIssueDto[] };
+export const editorLiveChecks = () => invoke<LiveChecksDto>('editor_live_checks');
 export const editorSubmissionChecks = () => invoke<SubmitIssueDto[]>('editor_submission_checks');
 /** 표준서식으로 고침(본문 줄 간격 280% · 글자 12pt · 되돌리기 한 번) · changed = 고친 문단 수. */
 export const editorStandardizeFormat = () => invoke<{ view: EditorViewDto; changed: number }>('editor_standardize_format');

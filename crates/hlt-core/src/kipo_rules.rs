@@ -598,7 +598,7 @@ pub fn format_checks(paragraphs: &[EditorParagraph], objects: &CheckObjects) -> 
     }
     // 매뉴얼 규칙이지만 이대로 접수된 실물이 있는 것(실물 최종본 228건 중 E-266 5 · E-249 2 · E-271 3 · E-215 3건) — 확인용.
     for issue in &mut out {
-        if matches!(issue.code, Some("E-266" | "E-249" | "E-271" | "E-215")) {
+        if issue.code.is_some_and(|code| CONFIRM_ONLY.contains(&code)) {
             issue
                 .detail
                 .push_str(" (확인용 — 이대로 접수된 실물도 있습니다)");
@@ -606,6 +606,9 @@ pub fn format_checks(paragraphs: &[EditorParagraph], objects: &CheckObjects) -> 
     }
     out
 }
+
+/// 매뉴얼 규칙이지만 이대로 접수된 실물이 있어 「확인용」으로만 알리는 오류코드(상시 점검에서는 경고).
+pub(crate) const CONFIRM_ONLY: [&str; 4] = ["E-266", "E-249", "E-271", "E-215"];
 
 /// 【발명의 명칭】 내용: 한 문단 · 「한글 명칭{English Title}」 · 각 540바이트.
 fn title_issues(
