@@ -727,9 +727,10 @@ export function mountEditor(root: HTMLElement): void {
       mark.type = 'button';
       mark.className = `nk-live ${issues[0].severity}`;
       mark.title = issues.map((issue) => `${issue.code ?? '점검'} · ${issue.detail}`).join('\n');
-      mark.style.left = `${Math.max(2, margin - 48) * scale}px`;
+      mark.style.left = `${Math.max(2, margin - 56) * scale}px`;
       mark.style.top = `${top * scale}px`;
       mark.style.width = mark.style.height = `${14 * scale}px`;
+      // 식별번호([0001] 8pt 바탕체 ≈ 24~28pt 폭)는 margin-31 ~ margin-3 에 오른쪽 맞춤 — 동그라미는 margin-56 ~ margin-42 로 겹치지 않는다.
       // 쪽을 누르면 커서가 놓인다 — 이 동그라미는 커서를 건드리지 않고 점검 창만 연다.
       mark.addEventListener('mousedown', (event) => event.stopPropagation());
       mark.addEventListener('click', (event) => {
@@ -3725,7 +3726,6 @@ export function mountEditor(root: HTMLElement): void {
 
   /** 「도구」 메뉴 · ⌘K 명령 찾기가 함께 쓰는 목록. */
   const TOOLS: { label: string; run: () => void }[] = [
-
     { label: '청구항 번호 다시 매기기…', run: () => void renumber(false) },
     { label: '도면 번호 다시 매기기…', run: () => void renumber(true) },
     { label: '부호 목록', run: () => void signList() },

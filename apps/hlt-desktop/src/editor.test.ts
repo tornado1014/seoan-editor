@@ -1866,6 +1866,32 @@ describe('page editing', () => {
     q(root, '.tour-end').click(); // 투어 키 듣기를 풀어 다음 테스트에 새지 않게
   });
 
+  test('투어: 상시 점검 띠가 숨어 있으면(의견서 · 끔) 그 자리를 비추지 않고 안내만 · 보이면 비춘다', async () => {
+    const rect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      const size = this.classList.contains('live-strip') && !this.hidden ? 100 : 0;
+      return { left: 10, top: 10, right: 10 + size, bottom: 10 + size, width: size, height: size, x: 10, y: 10, toJSON() {} } as DOMRect;
+    };
+    try {
+      for (const shown of [false, true]) {
+        localStorage.clear();
+        liveApplies = shown;
+        liveIssues = [issueOf('error', 'paragraph:0')];
+        const root = await open();
+        await settle(10);
+        expect(strip(root).hidden).toBe(!shown);
+        q(root, '.tour-invite-go').click();
+        for (let i = 0; i < 12 && root.querySelector('.tour-title')!.textContent !== '상시 점검'; i += 1) q(root, '.tour-next').click();
+        expect(root.querySelector('.tour-title')!.textContent).toBe('상시 점검');
+        expect(root.querySelector<HTMLElement>('.tour-hole')!.hidden, shown ? '보이면 비춘다' : '숨은 자리는 비추지 않는다').toBe(!shown);
+        expect(root.querySelector<HTMLElement>('.tour-note')!.hidden).toBe(shown);
+        q(root, '.tour-end').click();
+      }
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = rect;
+    }
+  });
+
   test('find range: 상세설명만 · 청구항만 (replace-all too) · 고른 곳만 frozen at pick time · kept when typing anew', async () => {
     texts = ['【발명의 설명】', '가나가나가', '【청구범위】', '【청구항 1】', '가나', '【요약서】', '가'];
     const root = await open();
