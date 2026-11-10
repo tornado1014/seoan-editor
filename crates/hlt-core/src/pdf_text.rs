@@ -20,6 +20,7 @@ use std::{
 
 use pdf_extract::{MediaBox, OutputDev, OutputError, Transform};
 use regex::Regex;
+use serde::Serialize;
 
 use crate::{
     CoreError, ErrorCode,
@@ -335,8 +336,21 @@ fn paragraphs(pages: &[(f64, Vec<Line>)]) -> Vec<String> {
         .collect()
 }
 
+/// 문단 글과 글을 읽은 쪽 수(걸러낸 뒤 공백 아닌 글자가 20자 이상인 쪽).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PdfText {
+    pub paragraphs: Vec<String>,
+    pub pages: u32,
+    pub pages_with_text: u32,
+}
+
 /// 원문 PDF 에서 머리말 · 꼬리말 · 쪽 번호 · 줄 번호를 걸러 낸 문단 글을 뽑는다.
 pub fn pdf_paragraphs(path: &Path) -> Result<Vec<String>, CoreError> {
+    pdf_text(path).map(|text| text.paragraphs)
+}
+
+/// `pdf_paragraphs` + 쪽 수 · 글을 읽은 쪽 수. 일부 쪽만 글이 있어도 오류가 아니다(도면 쪽이 그림인 명세서).
+pub fn pdf_text(path: &Path) -> Result<PdfText, CoreError> {
     let size = std::fs::metadata(path)
         .map_err(|e| io_error(&e, "pdf_text_read", &path.to_string_lossy()))?
         .len();
@@ -355,8 +369,18 @@ pub fn pdf_paragraphs(path: &Path) -> Result<Vec<String>, CoreError> {
         .map(|(height, glyphs)| (height, page_lines(&glyphs)))
         .collect();
     drop_running_lines(&mut pages);
+    let with_text = pages
+        .iter()
+        .filter(|(_, lines)| {
+            let chars: usize = lines
+                .iter()
+                .map(|line| line.text.chars().filter(|c| !c.is_whitespace()).count())
+                .sum();
+            chars >= 20
+        })
+        .count();
     let result = paragraphs(&pages);
-    if result.is_empty() {
+    if with_text == 0 || result.is_empty() {
         return Err(error(
             ErrorCode::UnsupportedFormat,
             "pdf_text_no_text",
@@ -364,5 +388,9 @@ pub fn pdf_paragraphs(path: &Path) -> Result<Vec<String>, CoreError> {
             path,
         ));
     }
-    Ok(result)
+    Ok(PdfText {
+        paragraphs: result,
+        pages: pages.len() as u32,
+        pages_with_text: with_text as u32,
+    })
 }

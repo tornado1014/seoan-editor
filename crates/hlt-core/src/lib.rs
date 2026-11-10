@@ -179,7 +179,7 @@ pub use paginate::{page_count, page_layout};
 #[cfg(feature = "pdf")]
 pub use pdf::write_pdf;
 #[cfg(feature = "pdf-read")]
-pub use pdf_text::pdf_paragraphs;
+pub use pdf_text::{PdfText, pdf_paragraphs, pdf_text};
 pub use print::{
     PagePlan, PlannedCellBox, PlannedGlyph, PlannedLine, PlannedPage, PrintOptions, page_plan,
 };

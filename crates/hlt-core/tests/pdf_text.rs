@@ -1,7 +1,7 @@
 //! 원문 PDF → 문단(P9). 입력 PDF 는 krilla(`pdf` feature)로 테스트 안에서 굽는다 — 실물 문서 없음.
 #![cfg(all(feature = "pdf", feature = "pdf-read"))]
 
-use hlt_core::{CoreError, ErrorCode, pdf_paragraphs};
+use hlt_core::{CoreError, ErrorCode, pdf_paragraphs, pdf_text};
 use krilla::{
     Document,
     geom::{PathBuilder, Point, Rect},
@@ -197,4 +197,46 @@ fn extra_line_gap_alone_splits_paragraphs_and_lone_page_number_is_dropped() {
             format!("{} {}", full[2], full[3])
         ]
     );
+}
+
+const LONG_HEADER: &str = "WO 2025/123456 PCT/US2025/000000";
+
+#[test]
+fn coverage_counts_pages_with_text_after_filtering() {
+    let body = "the only page with a text layer carries this sentence about nothing in particular";
+    // 4쪽 중 1쪽만 글 — 오류가 아니다.
+    let (_dir, path) = write_temp(&build_pdf(&[
+        vec![(72.0, 100.0, body)],
+        vec![],
+        vec![],
+        vec![],
+    ]));
+    let text = pdf_text(&path).unwrap();
+    assert_eq!((text.pages, text.pages_with_text), (4, 1));
+    assert_eq!(text.paragraphs, vec![body.to_string()]);
+    assert_eq!(pdf_paragraphs(&path).unwrap(), text.paragraphs);
+
+    // 정상 2쪽.
+    let (_dir, path) = write_temp(&synthetic());
+    let text = pdf_text(&path).unwrap();
+    assert_eq!((text.pages, text.pages_with_text), (2, 2));
+
+    // 머리말 · 쪽 번호뿐인 쪽은 글이 없는 쪽이다(걸러낸 뒤 셈).
+    let (_dir, path) = write_temp(&build_pdf(&[
+        vec![
+            (72.0, 30.0, LONG_HEADER),
+            (300.0, 760.0, "1"),
+            (72.0, 100.0, body),
+        ],
+        vec![(72.0, 30.0, LONG_HEADER), (300.0, 760.0, "2")],
+    ]));
+    let text = pdf_text(&path).unwrap();
+    assert_eq!((text.pages, text.pages_with_text), (2, 1));
+    assert_eq!(text.paragraphs, vec![body.to_string()]);
+
+    // 전부 글 없는 쪽이면 오류.
+    let (_dir, path) = write_temp(&build_pdf(&[vec![], vec![]]));
+    let error = pdf_text(&path).unwrap_err();
+    assert_eq!(error.code, ErrorCode::UnsupportedFormat);
+    assert!(error.message.contains("스캔본은 지원하지 않습니다"));
 }
