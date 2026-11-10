@@ -106,6 +106,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let view = SubmenuBuilder::new(app, "보기")
         .item(&action("marks", "문단부호 보기")?)
         .item(&action("source", "원문 나란히 보기…")?)
+        .item(&action("pinned", "고정 창 보기")?)
         .item(&action("amend-marks", "보정 표시")?)
         .separator()
         .item(&action("zoom-in", "문서 확대 (⌘+)")?)

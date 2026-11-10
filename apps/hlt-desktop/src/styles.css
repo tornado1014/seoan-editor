@@ -172,6 +172,19 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 
 /* 책상과 종이: 위에서 빛이 드는 책상 · 종이는 가장자리 한 줄과 부드러운 그림자로 놓인다. */
 .editor-pages { overflow: auto; background: var(--desk); padding: 2rem 1.5rem 3.5rem; display: flex; flex-direction: column; align-items: center; gap: 1.6rem; }
+.editor-center { grid-column: 2; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.editor-center > .editor-pages { flex: 1; min-height: 0; }
+/* 고정 창: 쪽 위의 읽기 전용 두 번째 보기 — 높이는 설정(손잡이로 끌어 바꿈). */
+.editor-pinned { flex: none; display: flex; flex-direction: column; height: 220px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.editor-pinned[hidden], .pinned-grip[hidden] { display: none; }
+.pinned-head { display: flex; align-items: center; justify-content: space-between; gap: .6rem; padding: .2rem .8rem; font-size: 12px; color: var(--muted); border-bottom: .5px solid var(--line); }
+.pinned-body { position: relative; flex: 1; min-height: 0; overflow: auto; padding: .5rem 1rem; font-size: 14px; line-height: 1.6; }
+.pinned-body p { margin: 0 0 .4rem; padding: .1rem .3rem; border-radius: 4px; cursor: pointer; }
+.pinned-body p:hover { background: var(--accent-soft); }
+.pinned-body p.pinned-heading { font-weight: 700; }
+.pinned-object { color: var(--faint); }
+.pinned-grip { flex: none; height: 6px; margin-top: -3px; cursor: row-resize; z-index: 2; touch-action: none; }
+.pinned-grip:hover { background: var(--accent-soft); }
 .nk-page { position: relative; background: #fff; box-shadow: 0 0 0 .5px rgba(0, 0, 0, .1), 0 1px 2px rgba(0, 0, 0, .06), 0 12px 32px rgba(0, 0, 0, .08); flex: none; }
 .nk-underline { position: absolute; background: #000; pointer-events: none; }
 .nk-glyph { position: absolute; font-family: BatangChe, "바탕체", AppleMyungjo, serif; line-height: 1; white-space: pre; color: #000; }

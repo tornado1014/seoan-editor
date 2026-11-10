@@ -1361,6 +1361,8 @@ describe('page editing', () => {
     history_days: 30,
     zoom: 1.2,
     marks_default: false,
+    pinned_on: false,
+    pinned_height: 220,
     snippets: [{ name: '첫머리', text: '의견' }],
   };
   const keyDown = (key: string) => document.dispatchEvent(new KeyboardEvent('keydown', { key, metaKey: true, bubbles: true }));
@@ -1406,6 +1408,50 @@ describe('page editing', () => {
     // 다른 탭이 문단부호 기본을 켰다.
     handlers.get('settings-changed')!({ payload: { ...SETTINGS, marks_default: true } });
     expect(q(root, '[data-action="marks"]').getAttribute('aria-pressed')).toBe('true');
+    await settle(500);
+  });
+
+  test('고정 창: 켜면 청구범위에서 시작 · 아래에서 고치면 고정 창 글이 바뀐다 · 닫으면 비고 다른 문서는 그 청구범위', async () => {
+    texts = ['【발명의 설명】', '가나다', '【청구범위】', '【청구항 1】', '장치.'];
+    settingsAnswer = { ...SETTINGS, zoom: 1 };
+    const root = await open();
+    await settle(10);
+    const pane = root.querySelector<HTMLElement>('.editor-pinned')!;
+    expect(pane.hidden).toBe(true);
+    q(root, '[data-action="pinned"]').click();
+    await settle(10);
+    expect(pane.hidden).toBe(false);
+    expect(pane.querySelectorAll('p').length).toBe(5);
+    expect(pane.querySelector('[contenteditable], input, textarea')).toBeNull();
+    expect((last('settings_set')![1] as { settings: { pinned_on: boolean } }).settings.pinned_on).toBe(true);
+    clickAt(root, 49, 124); // 둘째 문단 처음
+    type(root, 'X');
+    await settle(500);
+    expect(last('editor_replace_text')).toEqual(['editor_replace_text', { paragraphId: 'paragraph:1', text: 'X가나다' }]);
+    expect(pane.querySelector('p[data-id="paragraph:1"]')!.textContent).toBe('X가나다');
+    // 닫기 → 비고 · 다른 문서를 열면 그 문서 청구범위(설정이 켜져 있으니 저절로).
+    settingsAnswer = { ...SETTINGS, zoom: 1, pinned_on: true };
+    q(root, '[data-action="close-document"]').click();
+    await settle(10);
+    expect(pane.querySelectorAll('p').length).toBe(0);
+    expect(pane.hidden).toBe(true);
+    handlers.get('settings-changed')!({ payload: { ...SETTINGS, zoom: 1, pinned_on: true } });
+    texts = ['【청구범위】', '【청구항 1】', '다른 문서'];
+    q(root, '[data-action="open"]').click();
+    await settle(10);
+    expect(pane.hidden).toBe(false);
+    expect([...pane.querySelectorAll('p')].map((p) => p.textContent)).toEqual(['【청구범위】', '【청구항 1】', '다른 문서']);
+    await settle(500);
+  });
+
+  test('고정 창: 설정 pinned_on 이 참이면 문서를 열 때 켜진다', async () => {
+    settingsAnswer = { ...SETTINGS, pinned_on: true, pinned_height: 300 };
+    const root = await open();
+    await settle(10);
+    const pane = root.querySelector<HTMLElement>('.editor-pinned')!;
+    expect(pane.hidden).toBe(false);
+    expect(pane.style.height).toBe('300px');
+    expect(q(root, '[data-action="pinned"]').getAttribute('aria-pressed')).toBe('true');
     await settle(500);
   });
 

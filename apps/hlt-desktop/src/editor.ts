@@ -2,6 +2,7 @@
 // 쪽은 보일 때 한 쪽씩 받아 그린다. 고치면 문서 전체가 다시 구워지고 보이는 쪽을 다시 받는다.
 import { listen } from '@tauri-apps/api/event';
 import { osKeys } from './keys';
+import { claimsStart, createPinnedPane } from './pinned-pane';
 import { installDrop } from './drop';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Menu } from '@tauri-apps/api/menu';
@@ -279,6 +280,7 @@ const ICONS: Record<string, string[]> = {
   amend: ['M12.5 22H18a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v9.5', 'M14 2v4a2 2 0 0 0 2 2h4', 'M13.378 15.626a1 1 0 1 0-3.004-3.004l-5.01 5.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z'],
   fileNew: ['M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z', 'M14 2v4a2 2 0 0 0 2 2h4', 'M9 15h6', 'M12 18v-6'],
   columns: ['M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z', 'M12 3v18'],
+  pinned: ['M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z', 'M3 9h18'],
   wrench: ['M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z'],
   layers: ['m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z', 'm22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65', 'm22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65'],
   diff: ['M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z', 'M9 10h6', 'M12 13V7', 'M9 17h6'],
@@ -344,6 +346,7 @@ export function mountEditor(root: HTMLElement): void {
         <div class="tb-group" role="group" aria-label="보기">
           <button type="button" data-action="marks" aria-pressed="true" title="문단부호 보기 — 문단 끝 ↵ 를 보이거나 숨깁니다(화면에만)">${icon('marks')}<span>문단부호</span></button>
           <button type="button" data-action="source" disabled title="원문 나란히 — 영문 원문(.docx)을 오른쪽에 두고 식별번호 · 청구항 번호로 함께 움직입니다(다시 누르면 닫기)">${icon('columns')}<span>원문 나란히</span></button>
+          <button type="button" data-action="pinned" aria-pressed="false" disabled title="고정 창 — 문서를 읽기 전용으로 한 벌 더 쪽 위에 띄워, 청구범위를 보며 상세한 설명을 고칩니다(다시 누르면 닫기)">${icon('pinned')}<span>고정 창</span></button>
         </div>
         <div class="tb-group" role="group" aria-label="도구">
           <button type="button" data-action="tools" disabled title="도구 — 번호 다시 매기기 · 부호 목록 · 문서 통계 · 되풀이 문장 · 고친 곳 이동(⌘[ ⌘]) · 모든 명령은 ⌘K">${icon('wrench')}<span>도구 ▾</span></button>
@@ -415,7 +418,11 @@ export function mountEditor(root: HTMLElement): void {
       <textarea class="caret-input" aria-label="쪽 위 입력" autocomplete="off" spellcheck="false"></textarea>
       <div class="editor-body">
         <nav class="editor-outline" aria-label="구조"></nav>
-        <div class="editor-pages" tabindex="0"></div>
+        <div class="editor-center">
+          <section class="editor-pinned" hidden aria-label="고정 창"></section>
+          <div class="pinned-grip" hidden role="separator" aria-orientation="horizontal" title="끌어서 고정 창 높이를 바꿉니다"></div>
+          <div class="editor-pages" tabindex="0"></div>
+        </div>
         <section class="desk-empty" aria-labelledby="desk-title">
           <h1 id="desk-title" class="desk-mark" lang="ko-Hani" aria-label="서안">書案</h1>
           <div class="desk-start">
@@ -584,7 +591,7 @@ export function mountEditor(root: HTMLElement): void {
     void editorLog(`${label} 실패 ${JSON.stringify(error)}`).catch(() => {});
   };
   const enable = () => {
-    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'docx', 'fin', 'review', 'amend-marks', 'basis', 'amend', 'math', 'chem', 'table', 'snippets', 'sequence-list', 'history', 'align-justified', 'align-center', 'align-left', 'indent', 'outdent', 'source', 'tools']) {
+    for (const action of ['save', 'save-as', 'close-document', 'undo', 'redo', 'find', 'pdf', 'docx', 'fin', 'review', 'amend-marks', 'basis', 'amend', 'math', 'chem', 'table', 'snippets', 'sequence-list', 'history', 'align-justified', 'align-center', 'align-left', 'indent', 'outdent', 'source', 'pinned', 'tools']) {
       q<HTMLButtonElement>(`[data-action="${action}"]`).disabled = !view;
     }
   };
@@ -784,6 +791,8 @@ export function mountEditor(root: HTMLElement): void {
     }
     if (keepScroll) pagesRoot.scrollTop = scroll;
     renderOutline(next);
+    if (pinned.shown) pinned.render(next.paragraphs);
+    else if (settings?.pinned_on) showPinned();
     void refreshClaims(next);
     void refreshKeys(next);
     // 자동 저장: 판이 바뀔 때마다(고침 · 되돌리기) 2분을 다시 센다 — 손을 멈추면 복구본을 둔다(고친 것이 없으면 지운다).
@@ -811,6 +820,7 @@ export function mountEditor(root: HTMLElement): void {
     planned = new Map();
     window.clearTimeout(autosaveTimer);
     closeSource();
+    hidePinned();
     images.clear();
     caret = anchor = null;
     selected = selectedCell = null;
@@ -917,6 +927,49 @@ export function mountEditor(root: HTMLElement): void {
       markCurrent();
       syncSource();
     });
+  });
+
+  // 고정 창: 아래 쪽과 같은 문서의 읽기 전용 두 번째 보기(맨 위에 청구범위) — 판이 바뀔 때마다 다시 그린다.
+  const pinnedHost = q<HTMLElement>('.editor-pinned');
+  const pinnedGrip = q<HTMLElement>('.pinned-grip');
+  const pinnedButton = q<HTMLButtonElement>('[data-action="pinned"]');
+  const pinned = createPinnedPane(pinnedHost, {
+    go(id, withCaret) {
+      if (withCaret) return jumpTo(id);
+      const page = view?.paragraph_pages[id];
+      if (page !== undefined) pageHost(page)?.scrollIntoView({ block: 'start' });
+    },
+  });
+  function showPinned() {
+    if (!view) return;
+    pinned.render(view.paragraphs);
+    pinned.show(claimsStart(view.paragraphs));
+    pinnedGrip.hidden = false;
+    pinnedButton.setAttribute('aria-pressed', 'true');
+  }
+  function hidePinned() {
+    pinned.hide();
+    pinnedGrip.hidden = true;
+    pinnedButton.setAttribute('aria-pressed', 'false');
+  }
+  const PINNED_MIN = 80;
+  pinnedGrip.addEventListener('pointerdown', (event) => {
+    const startY = event.clientY;
+    const startHeight = pinnedHost.offsetHeight;
+    pinnedGrip.setPointerCapture?.(event.pointerId);
+    const move = (at: PointerEvent) => {
+      const height = Math.round(Math.min(Math.max(startHeight + at.clientY - startY, PINNED_MIN), window.innerHeight * 0.6));
+      pinnedHost.style.height = `${height}px`;
+    };
+    const done = () => {
+      pinnedGrip.removeEventListener('pointermove', move);
+      pinnedGrip.removeEventListener('pointerup', done);
+      pinnedGrip.removeEventListener('pointercancel', done);
+      void saveSettings({ pinned_height: pinnedHost.offsetHeight });
+    };
+    pinnedGrip.addEventListener('pointermove', move);
+    pinnedGrip.addEventListener('pointerup', done);
+    pinnedGrip.addEventListener('pointercancel', done);
   });
 
   // 원문과 나란히 보기: 원문 문단(짝 이름 → 첫 문단) · 지금 판 문단 짝 이름.
@@ -3039,6 +3092,8 @@ export function mountEditor(root: HTMLElement): void {
     settings = next;
     autosaveMs = Math.max(1, next.autosave_minutes) * 60_000;
     setPageZoom(next.zoom);
+    pinnedHost.style.height = `${next.pinned_height}px`;
+    if (first && next.pinned_on && view && !pinned.shown) showPinned();
     if (first || marksChanged) {
       showMarks = next.marks_default;
       q<HTMLButtonElement>('[data-action="marks"]').setAttribute('aria-pressed', String(showMarks));
@@ -3937,6 +3992,16 @@ export function mountEditor(root: HTMLElement): void {
           } else say('');
         } catch (error) {
           fail('새 의견서', error);
+        }
+        break;
+      }
+      case 'pinned': {
+        if (pinned.shown) {
+          hidePinned();
+          void saveSettings({ pinned_on: false });
+        } else {
+          showPinned();
+          void saveSettings({ pinned_on: true });
         }
         break;
       }

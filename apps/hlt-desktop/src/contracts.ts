@@ -467,6 +467,9 @@ export interface SettingsDto {
   history_days: number;
   zoom: number;
   marks_default: boolean;
+  /** 고정 창(읽기 전용 두 번째 보기)을 문서를 열 때 켠다. */
+  pinned_on: boolean;
+  pinned_height: number;
   snippets: SnippetDto[];
 }
 export const settingsGet = () => invoke<SettingsDto>('settings_get');

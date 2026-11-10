@@ -23,6 +23,9 @@ pub struct Settings {
     pub history_days: u32,
     pub zoom: f64,
     pub marks_default: bool,
+    /// 고정 창(읽기 전용 두 번째 보기)을 문서를 열 때 켠다 · 높이(px).
+    pub pinned_on: bool,
+    pub pinned_height: u32,
     pub snippets: Vec<Snippet>,
     /// 지난 실행의 판 · 그 앞 판(「이전 판으로 되돌리기」의 대상).
     pub last_version: Option<String>,
@@ -41,6 +44,8 @@ impl Default for Settings {
             history_days: 30,
             zoom: 1.0,
             marks_default: true,
+            pinned_on: false,
+            pinned_height: 220,
             snippets: vec![
                 snippet(
                     "의견서 첫머리",
@@ -72,6 +77,7 @@ impl Settings {
         self.autosave_minutes = self.autosave_minutes.clamp(1, 60);
         self.history_keep = self.history_keep.clamp(1, 100);
         self.history_days = self.history_days.clamp(1, 365);
+        self.pinned_height = self.pinned_height.clamp(80, 2000);
         self
     }
 
@@ -175,6 +181,7 @@ mod tests {
         assert_eq!(settings.zoom, 1.3);
         assert_eq!((settings.history_keep, settings.history_days), (10, 30));
         assert_eq!(settings.snippets.len(), 3);
+        assert_eq!((settings.pinned_on, settings.pinned_height), (false, 220));
     }
 
     #[test]
