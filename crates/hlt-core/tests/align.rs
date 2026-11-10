@@ -445,3 +445,85 @@ fn unusable_pins_are_reported_and_make_no_pair() {
     assert!(pair_summary(&al, "b").iter().all(|p| p.1 != 1));
     assert!(pair_summary(&al, "c").iter().all(|p| p.1 != 3));
 }
+
+// ---- 실물 정답지(XLIFF)와 견주다 나온 꼴 ----
+
+#[test]
+fn a_claim_numbered_ten_or_more_pairs_by_lines_despite_its_own_number() {
+    // 원문 청구항 첫 줄의 「12.」 는 항 번호이지 숫자 증거가 아니다 — 역문에는 없다.
+    let target = [
+        para("h", "【청구항 12】", None),
+        para("c0", "장치로서,", None),
+        para("c1", "기판(110);", None),
+    ];
+    let source = strings(&[
+        "What is claimed is:",
+        "12. A device comprising:",
+        "a substrate 110;",
+    ]);
+    // 번호 열쇠가 1 부터 이어져야 12 번이 잡히므로, 앞 11 개 항을 채운다.
+    let mut full = vec!["What is claimed is:".to_string()];
+    for n in 1..12 {
+        full.push(format!("{n}. A thing."));
+    }
+    full.extend(source[1..].iter().cloned());
+    let mut tgt: Vec<EditorParagraph> = Vec::new();
+    for n in 1..12 {
+        tgt.push(para(&format!("h{n}"), &format!("【청구항 {n}】"), None));
+        tgt.push(para(&format!("b{n}"), "물건.", None));
+    }
+    tgt.extend(target);
+    let al = align_inferred(&tgt, &full, &[]);
+    assert_eq!(
+        pair_summary(&al, "c0"),
+        [(Some(0), 12, Some(0), Grade::Sentence)]
+    );
+    assert_eq!(pair_summary(&al, "c1").len(), 1);
+}
+
+#[test]
+fn a_claim_numbered_ten_or_more_still_demotes_on_different_numerals() {
+    let mut full = vec!["What is claimed is:".to_string()];
+    for n in 1..12 {
+        full.push(format!("{n}. A thing."));
+    }
+    full.push("12. A device comprising:".into());
+    full.push("a substrate 130;".into());
+    let mut tgt: Vec<EditorParagraph> = Vec::new();
+    for n in 1..12 {
+        tgt.push(para(&format!("h{n}"), &format!("【청구항 {n}】"), None));
+        tgt.push(para(&format!("b{n}"), "물건.", None));
+    }
+    tgt.push(para("h", "【청구항 12】", None));
+    tgt.push(para("c0", "장치로서,", None));
+    tgt.push(para("c1", "기판(110);", None));
+    let al = align_inferred(&tgt, &full, &[]);
+    assert!(
+        al.pairs
+            .iter()
+            .filter(|p| p.target_id == "c0" || p.target_id == "c1")
+            .all(|p| p.grade == Grade::Paragraph)
+    );
+}
+
+#[test]
+fn leading_figure_numbers_must_agree_before_a_sentence_pair() {
+    // 한 칸 밀린 도면 설명(한 자리 번호는 숫자 증거가 아니다)이 문장 짝으로 둔갑하면 안 된다.
+    let target = [
+        para("a", "도 1은 장치의 도면이다.", None),
+        para("b", "도 2는 시스템의 도면이다.", None),
+    ];
+    let shifted = strings(&[
+        "FIG. 2 shows a view of the device.",
+        "FIG. 3 shows a view of the system.",
+    ]);
+    let al = align_inferred(&target, &shifted, &[]);
+    assert!(al.pairs.iter().all(|p| p.grade != Grade::Sentence));
+    let right = strings(&[
+        "FIG. 1 shows a view of the device.",
+        "FIG. 2 shows a view of the system.",
+    ]);
+    let al = align_inferred(&target, &right, &[]);
+    assert_eq!(al.pairs.len(), 2);
+    assert!(al.pairs.iter().all(|p| p.grade == Grade::Sentence));
+}

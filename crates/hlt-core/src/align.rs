@@ -381,6 +381,7 @@ pub fn align_inferred(
             &sunits,
             &at,
             (tunits[0].0, sunits[0].0),
+            true,
         );
     }
     out.sort_by_key(|(t, _)| *t);
@@ -450,7 +451,7 @@ fn emit_paragraph(
     pins.sort_unstable();
     let units = |n: usize, p: usize| (0..n as u32).map(|k| (p, k)).collect::<Vec<_>>();
     let (tu, su) = (units(cx.tsent[t].len(), t), units(cx.ssent[s].len(), s));
-    emit_group(out, cx, &tu, &su, &pins, (t, s));
+    emit_group(out, cx, &tu, &su, &pins, (t, s), false);
 }
 
 /// 문장 칸 목록(문단 하나 또는 청구항 하나) 짝짓기: 문장 수가 같고 숫자 증거가 어긋나지 않을 때만 문장 짝,
@@ -463,6 +464,7 @@ fn emit_group(
     sunits: &[(usize, u32)],
     pins: &[(usize, usize)],
     fallback: (usize, usize),
+    claim: bool,
 ) {
     let pair = |a: usize, b: usize| {
         let ((t, tk), (s, sk)) = (tunits[a], sunits[b]);
@@ -481,11 +483,15 @@ fn emit_group(
         (0..len).all(|k| {
             let ((t, tk), (s, sk)) = (tunits[ta + k], sunits[sa + k]);
             let te = evidence(&slice(&cx.target[t].text, cx.tsent[t][tk as usize]));
-            let se = evidence(strip_number_prefix(&slice(
-                &cx.source[s],
-                cx.ssent[s][sk as usize],
-            )));
-            te == se
+            let st = slice(&cx.source[s], cx.ssent[s][sk as usize]);
+            let mut st = strip_number_prefix(&st);
+            if claim && sk == 0 {
+                // 원문 청구항 첫 줄의 「12.」 는 항 번호 — 역문에는 없으니 증거로 세지 않는다.
+                st = strip_claim_number(st);
+            }
+            let tt = slice(&cx.target[t].text, cx.tsent[t][tk as usize]);
+            // 도면 · 양태 설명의 앞 번호(「도 2」 ≡ 「FIG. 2」)는 한 자리여도 어긋나면 안 된다(청구항 제외).
+            (claim || labels_agree(&tt, st)) && te == evidence(st)
         })
     };
     let mut bounds = pins.to_vec();
@@ -539,6 +545,48 @@ fn strip_number_prefix(text: &str) -> &str {
             after
         }
         _ => text,
+    }
+}
+
+/// 원문 청구항 첫 줄 앞 「12.」 를 뺀 글.
+fn strip_claim_number(text: &str) -> &str {
+    let rest = text.trim_start();
+    let digits = rest.chars().take_while(char::is_ascii_digit).count();
+    match rest[digits..].strip_prefix('.') {
+        Some(after) if digits > 0 && after.starts_with(char::is_whitespace) => after,
+        _ => text,
+    }
+}
+
+/// 문장 맨 앞 「낱말 + 번호」 꼴(「도 2」 · 「FIG. 2」 · 「양태 2:」 · 「Aspect 2:」) → (낱말, 번호). 낱말 하나(11자 이하) 바로 뒤 숫자만.
+fn lead_label(text: &str) -> Option<(String, String)> {
+    let c: Vec<char> = text.trim_start().chars().collect();
+    let mut i = 0;
+    while i < c.len() && (c[i].is_alphabetic() || c[i] == '.') {
+        i += 1;
+    }
+    if i == 0 || i > 11 {
+        return None;
+    }
+    let word: String = c[..i].iter().collect();
+    if c.get(i).is_some_and(|ch| ch.is_whitespace()) {
+        i += 1;
+    }
+    let digits: String = c[i..].iter().take_while(|ch| ch.is_ascii_digit()).collect();
+    (!digits.is_empty()).then_some((word, digits))
+}
+
+/// 앞 번호가 어긋나면 안 된다 — 한 자리 번호는 숫자 증거가 아니라서 한 칸 밀린 도면 · 양태 설명이 짝 지어진다.
+/// 양쪽이 「낱말 + 번호」로 시작할 때만 견준다(「도 6을 참조하면」 ↔ 「Referring to FIG. 6」 은 원문이 낱말로 시작하지
+/// 않는다). 원문이 「FIG.」 로 시작하는데 번호가 없으면(PDF 가 번호를 흘린 것) 짝 짓지 않는다.
+/// 역문이 낱말 없이 숫자로 시작하거나(「325에서」) 순서 낱말(「제1」 ↔ first)이면 보지 않는다.
+fn labels_agree(target: &str, source: &str) -> bool {
+    match (lead_label(target), lead_label(source)) {
+        (Some((word, number)), Some(s)) if !word.is_empty() && word != "제" => s.1 == number,
+        (Some((word, _)), None) if !word.is_empty() && word != "제" => {
+            !source.trim_start().starts_with("FIG")
+        }
+        _ => true,
     }
 }
 
