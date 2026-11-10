@@ -40,6 +40,8 @@ mod package;
 mod paginate;
 #[cfg(feature = "pdf")]
 mod pdf;
+#[cfg(feature = "pdf-read")]
+mod pdf_text;
 mod print;
 mod read_model;
 mod reflow;
@@ -176,6 +178,8 @@ pub use package::{hlt_from_original_fin, hlt_from_package};
 pub use paginate::{page_count, page_layout};
 #[cfg(feature = "pdf")]
 pub use pdf::write_pdf;
+#[cfg(feature = "pdf-read")]
+pub use pdf_text::pdf_paragraphs;
 pub use print::{
     PagePlan, PlannedCellBox, PlannedGlyph, PlannedLine, PlannedPage, PrintOptions, page_plan,
 };

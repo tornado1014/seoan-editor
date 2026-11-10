@@ -22,6 +22,9 @@ tempfile = "3"
 zip = { version = "3", default-features = false, features = ["deflate"] }
 jpeg-encoder = "0.7.1"
 krilla = { version = "0.8", optional = true }
+# 원문 PDF 읽기(순수 Rust · MIT). pdf-extract 가 쓰는 lopdf 와 같은 판을 직접 부른다.
+pdf-extract = { version = "0.12", optional = true }
+lopdf = { version = "0.42", optional = true, default-features = false }
 
 # asm 은 GNU 어셈블러라 윈도 MSVC 에서 sha2-asm 빌드가 깨진다(lib.exe 1181) — 그 밖에서만 켠다.
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
@@ -34,3 +37,4 @@ libc = "0.2"
 
 [features]
 pdf = ["dep:krilla"]
+pdf-read = ["dep:pdf-extract", "dep:lopdf"]
