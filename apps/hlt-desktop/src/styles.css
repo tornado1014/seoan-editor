@@ -475,3 +475,14 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 /* 파일을 끌어다 놓을 자리 */
 .drop-target { outline: 2px dashed var(--accent); outline-offset: -6px; }
 .editor-source.drop-source { background: var(--accent-soft); }
+
+/* 상시 점검: 쪽 왼쪽 여백 동그라미(배치에 끼지 않는 절대 위치) + 상태 띠 */
+.nk-live { position: absolute; padding: 0; border: 0; border-radius: 50%; cursor: pointer; opacity: .85; }
+.nk-live:hover { opacity: 1; }
+.nk-live.error { background: var(--error); }
+.nk-live.warning { background: var(--warn-ink); }
+.live-strip { position: fixed; right: 1rem; bottom: 14px; z-index: 6; padding: .3rem .75rem; border: 1px solid var(--line, currentColor); border-radius: 999px; background: color-mix(in srgb, var(--surface) 90%, transparent); box-shadow: var(--lift-1); font-size: 12px; cursor: pointer; color: var(--muted); }
+.live-strip.has-error { color: var(--error); }
+.live-strip.has-warning { color: var(--warn-ink); }
+.live-strip[hidden] { display: none; }
+.submit-ask li.submit-focus { background: var(--warn-soft); }

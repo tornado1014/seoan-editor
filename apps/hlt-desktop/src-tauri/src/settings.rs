@@ -26,6 +26,8 @@ pub struct Settings {
     /// 고정 창(읽기 전용 두 번째 보기)을 문서를 열 때 켠다 · 높이(px).
     pub pinned_on: bool,
     pub pinned_height: u32,
+    /// 상시 점검 표시(쪽 여백 동그라미 · 상태 띠 건수).
+    pub live_checks: bool,
     pub snippets: Vec<Snippet>,
     /// 지난 실행의 판 · 그 앞 판(「이전 판으로 되돌리기」의 대상).
     pub last_version: Option<String>,
@@ -46,6 +48,7 @@ impl Default for Settings {
             marks_default: true,
             pinned_on: false,
             pinned_height: 220,
+            live_checks: true,
             snippets: vec![
                 snippet(
                     "의견서 첫머리",
@@ -182,6 +185,7 @@ mod tests {
         assert_eq!((settings.history_keep, settings.history_days), (10, 30));
         assert_eq!(settings.snippets.len(), 3);
         assert_eq!((settings.pinned_on, settings.pinned_height), (false, 220));
+        assert!(settings.live_checks);
     }
 
     #[test]

@@ -6,6 +6,7 @@ import { claimsStart, createPinnedPane } from './pinned-pane';
 import { installDrop } from './drop';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Menu } from '@tauri-apps/api/menu';
+import { createLiveChecks } from './live-checks';
 import {
   editorImage,
   editorHistoryList,
@@ -52,6 +53,7 @@ import {
   editorClaimIssues,
   editorClaimParents,
   editorSubmissionChecks,
+  editorLiveChecks,
   editorStandardizeFormat,
   editorPastePicture,
   editorExportFin,
@@ -109,6 +111,7 @@ import {
   type AmendmentMarksDto,
   type CitationIssueDto,
   type SubmitIssueDto,
+  type LiveIssueDto,
   type SourceParagraphDto,
   type ClaimBasisDto,
   type ParagraphMarkDto,
@@ -373,6 +376,7 @@ export function mountEditor(root: HTMLElement): void {
         </div>
         <span class="seal" aria-hidden="true">書案</span>
         <span class="editor-status" aria-live="polite"></span>
+        <button type="button" class="live-strip" hidden title="제출 전 점검 목록을 엽니다(문서는 바뀌지 않습니다)"></button>
         <button type="button" class="review-left" hidden title="걸지 않은 오기 정정 — 누를 때마다 다음 정정을 찾기 막대로"></button>
         <span class="editor-error" role="alert" hidden title="눌러서 닫기"></span>
       </div>
@@ -615,6 +619,7 @@ export function mountEditor(root: HTMLElement): void {
     drawNumbers(host, page);
     drawMarks(host, page);
     drawAmendMarks(host, page);
+    drawLive(host, page);
     paint();
     markCurrent();
   }
@@ -659,6 +664,93 @@ export function mountEditor(root: HTMLElement): void {
       host.append(mark);
     }
   }
+
+  /** 상시 점검: 쪽 왼쪽 여백의 동그라미(오류 · 경고) + 위 상태 띠 건수. 설정 「상시 점검 표시」가 끈다(`liveWanted`). */
+  let liveWanted = true;
+  let liveMarks = new Map<string, LiveIssueDto[]>();
+  const liveStrip = q<HTMLButtonElement>('.live-strip');
+  const live = createLiveChecks({
+    fetch: () => (root.isConnected ? editorLiveChecks() : Promise.reject(new Error('닫힌 편집기'))),
+    revision: () => view?.revision ?? 0,
+    draw(byParagraph) {
+      liveMarks = byParagraph;
+      for (const [index, page] of pages) {
+        const host = pageHost(index);
+        if (!host || host.dataset.drawn !== '1') continue;
+        host.querySelectorAll('.nk-live').forEach((mark) => mark.remove());
+        drawLive(host, page);
+      }
+    },
+    strip(errors, warnings) {
+      liveStrip.hidden = false;
+      liveStrip.textContent = errors + warnings === 0 ? '점검 통과' : `점검 오류 ${errors} · 경고 ${warnings}`;
+      liveStrip.className = `live-strip ${errors ? 'has-error' : warnings ? 'has-warning' : 'clean'}`;
+    },
+  });
+  /** 문서를 열었거나(`opening`) 고쳤을 때: 표시 대상이 아니면(끔 · 의견서) 다 걷고, 맞으면 열 땐 바로 · 고칠 땐 손을 멈춘 뒤 점검. */
+  function syncLive(opening: boolean) {
+    if (!liveWanted || view?.live_checks === false) {
+      live.stop();
+      liveMarks.clear();
+      liveStrip.hidden = true;
+      pagesRoot.querySelectorAll('.nk-live').forEach((mark) => mark.remove());
+    } else if (opening) {
+      liveMarks.clear();
+      liveStrip.hidden = true;
+      void live.now();
+    } else live.touch();
+  }
+  function drawLive(host: HTMLElement, page: PlannedPageDto) {
+    if (liveMarks.size === 0) return;
+    const body = page.lines.filter((line) => line.paragraph && !line.cell && line.stops?.length);
+    const margin = body.length ? Math.min(...body.map((line) => line.stops![0])) : 60;
+    // 표 칸 문단은 표(칸 id 의 둘째 마디) 단위로 묶어 그 쪽의 표 첫 줄 옆에.
+    const spots = new Map<string, { top: number; issues: LiveIssueDto[] }>();
+    const put = (key: string, top: number, issues: LiveIssueDto[]) => {
+      const spot = spots.get(key);
+      if (!spot) spots.set(key, { top, issues: [...issues] });
+      else {
+        spot.top = Math.min(spot.top, top);
+        spot.issues.push(...issues);
+      }
+    };
+    for (const line of page.lines) {
+      if (line.cell) {
+        const table = line.cell.split(':')[1];
+        const own = [...liveMarks].filter(([id]) => isCell(id) && id.split(':')[1] === table).flatMap(([, list]) => list);
+        if (own.length) put(`table:${table}`, line.top, spots.has(`table:${table}`) ? [] : own);
+      } else if (line.paragraph && line.start === 0 && liveMarks.has(line.paragraph)) put(line.paragraph, line.top, liveMarks.get(line.paragraph)!);
+    }
+    for (const { top, issues } of spots.values()) {
+      issues.sort((a, b) => Number(b.severity === 'error') - Number(a.severity === 'error'));
+      const mark = document.createElement('button');
+      mark.type = 'button';
+      mark.className = `nk-live ${issues[0].severity}`;
+      mark.title = issues.map((issue) => `${issue.code ?? '점검'} · ${issue.detail}`).join('\n');
+      mark.style.left = `${Math.max(2, margin - 48) * scale}px`;
+      mark.style.top = `${top * scale}px`;
+      mark.style.width = mark.style.height = `${14 * scale}px`;
+      // 쪽을 누르면 커서가 놓인다 — 이 동그라미는 커서를 건드리지 않고 점검 창만 연다.
+      mark.addEventListener('mousedown', (event) => event.stopPropagation());
+      mark.addEventListener('click', (event) => {
+        event.stopPropagation();
+        void openChecks(issues[0].paragraph_id);
+      });
+      host.append(mark);
+    }
+  }
+  /** 점검 창을 보기만 하는 꼴로(제출파일을 만들지 않는다) · 그 항목에 표시. */
+  async function openChecks(focusId: string | null) {
+    if (root.querySelector('.submit-ask')) return;
+    try {
+      const issues = await editorSubmissionChecks();
+      if (issues.length === 0) return say('점검 통과 — 걸리는 곳이 없습니다.');
+      void askSubmit(issues, true, focusId);
+    } catch (error) {
+      fail('점검', error);
+    }
+  }
+  liveStrip.addEventListener('click', () => void openChecks(null));
 
   /** 보정 표시: 최종본에 견준 넣은 글(연두 바탕) · 지운 자리(빨간 쐐기 — 올리면 지운 글) · 바뀐 문단(왼쪽 막대). */
   let showAmend = false;
@@ -761,6 +853,7 @@ export function mountEditor(root: HTMLElement): void {
     const scroll = pagesRoot.scrollTop;
     // 쪽 상자를 새로 짓는데(keepScroll 거짓) 보기 객체가 다르면 다른 문서다(배율 바꿈은 같은 객체로 다시 짓는다).
     const newDocument = !keepScroll && view !== null && next !== view;
+    const opening = view === null || newDocument;
     view = next;
     deskEmpty.hidden = true;
     const replaced = next.cp949_substitutions ?? [];
@@ -808,6 +901,7 @@ export function mountEditor(root: HTMLElement): void {
     enable();
     watchPreparing(next);
     void refreshAmend(false);
+    syncLive(opening);
   }
 
   /** 문서 닫기 뒤: 쪽 · 구조 창 · 커서 · 찾기 결과를 비우고 처음 화면으로(단추는 다시 잠근다). */
@@ -823,6 +917,9 @@ export function mountEditor(root: HTMLElement): void {
     window.clearTimeout(autosaveTimer);
     closeSource();
     hidePinned();
+    live.stop();
+    liveMarks.clear();
+    liveStrip.hidden = true;
     images.clear();
     caret = anchor = null;
     selected = selectedCell = null;
@@ -1237,6 +1334,7 @@ export function mountEditor(root: HTMLElement): void {
       drawNumbers(host, page);
       drawMarks(host, page);
       drawAmendMarks(host, page);
+      drawLive(host, page);
     }
   }
 
@@ -2450,7 +2548,7 @@ export function mountEditor(root: HTMLElement): void {
 
   /** 보정서 앞 청구항 인용 점검: 문제 목록(누르면 그 항으로) · 「그래도 만들기」면 true. */
   /** 제출 전 점검 창: 종류별 목록 · 「가기」는 창을 접고 그 문단으로(띠로 다시 열기) · 그래도 만들기 / 멈추기. */
-  function askSubmit(issues: SubmitIssueDto[]): Promise<boolean> {
+  function askSubmit(issues: SubmitIssueDto[], viewOnly = false, focusId: string | null = null): Promise<boolean> {
     const escape = (text: string) =>
       text.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]!);
     const groups = SUBMIT_GROUPS;
@@ -2476,7 +2574,7 @@ export function mountEditor(root: HTMLElement): void {
           return rows ? `<fieldset><legend>${title}</legend>${fix}<ul>${rows}</ul></fieldset>` : '';
         })
         .join('')}
-        <button type="submit">그래도 만들기</button><button type="button" class="item-cancel">멈추기</button>`;
+        ${viewOnly ? '<button type="button" class="item-cancel">닫기</button>' : '<button type="submit">그래도 만들기</button><button type="button" class="item-cancel">멈추기</button>'}`;
       const reopen = document.createElement('button');
       reopen.type = 'button';
       reopen.className = 'review-reopen';
@@ -2539,7 +2637,10 @@ export function mountEditor(root: HTMLElement): void {
         });
       }
       root.append(box);
-      box.querySelector<HTMLButtonElement>('button[type="submit"]')!.focus();
+      box.querySelector<HTMLButtonElement>('button[type="submit"], .item-cancel')!.focus();
+      const here = focusId ? box.querySelector<HTMLElement>(`.submit-go[data-index="${issues.findIndex((issue) => issue.paragraph_id === focusId)}"]`)?.closest('li') : null;
+      here?.classList.add('submit-focus');
+      here?.scrollIntoView({ block: 'center' });
     });
   }
 
@@ -3097,6 +3198,10 @@ export function mountEditor(root: HTMLElement): void {
     autosaveMs = Math.max(1, next.autosave_minutes) * 60_000;
     setPageZoom(next.zoom);
     pinnedHost.style.height = `${next.pinned_height}px`;
+    if (liveWanted !== next.live_checks && typeof next.live_checks === 'boolean') {
+      liveWanted = next.live_checks;
+      if (view) syncLive(true);
+    }
     if (first) {
       pinnedWanted = next.pinned_on;
       if (pinnedWanted && view && !pinned.shown) showPinned();
@@ -3620,6 +3725,7 @@ export function mountEditor(root: HTMLElement): void {
 
   /** 「도구」 메뉴 · ⌘K 명령 찾기가 함께 쓰는 목록. */
   const TOOLS: { label: string; run: () => void }[] = [
+
     { label: '청구항 번호 다시 매기기…', run: () => void renumber(false) },
     { label: '도면 번호 다시 매기기…', run: () => void renumber(true) },
     { label: '부호 목록', run: () => void signList() },
@@ -4039,7 +4145,12 @@ export function mountEditor(root: HTMLElement): void {
         break;
       }
       case 'tools': {
-        const menu = await Menu.new({ items: TOOLS.map((tool) => ({ text: tool.label, action: tool.run })) });
+        const menu = await Menu.new({
+          items: [
+            ...TOOLS.map((tool) => ({ text: tool.label, action: tool.run })),
+            { text: `${liveWanted ? '✓ ' : ''}상시 점검 표시`, action: () => void saveSettings({ live_checks: !liveWanted }) },
+          ],
+        });
         await menu.popup();
         break;
       }

@@ -373,6 +373,10 @@ pub struct EditorViewDto {
     pub cells: std::collections::BTreeMap<String, String>,
     /// 방금 고침에서 CP949 에 없어 바꾼 글자들(한 번만 실린다 — 화면이 알린다).
     pub cp949_substitutions: Vec<hlt_core::Cp949Substitution>,
+    /// 판 번호(고침 · 되돌리기마다 늘어난다) — 상시 점검 결과가 낡았는지 가린다.
+    pub revision: u64,
+    /// 상시 점검 대상인가(의견서는 아니다).
+    pub live_checks: bool,
 }
 
 fn view(session: &mut EditorSession, title: String) -> EditorViewDto {
@@ -382,6 +386,8 @@ fn view(session: &mut EditorSession, title: String) -> EditorViewDto {
         title,
         editable: session.editable() && !session.read_only,
         read_only: session.read_only,
+        revision: session.revision(),
+        live_checks: session.document.summary.document_type_raw & 0x7fff != 7,
         page_count: session.plan.pages.len(),
         page_width: session.plan.width,
         page_height: session.plan.height,

@@ -45,6 +45,7 @@ export const TOURS: Tour[] = [
       { target: '.tb-group[aria-label="글자"]', title: '글자 · 문단', text: '굵게 · 기울임 · 밑줄 · 위/아래첨자, 그리고 문단 정렬과 들여쓰기. 커서가 있는 문단에 걸립니다.' },
       { target: '.tb-group[aria-label="넣기"]', title: '넣기', text: '수식(LaTeX) · 화학식(구조식) · 표를 커서 문단 아래에 넣습니다.' },
       { target: '.tb-group[aria-label="보기"]', title: '보기', text: '문단부호(↵) 보이기, 영문 원문을 오른쪽에 나란히 두는 「원문 나란히」, 문서 한 벌을 읽기 전용으로 위에 띄우는 「고정 창」' },
+      { target: '.live-strip', title: '상시 점검', text: '고치는 동안 제출 전 점검을 늘 돌려, 걸리는 문단 왼쪽 여백에 동그라미(빨강 = 오류 · 노랑 = 경고)를, 화면 아래 오른쪽에 건수를 보입니다. 누르면 점검 목록이 열립니다(제출파일은 만들지 않습니다). 「도구 › 상시 점검 표시」로 끌 수 있습니다.' },
       { target: '.tb-group[aria-label="도구"]', title: '도구 · 일괄 처리', text: '번호 다시 매기기 · 부호 목록 · 문서 통계 · 되풀이 문장, 그리고 폴더를 통째로 처리하는 일괄 처리.' },
       { target: '.tb-group[aria-label="보정(OA 대응)"]', title: '보정(OA 대응)', text: '「검토보고서」로 보정안을 불러오고 → 「보정 표시」로 확인 → 「보정 근거」 → 「보정서」로 보정서를 만드는 차례로 씁니다.' },
       { target: '.tb-group[aria-label="내보내기"]', title: '내보내기', text: 'PDF · Word · 제출파일(.hlz · .fin). 제출파일을 만들기 전에 제출 전 점검을 보여 줍니다.' },

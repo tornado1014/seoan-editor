@@ -44,6 +44,8 @@ function view(texts: string[]): EditorViewDto {
       spans: [],
     })),
     cells: Object.fromEntries(cellLines.map((line) => [line.cell, line.text])),
+    revision: viewRevision,
+    live_checks: liveApplies,
   } as unknown as EditorViewDto;
 }
 
@@ -88,6 +90,10 @@ let keysAnswer: (string | null)[] = [];
 let basisAnswer: unknown = null;
 let submitAnswer: unknown[] = [];
 let settingsAnswer: unknown = null;
+/** 상시 점검: 판 번호(고칠 때마다 +1) · 가져오기가 줄 목록 · 의견서면 점검 대상 아님. */
+let viewRevision = 1;
+let liveIssues: unknown[] = [];
+let liveApplies = true;
 let historyAnswer: unknown[] = [];
 let historyOpened: EditorViewDto | null = null;
 let settingsGate: Promise<void> | null = null;
@@ -116,6 +122,9 @@ beforeEach(() => {
   basisAnswer = null;
   submitAnswer = [];
   settingsAnswer = null;
+  viewRevision = 1;
+  liveIssues = [];
+  liveApplies = true;
   historyAnswer = [];
   historyOpened = null;
   settingsGate = null;
@@ -158,6 +167,8 @@ beforeEach(() => {
         return basisAnswer;
       case 'editor_submission_checks':
         return submitAnswer;
+      case 'editor_live_checks':
+        return { revision: viewRevision, issues: liveIssues };
       case 'editor_export_fin':
         return '/tmp/x.fin';
       case 'editor_export_amendment':
@@ -228,6 +239,7 @@ beforeEach(() => {
         }
         const index = Number(String(args!.paragraphId).split(':')[1]);
         texts.splice(index, 1, ...String(args!.text).split('\n'));
+        viewRevision += 1;
         return view(texts);
       }
       case 'editor_paste_formatted': {
@@ -1415,6 +1427,78 @@ describe('page editing', () => {
     await settle(500);
   });
 
+  const issueOf = (severity: string, paragraph_id: string | null) => ({ severity, code: 'K-1', paragraph_id, detail: '이유' });
+  const strip = (root: HTMLElement) => root.querySelector<HTMLButtonElement>('.live-strip')!;
+  const checks = () => calls.filter(([c]) => c === 'editor_live_checks').length;
+
+  test('상시 점검: 오류가 있는 문서를 열면 띠에 건수 · 여백 동그라미 · 고쳐서 없애면 1초 뒤 0', async () => {
+    liveIssues = [issueOf('error', 'paragraph:0'), issueOf('warning', 'paragraph:1'), issueOf('warning', null)];
+    const root = await open();
+    await settle(10);
+    expect(strip(root).hidden).toBe(false);
+    expect(strip(root).textContent).toBe('점검 오류 1 · 경고 2');
+    const marks = [...root.querySelectorAll<HTMLElement>('.nk-live')];
+    expect(marks.map((mark) => mark.className)).toEqual(['nk-live error', 'nk-live warning']);
+    expect(marks[0].title).toBe('K-1 · 이유');
+    // 동그라미를 눌러도 커서가 놓이지 않고 · 제출파일은 만들지 않는다(점검 창만 · 「그래도 만들기」 없음).
+    submitAnswer = [{ kind: 'spacing', paragraph_id: 'paragraph:0', detail: '공백' }];
+    marks[0].dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
+    marks[0].click();
+    await settle(10);
+    expect(root.querySelector('.nk-caret'), '커서가 놓이지 않았다').toBeNull();
+    expect(root.querySelector('.submit-ask button[type="submit"]')).toBeNull();
+    expect(root.querySelector('.submit-ask .item-cancel')!.textContent).toBe('닫기');
+    expect(calls.some(([c]) => c === 'editor_export_fin')).toBe(false);
+    root.querySelector<HTMLElement>('.submit-ask .item-cancel')!.click();
+    // 고쳐서 점검이 비면 1초 뒤 「점검 통과」.
+    liveIssues = [];
+    clickAt(root, 63, 104);
+    type(root, 'X');
+    await settle(500);
+    expect(strip(root).textContent, '1초가 지나기 전엔 그대로').toBe('점검 오류 1 · 경고 2');
+    await settle(1100);
+    expect(strip(root).textContent).toBe('점검 통과');
+    expect(root.querySelectorAll('.nk-live').length).toBe(0);
+    await settle(500);
+  });
+
+  test('상시 점검: 도구 메뉴에서 끄면 표시 · 띠가 사라지고 fetch 가 안 불린다 · 켜면 돌아온다', async () => {
+    liveIssues = [issueOf('error', 'paragraph:0')];
+    settingsAnswer = { ...SETTINGS, zoom: 1, live_checks: true };
+    const root = await open();
+    await settle(10);
+    expect(root.querySelectorAll('.nk-live').length).toBe(1);
+    q(root, '[data-action="tools"]').click();
+    await settle(10);
+    const item = menus.at(-1)!.find((entry) => entry.text?.endsWith('상시 점검 표시'))!;
+    expect(item.text).toBe('✓ 상시 점검 표시');
+    item.action!();
+    await settle(10);
+    expect((last('settings_set')![1] as { settings: { live_checks: boolean } }).settings.live_checks).toBe(false);
+    expect(strip(root).hidden).toBe(true);
+    expect(root.querySelectorAll('.nk-live').length).toBe(0);
+    const before = checks();
+    clickAt(root, 63, 104);
+    type(root, 'Y');
+    await settle(1300);
+    expect(checks(), '끈 동안은 가져오지 않는다').toBe(before);
+    item.action!();
+    await settle(10);
+    expect(strip(root).textContent).toBe('점검 오류 1 · 경고 0');
+    expect(checks()).toBeGreaterThan(before);
+    await settle(500);
+  });
+
+  test('상시 점검: 의견서는 띠 자체가 안 보이고 fetch 도 안 한다', async () => {
+    liveApplies = false;
+    liveIssues = [issueOf('error', 'paragraph:0')];
+    const root = await open();
+    await settle(1200);
+    expect(strip(root).hidden).toBe(true);
+    expect(root.querySelectorAll('.nk-live').length).toBe(0);
+    expect(checks()).toBe(0);
+  });
+
   test('고정 창: 켜면 청구범위에서 시작 · 아래에서 고치면 고정 창 글이 바뀐다 · 닫으면 비고 다른 문서는 그 청구범위', async () => {
     texts = ['【발명의 설명】', '가나다', '【청구범위】', '【청구항 1】', '장치.'];
     settingsAnswer = { ...SETTINGS, zoom: 1 };
@@ -1725,7 +1809,8 @@ describe('page editing', () => {
     const tools = [...source.slice(source.indexOf('pub const TOOLS'), source.indexOf('];')).matchAll(/"([^"]+)"/g)].map((m) => m[1]);
     q(root, '[data-action="tools"]').click();
     await settle(10);
-    const menu = (menus[menus.length - 1] as unknown as { text: string }[]).map((item) => item.text);
+    // 「상시 점검 표시」는 체크 표시가 붙는 화면 설정 — 메뉴 막대에는 없다.
+    const menu = (menus[menus.length - 1] as unknown as { text: string }[]).map((item) => item.text).filter((text) => !text.endsWith('상시 점검 표시'));
     expect(tools).toEqual(menu);
   });
 
@@ -1777,7 +1862,7 @@ describe('page editing', () => {
     localStorage.clear();
     root = await open();
     q(root, '.tour-invite-go').click();
-    expect(root.querySelector('.tour-count')!.textContent).toBe('전체 둘러보기 · 1/10');
+    expect(root.querySelector('.tour-count')!.textContent).toBe('전체 둘러보기 · 1/11');
     q(root, '.tour-end').click(); // 투어 키 듣기를 풀어 다음 테스트에 새지 않게
   });
 

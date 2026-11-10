@@ -151,6 +151,10 @@ export interface EditorViewDto {
   cells?: Record<string, string>;
   /** 방금 고침에서 CP949 에 없어 바꾼 글자들(붙여넣기 등). */
   cp949_substitutions?: { from: string; to: string; count: number }[];
+  /** 판 번호(고침 · 되돌리기마다 늘어난다). */
+  revision?: number;
+  /** 상시 점검 대상인가(의견서는 아니다 · 없으면 대상). */
+  live_checks?: boolean;
 }
 
 /** 열기: 이 탭에 문서가 있으면 새 탭에서 열고 `null`(이 탭은 그대로). */
@@ -474,6 +478,8 @@ export interface SettingsDto {
   /** 고정 창(읽기 전용 두 번째 보기)을 문서를 열 때 켠다. */
   pinned_on: boolean;
   pinned_height: number;
+  /** 상시 점검 표시(쪽 여백 동그라미 · 상태 띠 건수). */
+  live_checks: boolean;
   snippets: SnippetDto[];
 }
 export const settingsGet = () => invoke<SettingsDto>('settings_get');
