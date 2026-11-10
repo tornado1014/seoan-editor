@@ -155,6 +155,8 @@ export interface EditorViewDto {
 
 /** 열기: 이 탭에 문서가 있으면 새 탭에서 열고 `null`(이 탭은 그대로). */
 export const editorOpen = () => invoke<EditorViewDto | null>('editor_open');
+/** 놓은 파일 열기(고르기 창만 건너뛴다 · `editorOpen` 과 같은 몸통). */
+export const editorOpenDropped = (path: string) => invoke<EditorViewDto | null>('editor_open_dropped', { path });
 /** 불러와 HLT 만들기: 워드 · XML · HML → 새 `.HLT` 를 굽고 연다(이 탭에 문서가 있으면 새 탭 · `null`). */
 /** CP949(HLT)에 없는 글자 한 종류 — 확인 표 한 줄. `suggestion` 이 `null` 이면 대응표에 없다. */
 export interface Cp949FindingDto {
@@ -167,6 +169,9 @@ export interface Cp949FindingDto {
 /** 불러오기: 연 화면, 또는 CP949 밖 글자 확인 표(`review` — 고른 뒤 `editorImportFinish`). */
 export const editorImport = () =>
   invoke<{ view: EditorViewDto | null; review: Cp949FindingDto[] }>('editor_import');
+/** 놓은 파일 불러오기(고르기 창만 건너뛴다 · `editorImport` 와 같은 몸통). */
+export const editorImportDropped = (path: string) =>
+  invoke<{ view: EditorViewDto | null; review: Cp949FindingDto[] }>('editor_import_dropped', { path });
 /** 확인 표 뒤: 고른 대응(글자 → 바꿀 글 · 빈 글 = 지움)으로 굽고 연다. `null` = 취소. */
 export const editorImportFinish = (choices: Record<string, string> | null) =>
   invoke<EditorViewDto | null>('editor_import_finish', { choices });
@@ -353,6 +358,8 @@ export const editorBatchStop = () => invoke<void>('editor_batch_stop');
 /** 원문과 나란히 보기: 원문 문단 + 짝 이름(`p:0001` · `claim:3`). */
 export type SourceParagraphDto = { key: string | null; text: string };
 export const editorSourceOpen = () => invoke<SourceParagraphDto[] | null>('editor_source_open');
+/** 놓은 원문(.docx). */
+export const editorSourceOpenPath = (path: string) => invoke<SourceParagraphDto[]>('editor_source_open_path', { path });
 /** 지금 판 문단마다 원문 짝 이름(화면 문단 차례). */
 export const editorParagraphKeys = () => invoke<(string | null)[]>('editor_paragraph_keys');
 /** 번호 다시 매기기: 바꿀 문단(전 · 후 글). */

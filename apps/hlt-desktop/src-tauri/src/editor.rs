@@ -441,10 +441,31 @@ pub async fn editor_open(
     let path = picked
         .into_path()
         .map_err(|_| CoreError::new(ErrorCode::PathNotAllowed, "select", false))?;
-    if focus_if_open(&app, &path) {
+    open_picked(&app, &state, &window, path).await
+}
+
+/// 놓은 파일 열기: 고르기 창만 건너뛰고 `editor_open` 과 같은 몸통(이미 연 파일이면 그 탭 · 문서가 있으면 새 탭).
+#[tauri::command]
+pub async fn editor_open_dropped(
+    window: Window,
+    app: AppHandle,
+    state: State<'_, EditorState>,
+    path: String,
+) -> Result<Option<EditorViewDto>, CoreError> {
+    let path = dropped(path, &["hlt", "fin", "hlz"])?;
+    open_picked(&app, &state, &window, path).await
+}
+
+async fn open_picked(
+    app: &AppHandle,
+    state: &State<'_, EditorState>,
+    window: &Window,
+    path: PathBuf,
+) -> Result<Option<EditorViewDto>, CoreError> {
+    if focus_if_open(app, &path) {
         return Ok(None);
     }
-    open_here(&app, &state, &window, path, None).await
+    open_here(app, state, window, path, None).await
 }
 
 /// 읽기 전용으로 열기(원본 보호): 고칠 수 없고 ⌘S 를 거절한다 — 사본은 「다른 이름으로 저장」.
@@ -557,7 +578,28 @@ pub async fn editor_import(
     else {
         return Ok(ImportDto::cancelled());
     };
-    let Some(dialect) = ask_dialect(&app, &window, "불러와 HLT 만들기") else {
+    import_picked(&window, &app, &state, input).await
+}
+
+/// 놓은 파일 불러오기: 고르기 창만 건너뛰고 `editor_import` 와 같은 몸통(출원 종류 · 저장 위치 · 확인 표).
+#[tauri::command]
+pub async fn editor_import_dropped(
+    window: Window,
+    app: AppHandle,
+    state: State<'_, EditorState>,
+    path: String,
+) -> Result<ImportDto, CoreError> {
+    let path = dropped(path, &["docx", "xml", "hml"])?;
+    import_picked(&window, &app, &state, path).await
+}
+
+async fn import_picked(
+    window: &Window,
+    app: &AppHandle,
+    state: &State<'_, EditorState>,
+    input: PathBuf,
+) -> Result<ImportDto, CoreError> {
+    let Some(dialect) = ask_dialect(app, window, "불러와 HLT 만들기") else {
         return Ok(ImportDto::cancelled());
     };
     let mut dialog = app
@@ -574,7 +616,7 @@ pub async fn editor_import(
     else {
         return Ok(ImportDto::cancelled());
     };
-    refuse_if_open_elsewhere(&state, &window, &output)?;
+    refuse_if_open_elsewhere(state, window, &output)?;
     let source = input.clone();
     let (document, payloads, review) = tauri::async_runtime::spawn_blocking(move || {
         let (document, payloads) = hlt_core::load_generation_source(&source)?;
@@ -599,14 +641,7 @@ pub async fn editor_import(
             .insert(window.label().to_string(), pending);
         return Ok(ImportDto { view: None, review });
     }
-    let view = bake_import(
-        &window,
-        &app,
-        &state,
-        pending,
-        hlt_core::Cp949Choices::new(),
-    )
-    .await?;
+    let view = bake_import(window, app, state, pending, hlt_core::Cp949Choices::new()).await?;
     Ok(ImportDto {
         view,
         ..ImportDto::cancelled()
@@ -628,10 +663,35 @@ pub async fn editor_source_open(
     else {
         return Ok(None);
     };
+    source_paragraphs_of(path).await.map(Some)
+}
+
+/// 놓은 원문(.docx) — 고르기 창만 건너뛴다.
+#[tauri::command]
+pub async fn editor_source_open_path(
+    path: String,
+) -> Result<Vec<hlt_core::SourceParagraph>, CoreError> {
+    source_paragraphs_of(dropped(path, &["docx"])?).await
+}
+
+/// 화면이 넘긴 놓은 파일 경로 — 고르기 창의 확장자 필터와 같은 것만 받는다.
+fn dropped(path: String, extensions: &[&str]) -> Result<PathBuf, CoreError> {
+    let path = PathBuf::from(path);
+    let ext = path
+        .extension()
+        .map(|ext| ext.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if extensions.contains(&ext.as_str()) {
+        Ok(path)
+    } else {
+        Err(CoreError::new(ErrorCode::PathNotAllowed, "select", false))
+    }
+}
+
+async fn source_paragraphs_of(path: PathBuf) -> Result<Vec<hlt_core::SourceParagraph>, CoreError> {
     tauri::async_runtime::spawn_blocking(move || hlt_core::source_paragraphs(&path))
         .await
         .map_err(|_| CoreError::new(ErrorCode::VerificationFailed, "worker", false))?
-        .map(Some)
 }
 
 /// 지금 판 문단마다 원문 짝 이름(`p:0001` · `claim:3` · 없으면 `null`) — 화면 문단 차례 그대로.
@@ -2658,5 +2718,15 @@ mod amendment_view_tests {
             ),
             ("식별번호 [0012]", "정정", "새 글\n옛 글")
         );
+    }
+}
+
+#[cfg(test)]
+mod dropped_tests {
+    #[test]
+    fn dropped_paths_keep_the_picker_extension_filter() {
+        assert!(super::dropped("/a/x.HLT".into(), &["hlt"]).is_ok());
+        assert!(super::dropped("/a/x.exe".into(), &["hlt"]).is_err());
+        assert!(super::dropped("/a/폴더".into(), &["hlt"]).is_err());
     }
 }

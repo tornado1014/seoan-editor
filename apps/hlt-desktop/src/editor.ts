@@ -2,6 +2,7 @@
 // 쪽은 보일 때 한 쪽씩 받아 그린다. 고치면 문서 전체가 다시 구워지고 보이는 쪽을 다시 받는다.
 import { listen } from '@tauri-apps/api/event';
 import { osKeys } from './keys';
+import { installDrop } from './drop';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Menu } from '@tauri-apps/api/menu';
 import {
@@ -42,6 +43,9 @@ import {
   editorFixDoubleSpaces,
   editorReplaceTexts,
   editorSourceOpen,
+  editorSourceOpenPath,
+  editorOpenDropped,
+  editorImportDropped,
   editorParagraphKeys,
   editorApplyReview,
   editorClaimIssues,
@@ -3757,6 +3761,65 @@ export function mountEditor(root: HTMLElement): void {
     }
   }).catch(() => {});
 
+  // 열기 · 불러오기 · 원문: 단추와 놓기가 같은 뒤처리를 탄다(고르는 쪽만 다르다).
+  async function openDocument(pick: () => Promise<EditorViewDto | null>) {
+    say('여는 중…');
+    try {
+      const opened = await pick();
+      if (opened) {
+        images.clear();
+        panel.hidden = true;
+        layout(opened, false);
+      } else say('');
+    } catch (error) {
+      fail(`열기`, error);
+    }
+  }
+  async function importDocument(pick: () => ReturnType<typeof editorImport>) {
+    say('HLT 만드는 중…');
+    try {
+      const result = await pick();
+      let opened = result.view;
+      if (result.review.length > 0) {
+        say('쓸 수 없는 글자 확인 중…');
+        const choices = await reviewCp949(result.review, 'Word · XML 불러오기');
+        say(choices ? 'HLT 만드는 중…' : '');
+        opened = await editorImportFinish(choices);
+      }
+      if (opened) {
+        images.clear();
+        panel.hidden = true;
+        layout(opened, false);
+      } else say('');
+    } catch (error) {
+      fail('HLT 만들기', error);
+    }
+  }
+  async function showSource(pick: () => Promise<SourceParagraphDto[] | null>) {
+    try {
+      const rows = await pick();
+      if (!rows) return;
+      openSource(rows);
+      if (view) await refreshKeys(view);
+      const paired = rows.filter((row) => row.key && docKeys.includes(row.key)).length;
+      say(`원문 ${rows.filter((row) => row.key).length}곳 중 ${paired}곳 짝지음(식별번호 · 청구항 번호)`);
+    } catch (error) {
+      fail('원문 열기', error);
+    }
+  }
+  const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;
+  installDrop(root, sourcePane, async (route, path) => {
+    // 단추와 같게: 쪽 위에서 친 글을 먼저 보낸다.
+    await commit();
+    if (route === 'open') await openDocument(() => editorOpenDropped(path));
+    else if (route === 'import') await importDocument(() => editorImportDropped(path));
+    else if (route === 'source') {
+      // 원문 길은 Task 10 의 `editorSourceOpenPath` 가 넓힌다 — 지금은 .docx 만 걸 수 있다.
+      if (path.toLowerCase().endsWith('.docx')) await showSource(() => editorSourceOpenPath(path));
+      else say(`아직 걸 수 없는 원문입니다 — ${fileName(path)}`);
+    } else say(`열 수 없는 파일입니다 — ${fileName(path)}`);
+  });
+
   root.addEventListener('click', async (event) => {
     const action = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-action]')
       ?.dataset.action;
@@ -3844,20 +3907,9 @@ export function mountEditor(root: HTMLElement): void {
       case 'zoom-reset':
         await zoomBy(action === 'zoom-reset' ? 0 : action === 'zoom-out' ? -1 : 1);
         break;
-      case 'open': {
-        say('여는 중…');
-        try {
-          const opened = await editorOpen();
-          if (opened) {
-            images.clear();
-            panel.hidden = true;
-            layout(opened, false);
-          } else say('');
-        } catch (error) {
-          fail(`열기`, error);
-        }
+      case 'open':
+        await openDocument(editorOpen);
         break;
-      }
       case 'new-spec': {
         const asked = await askSpecification();
         if (!asked) break;
@@ -3893,16 +3945,7 @@ export function mountEditor(root: HTMLElement): void {
           closeSource();
           break;
         }
-        try {
-          const rows = await editorSourceOpen();
-          if (!rows) break;
-          openSource(rows);
-          if (view) await refreshKeys(view);
-          const paired = rows.filter((row) => row.key && docKeys.includes(row.key)).length;
-          say(`원문 ${rows.filter((row) => row.key).length}곳 중 ${paired}곳 짝지음(식별번호 · 청구항 번호)`);
-        } catch (error) {
-          fail('원문 열기', error);
-        }
+        await showSource(editorSourceOpen);
         break;
       }
       case 'new-menu': {
@@ -3936,27 +3979,9 @@ export function mountEditor(root: HTMLElement): void {
         await menu.popup();
         break;
       }
-      case 'import': {
-        say('HLT 만드는 중…');
-        try {
-          const result = await editorImport();
-          let opened = result.view;
-          if (result.review.length > 0) {
-            say('쓸 수 없는 글자 확인 중…');
-            const choices = await reviewCp949(result.review, 'Word · XML 불러오기');
-            say(choices ? 'HLT 만드는 중…' : '');
-            opened = await editorImportFinish(choices);
-          }
-          if (opened) {
-            images.clear();
-            panel.hidden = true;
-            layout(opened, false);
-          } else say('');
-        } catch (error) {
-          fail('HLT 만들기', error);
-        }
+      case 'import':
+        await importDocument(editorImport);
         break;
-      }
       case 'save':
       case 'save-as': {
         try {

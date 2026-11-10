@@ -14,6 +14,10 @@ const handlers = new Map<string, (event: { payload: unknown }) => unknown>();
 vi.mock('@tauri-apps/api/event', () => ({
   listen: async (name: string, handler: (event: { payload: unknown }) => unknown) => (handlers.set(name, handler), () => {}),
 }));
+const drops: ((event: { payload: unknown }) => void)[] = [];
+vi.mock('@tauri-apps/api/webview', () => ({
+  getCurrentWebview: () => ({ onDragDropEvent: async (handler: (event: { payload: unknown }) => void) => (drops.push(handler), () => {}) }),
+}));
 type MenuItem = { text?: string; item?: string; enabled?: boolean; action?: () => void; items?: MenuItem[] };
 const menus: MenuItem[][] = [];
 vi.mock('@tauri-apps/api/menu', () => ({
@@ -127,6 +131,7 @@ beforeEach(() => {
     calls.push([command, args]);
     switch (command) {
       case 'editor_open':
+      case 'editor_open_dropped':
       case 'editor_view':
         return view(texts);
       case 'editor_page':
@@ -2330,5 +2335,35 @@ describe('단축키 표기 — 윈도', () => {
     }
     const mac = await open();
     expect(mac.querySelector('[data-action="save-as"]')!.getAttribute('title')).toBe('다른 이름으로 저장 (⇧⌘S)');
+  });
+});
+
+describe('파일 끌어다 놓기', () => {
+  const drop = (paths: string[]) => drops.at(-1)!({ payload: { type: 'drop', paths, position: { x: 1, y: 1 } } });
+
+  test('고침이 있는 탭에 HLT 를 놓으면 「열기」 단추와 같은 호출 열을 탄다(지금 문서의 고침이 먼저 나간다)', async () => {
+    const run = async (act: (root: HTMLElement) => void) => {
+      const root = await open();
+      clickAt(root, 63, 104);
+      type(root, '김');
+      calls.length = 0;
+      act(root);
+      await settle(600);
+      return calls.map(([command]) => command === 'editor_open_dropped' ? 'editor_open' : command).filter((command) => ['editor_replace_text', 'editor_open'].includes(command));
+    };
+    const byButton = await run((root) => q(root, '[data-action="open"]').click());
+    const byDrop = await run(() => drop(['/a/명세서.HLT']));
+    expect(byButton).toEqual(['editor_replace_text', 'editor_open']);
+    expect(byDrop).toEqual(byButton);
+    expect(last('editor_open_dropped')).toEqual(['editor_open_dropped', { path: '/a/명세서.HLT' }]);
+  });
+
+  test('모르는 파일 · 걸 수 없는 원문은 이름을 알리고 백엔드를 부르지 않는다', async () => {
+    const root = await open();
+    calls.length = 0;
+    drop(['/a/메모.txt']);
+    await settle(20);
+    expect(root.querySelector('.editor-status, [role="status"]')?.textContent ?? root.textContent).toContain('열 수 없는 파일입니다 — 메모.txt');
+    expect(calls.filter(([command]) => /dropped|source/.test(command))).toEqual([]);
   });
 });
