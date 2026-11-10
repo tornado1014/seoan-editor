@@ -86,6 +86,7 @@ let batchAnswer: unknown = null;
 let sourceAnswer: unknown = null;
 let sourceRemembered: string | null = null;
 let sourceLoadError: unknown = null;
+let sourceGate: Promise<void> | null = null;
 let findError: unknown = null;
 let renumberAnswer: unknown[] = [];
 let signAnswer: unknown[] = [];
@@ -121,6 +122,7 @@ beforeEach(() => {
   sourceAnswer = null;
   sourceRemembered = null;
   sourceLoadError = null;
+  sourceGate = null;
   findError = null;
   renumberAnswer = [];
   signAnswer = [];
@@ -194,6 +196,7 @@ beforeEach(() => {
       case 'editor_batch_check':
         return batchAnswer;
       case 'editor_source_pick':
+        if (sourceGate) await sourceGate;
         return sourceAnswer;
       case 'editor_source_load':
         if (sourceLoadError) throw sourceLoadError;
@@ -425,6 +428,7 @@ const xliffSource = (extra: Record<string, unknown> = {}) => ({
       { target_id: 'paragraph:0', target_sentence: 1, source_paragraph: 1, source_sentence: 0, grade: 'sentence' },
     ],
     dropped_pins: [],
+    pins: 0,
   },
   ...extra,
 });
@@ -1246,6 +1250,7 @@ describe('page editing', () => {
     expect(root.querySelector('.editor-status')!.textContent).toBe('먼저 역문 문장에 커서를 두세요.');
     expect(last('editor_source_pin')).toBeUndefined();
     clickAt(root, 105, 104);
+    sourceAnswer = withAlignment({ pins: 1 }); // Rust 가 센 수가 머리에 실린다
     sourceSpan(root, 0).dispatchEvent(new MouseEvent('click', { bubbles: true, altKey: true }));
     await settle(10);
     expect(last('editor_source_pin')).toEqual([
@@ -1299,6 +1304,115 @@ describe('page editing', () => {
     await settle(1800);
     expect(calls.filter(([command]) => command === 'editor_source_align').length).toBeGreaterThan(0);
     expect(sourcePane(root).querySelectorAll('p[data-p]')).toHaveLength(2);
+  });
+
+  const withAlignment = (extra: Record<string, unknown>) => {
+    const base = xliffSource();
+    return { ...base, alignment: { ...base.alignment, ...extra } };
+  };
+  const pinButton = (root: HTMLElement) => [...root.querySelectorAll<HTMLButtonElement>('.source-head button')].find((b) => /^(손 고정 지우기|한 번 더)/.test(b.textContent!))!;
+  const dropOne = { target_id: 'paragraph:1', target_sentence: 0, source_paragraph: 1, source_sentence: 0 };
+
+  test('머리의 손 고정 수는 Rust 가 준 pins 에서 적용 안 된 것을 뺀다', async () => {
+    texts = ['가나다. 라마.', '바사.'];
+    sourceAnswer = withAlignment({ pins: 3, dropped_pins: [dropOne] });
+    const root = await open();
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    expect(sourcePane(root).querySelector('.source-title')!.textContent).toBe('a.xlf · 문장 짝 2 · 문단만 0 · 손 고정 2(적용 안 됨 1)');
+  });
+
+  test('손 고정 지우기: 머리를 다시 그리면 확인이 처음으로 돌아간다', async () => {
+    texts = ['가나다. 라마.', '바사.'];
+    sourceAnswer = withAlignment({ pins: 2 });
+    const root = await open();
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    pinButton(root).click();
+    expect(pinButton(root).textContent).toBe('한 번 더 누르면 지웁니다');
+    clickAt(root, 60, 104);
+    type(root, 'X');
+    await settle(1800); // 고침 → 다시 정렬 → 머리를 다시 그린다
+    expect(pinButton(root).textContent).toBe('손 고정 지우기');
+    pinButton(root).click();
+    await settle(10);
+    expect(last('editor_source_unpin_all')).toBeUndefined();
+    expect(pinButton(root).textContent).toBe('한 번 더 누르면 지웁니다');
+  });
+
+  test('손 고정 지우기: 4초가 지나면 확인이 풀린다', async () => {
+    texts = ['가나다. 라마.', '바사.'];
+    sourceAnswer = withAlignment({ pins: 2 });
+    const root = await open();
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    vi.useFakeTimers();
+    try {
+      pinButton(root).click();
+      expect(pinButton(root).textContent).toBe('한 번 더 누르면 지웁니다');
+      vi.advanceTimersByTime(4001);
+      expect(pinButton(root).textContent).toBe('손 고정 지우기');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('원문 창을 사용자가 닫으면 Rust 에 알린다 · 읽는 중에 문서를 닫으면 늦은 결과는 버리고 안내를 걷는다', async () => {
+    texts = ['가나다. 라마.', '바사.'];
+    sourceAnswer = xliffSource();
+    const root = await open();
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    expect(last('editor_source_close')).toBeDefined();
+    let release!: () => void;
+    sourceGate = new Promise<void>((resolve) => (release = resolve));
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    expect(root.querySelector('.editor-status')!.textContent).toBe('원문을 읽는 중입니다…');
+    q(root, '[data-action="close-document"]').click();
+    await settle(20);
+    release();
+    await settle(20);
+    expect(sourcePane(root).hidden).toBe(true);
+    expect(root.querySelector('.editor-status')!.textContent).not.toBe('원문을 읽는 중입니다…');
+  });
+
+  test('고치는 즉시 칠한 것을 거둔다(옛 범위가 새 글 위에 앉지 않게) · 정렬이 오면 되살아난다', async () => {
+    texts = ['가나다. 라마.', '바사.'];
+    sourceAnswer = xliffSource();
+    const root = await open();
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    clickAt(root, 105, 104);
+    expect(root.querySelectorAll('.nk-src')).toHaveLength(1);
+    type(root, 'X');
+    expect(root.querySelectorAll('.nk-src')).toHaveLength(0);
+    expect(sourcePane(root).querySelectorAll('.current')).toHaveLength(0);
+    await settle(1800);
+    expect(sourcePane(root).querySelectorAll('.current')).toHaveLength(1);
+  });
+
+  test('커서가 없을 때 쪽을 스크롤하면 맨 위 문단의 짝 원문 문단이 칸 맨 위로 온다(칠하지 않는다)', async () => {
+    texts = ['가나다. 라마.', '바사.'];
+    const base = xliffSource().alignment;
+    sourceAnswer = withAlignment({ pairs: [...base.pairs, { target_id: 'paragraph:1', target_sentence: null, source_paragraph: 1, source_sentence: null, grade: 'paragraph' }] });
+    const root = await open();
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    const body = root.querySelector<HTMLElement>('.source-body')!;
+    const offsetTop = vi.spyOn(HTMLElement.prototype, 'offsetTop', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.dataset.p === '1' ? 300 : 0;
+    });
+    const pagesRoot = root.querySelector<HTMLElement>('.editor-pages')!;
+    pagesRoot.getBoundingClientRect = () => ({ top: 0, bottom: 800 }) as DOMRect;
+    root.querySelector<HTMLElement>('.nk-page')!.getBoundingClientRect = () => ({ top: -120 * 1.3, bottom: 900 }) as DOMRect;
+    pagesRoot.dispatchEvent(new Event('scroll'));
+    await settle(50);
+    expect(body.scrollTop).toBe(300);
+    expect(body.querySelectorAll('.current, .current-para')).toHaveLength(0);
+    offsetTop.mockRestore();
   });
 
   test('원문 열기가 실패하면 까닭을 알린다 · 읽는 중에는 안내를 보인다', async () => {

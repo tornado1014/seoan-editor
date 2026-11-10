@@ -383,6 +383,8 @@ export type AlignmentDto = {
   target_sentences: [string, [number, number][]][];
   pairs: PairDto[];
   dropped_pins: PinDto[];
+  /** 창이 든 손 고정 수(적용된 것 + 적용 안 된 `dropped_pins`). */
+  pins: number;
 };
 export type SourceKindDto = 'xliff' | 'docx' | 'pdf';
 export type SourceDto = {

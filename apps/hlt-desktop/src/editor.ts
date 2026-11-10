@@ -920,7 +920,10 @@ export function mountEditor(root: HTMLElement): void {
     else if (pinned.shown || pinnedWanted) showPinned();
     void refreshClaims(next);
     void refreshKeys(next);
-    if (sourceSync.shown && !newDocument) sourceAlign.touch();
+    if (sourceSync.shown && !newDocument && next.revision !== sourceRevision) {
+      sourceSync.invalidate();
+      sourceAlign.touch();
+    }
     // 자동 저장: 판이 바뀔 때마다(고침 · 되돌리기) 2분을 다시 센다 — 손을 멈추면 복구본을 둔다(고친 것이 없으면 지운다).
     window.clearTimeout(autosaveTimer);
     if (next.editable) autosaveTimer = window.setTimeout(() => void editorAutosave().catch(() => {}), autosaveMs);
@@ -1055,6 +1058,7 @@ export function mountEditor(root: HTMLElement): void {
     cancelAnimationFrame(marking);
     marking = requestAnimationFrame(() => {
       markCurrent();
+      if (sourceSync.shown) sourceSync.followTop(topParagraph()); // 커서가 안 보이면 맨 위 문단의 원문 자리로
     });
   });
 
@@ -1119,7 +1123,9 @@ export function mountEditor(root: HTMLElement): void {
       if (host && (!only || host === only)) overlay(host, `nk-src ${grade}`, box.x, box.top, box.width);
     }
   }
-  let sourceInfo: { name: string; pdf: string; pins: number } | null = null;
+  let sourceInfo: { name: string; pdf: string } | null = null;
+  /** 마지막으로 그린 정렬의 판 번호 — 화면 판이 이와 다르면 고친 것이다. */
+  let sourceRevision = 0;
   const headButton = (label: string, action: () => void) => {
     const button = document.createElement('button');
     button.type = 'button';
@@ -1129,12 +1135,17 @@ export function mountEditor(root: HTMLElement): void {
   };
   let unpinArmed = 0;
   function drawHead(a: AlignmentDto) {
+    // 확인 상태는 머리(단추)와 함께 산다 — 다시 그리면 처음으로 돌아간다.
+    window.clearTimeout(unpinArmed);
+    unpinArmed = 0;
+    sourceRevision = a.revision;
     if (!sourceInfo) return;
     const sentence = a.pairs.filter((pair) => pair.grade === 'sentence').length;
     const only = a.pairs.length - sentence;
     const title = document.createElement('span');
     title.className = 'source-title';
-    title.textContent = `${sourceInfo.name} · 문장 짝 ${sentence} · 문단만 ${only} · 손 고정 ${sourceInfo.pins}`;
+    const dropped = a.dropped_pins.length;
+    title.textContent = `${sourceInfo.name} · 문장 짝 ${sentence} · 문단만 ${only} · 손 고정 ${a.pins - dropped}${dropped ? `(적용 안 됨 ${dropped})` : ''}`;
     const unpin = headButton('손 고정 지우기', () => {
       // 확인: 처음 누르면 한 번 더 누르라고 바꾸고, 4초 안에 다시 누르면 지운다.
       if (!unpinArmed) {
@@ -1148,10 +1159,7 @@ export function mountEditor(root: HTMLElement): void {
       window.clearTimeout(unpinArmed);
       unpinArmed = 0;
       void editorSourceUnpinAll()
-        .then((next) => {
-          sourceInfo!.pins = 0;
-          sourceSync.update(next);
-        })
+        .then((next) => sourceSync.update(next))
         .catch((error) => fail('손 고정 지우기', error));
     });
     sourceHead.replaceChildren(
@@ -1169,12 +1177,10 @@ export function mountEditor(root: HTMLElement): void {
       targetMark = range ? { range, grade } : null;
       drawTargetMark();
     },
-    async pin(pin) {
-      const next = await editorSourcePin(pin);
-      if (sourceInfo && !next.dropped_pins.some((dropped) => JSON.stringify(dropped) === JSON.stringify(pin))) sourceInfo.pins += 1;
-      return next;
-    },
+    pin: editorSourcePin,
     say,
+    paragraphs: () => view?.paragraphs.map((paragraph) => paragraph.id) ?? [],
+    caretVisible,
     changed: drawHead,
     async menu(items) {
       const menu = await Menu.new({ items });
@@ -1188,7 +1194,20 @@ export function mountEditor(root: HTMLElement): void {
     apply: (next) => sourceSync.update(next),
     delayMs: 600,
   });
+  /** 커서 줄이 지금 쪽 칸(스크롤 창) 안에 보이는가. */
+  function caretVisible(): boolean {
+    if (!caret) return false;
+    const point = caretPoint(caretLines(pages), caret);
+    const host = point && pageHost(point.page);
+    if (!point || !host) return false;
+    const box = pagesRoot.getBoundingClientRect();
+    const top = host.getBoundingClientRect().top + point.top * scale;
+    return top >= box.top && top <= box.bottom;
+  }
   function closeSource() {
+    window.clearTimeout(unpinArmed);
+    unpinArmed = 0;
+    if (sourceSync.shown) void editorSourceClose().catch(() => {}); // 문서가 닫히거나 바뀌면 Rust 도 비우니 실패는 무시
     sourceSync.close();
     sourceAlign.stop();
     sourceInfo = null;
@@ -1214,6 +1233,13 @@ export function mountEditor(root: HTMLElement): void {
     if (changed) for (const index of pages.keys()) redraw(index);
   }
   let sourceLoading = 0;
+  let loadsPending = 0;
+  /** 쪽 위에서 친 글 — 정렬 범위가 어긋나니 칠한 것을 거두고 다시 정렬을 예약한다. */
+  function editedSource() {
+    if (!sourceSync.shown) return;
+    sourceSync.invalidate();
+    sourceAlign.touch();
+  }
 
   // 고침은 줄을 세워 차례로 보낸다 — 처리 중에 누른 단추도 버리지 않는다(앞 고침이 끝나면 이어서).
   let queue: Promise<void> = Promise.resolve();
@@ -1500,6 +1526,7 @@ export function mountEditor(root: HTMLElement): void {
       cellTexts.set(id, chars.join(''));
       dirtyId = id;
       edits += 1;
+      editedSource();
       return;
     }
     const paragraph = paragraphOf(id);
@@ -1507,6 +1534,7 @@ export function mountEditor(root: HTMLElement): void {
     paragraph.text = chars.join('');
     dirtyId = id;
     edits += 1;
+    editedSource();
   }
 
   function deleteRange(a: number, b: number) {
@@ -4065,18 +4093,25 @@ export function mountEditor(root: HTMLElement): void {
       fail('HLT 만들기', error);
     }
   }
+  const READING = '원문을 읽는 중입니다…';
   /** 원문을 걸어 연다(큰 PDF 는 몇 초 걸린다 — 명령이 비동기라 화면은 그대로 쓸 수 있고, 그 사이 문서가 바뀌었으면 결과를 버린다). */
   async function showSource(load: () => Promise<SourceDto | null>) {
     const mine = ++sourceLoading;
-    say('원문을 읽는 중입니다…');
+    loadsPending += 1;
+    say(READING);
     try {
       const source = await load();
-      if (mine !== sourceLoading) return;
+      if (mine !== sourceLoading) {
+        // 늦게 온 결과는 버린다 — 안내를 걷고, 아무도 안 기다리면 Rust 에 남은 것도 비운다.
+        if (status.textContent === READING) say('');
+        if (loadsPending === 1 && !sourceSync.shown) void editorSourceClose().catch(() => {});
+        return;
+      }
       if (!source) return say('');
       const pdf = source.pages !== null && source.pages_with_text !== null && source.pages_with_text * 2 < source.pages
         ? `${source.pages}쪽 중 ${source.pages_with_text}쪽에서만 글을 읽었습니다`
         : '';
-      sourceInfo = { name: source.name, pdf, pins: source.pins };
+      sourceInfo = { name: source.name, pdf };
       sourcePane.hidden = false;
       root.classList.add('with-source');
       sourceSync.open(source.alignment);
@@ -4085,6 +4120,9 @@ export function mountEditor(root: HTMLElement): void {
       say(`원문 ${source.name} — 문장 짝 ${sentence} · 문단만 ${source.alignment.pairs.length - sentence} · 손 고정 ${source.pins}`);
     } catch (error) {
       if (mine === sourceLoading) fail('원문 열기', error);
+      else if (status.textContent === READING) say('');
+    } finally {
+      loadsPending -= 1;
     }
   }
   const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;

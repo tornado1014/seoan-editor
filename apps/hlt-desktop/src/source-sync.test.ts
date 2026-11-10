@@ -25,6 +25,7 @@ const alignment = (extra: Partial<AlignmentDto> = {}): AlignmentDto => ({
   ],
   pairs: [pair('p:0', 0, 0, 0), pair('p:0', 1, 0, 1), pair('p:1', null, 1, null)],
   dropped_pins: [],
+  pins: 0,
   ...extra,
 });
 
@@ -50,7 +51,7 @@ describe('짝 찾기', () => {
 describe('원문 창', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  function make(extra: { caret?: { paragraph: string; offset: number } | null; pin?: (pin: PinDto) => Promise<AlignmentDto> } = {}) {
+  function make(extra: { caret?: { paragraph: string; offset: number } | null; pin?: (pin: PinDto) => Promise<AlignmentDto>; visible?: boolean } = {}) {
     const pane = document.createElement('div');
     document.body.append(pane);
     const state = { caret: extra.caret === undefined ? { paragraph: 'p:0', offset: 1 } : extra.caret };
@@ -62,6 +63,8 @@ describe('원문 창', () => {
       markTarget: (range, grade) => log.mark.push([range, grade]),
       pin: extra.pin ?? (async (pin) => (log.pin.push(pin), alignment())),
       say: (text) => log.say.push(text),
+      paragraphs: () => ['p:0', 'p:1', 'p:2', 'p:3'],
+      caretVisible: () => extra.visible ?? false,
     });
     return { pane, state, log, sync };
   }
@@ -133,6 +136,54 @@ describe('원문 창', () => {
     sync.update(alignment({ revision: 2 }));
     expect(pane.scrollTop).toBe(123);
     expect(pane.querySelectorAll('input, textarea, [contenteditable]').length).toBe(0);
+  });
+
+  test('짝 없는 문단에 커서: 칠하지 않고 앞쪽 가장 가까운 짝 문단 자리로 원문 칸만 스크롤한다', () => {
+    vi.spyOn(HTMLElement.prototype, 'offsetTop', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.dataset.p === '1' ? 400 : 0;
+    });
+    const { pane, sync, log } = make({ caret: { paragraph: 'p:3', offset: 0 } }); // p:3 · p:2 모두 짝 없음 → 앞의 p:1 짝
+    sync.open(alignment({ target_sentences: [...alignment().target_sentences, ['p:3', [[0, 3]]]] }));
+    expect(pane.scrollTop).toBe(400);
+    expect(pane.querySelectorAll('.current, .current-para')).toHaveLength(0);
+    expect(log.mark.at(-1)![0]).toBeNull();
+  });
+
+  test('followTop: 맨 위 문단의 짝 자리로 칠하지 않고 스크롤 · 커서가 보이면 아무것도 하지 않는다', () => {
+    vi.spyOn(HTMLElement.prototype, 'offsetTop', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.dataset.p === '1' ? 400 : 0;
+    });
+    const hidden = make({ caret: null });
+    hidden.sync.open(alignment());
+    hidden.sync.followTop('p:1');
+    expect(hidden.pane.scrollTop).toBe(400);
+    expect(hidden.pane.querySelectorAll('.current, .current-para')).toHaveLength(0);
+    const visible = make({ caret: { paragraph: 'p:0', offset: 0 }, visible: true });
+    visible.sync.open(alignment());
+    visible.pane.scrollTop = 7;
+    visible.sync.followTop('p:1');
+    expect(visible.pane.scrollTop).toBe(7);
+  });
+
+  test('짝 없는 원문 문장을 누르면 ⌥클릭 안내', () => {
+    const { pane, sync, log } = make();
+    sync.open(alignment());
+    span(pane, 2, 0).click();
+    expect(log.say.at(-1)).toBe('이 문장은 짝이 없습니다 — ⌥클릭으로 맞출 수 있습니다.');
+  });
+
+  test('invalidate: 고친 뒤 정렬이 새로 올 때까지 칠한 것을 거두고 따라가지 않는다 · update 가 되살린다', () => {
+    const { pane, sync, log, state } = make({ caret: { paragraph: 'p:0', offset: 1 } });
+    sync.open(alignment());
+    expect(pane.querySelectorAll('.current')).toHaveLength(1);
+    sync.invalidate();
+    expect(pane.querySelectorAll('.current, .current-para')).toHaveLength(0);
+    expect(log.mark.at(-1)![0]).toBeNull();
+    state.caret = { paragraph: 'p:0', offset: 5 };
+    sync.follow();
+    expect(pane.querySelectorAll('.current')).toHaveLength(0);
+    sync.update(alignment({ revision: 2 }));
+    expect(pane.querySelectorAll('.current')).toHaveLength(1);
   });
 
   test('close: 칠한 것을 거둔다', () => {

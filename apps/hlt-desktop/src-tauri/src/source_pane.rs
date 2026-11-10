@@ -80,6 +80,8 @@ pub struct AlignmentDto {
     pub target_sentences: Vec<(String, Vec<(u32, u32)>)>,
     pub pairs: Vec<Pair>,
     pub dropped_pins: Vec<Pin>,
+    /// 창이 든 손 고정 수(적용된 것 + 적용 안 된 `dropped_pins`).
+    pub pins: usize,
 }
 
 #[derive(Serialize)]
@@ -138,6 +140,7 @@ fn to_dto(alignment: Alignment, target: &[EditorParagraph]) -> AlignmentDto {
         target_sentences,
         pairs: alignment.pairs,
         dropped_pins: alignment.dropped_pins,
+        pins: 0,
     }
 }
 
@@ -199,6 +202,7 @@ pub struct Snapshot {
 
 pub fn align_snapshot(snapshot: &Snapshot) -> AlignmentDto {
     let mut dto = align(&snapshot.material, &snapshot.pins, &snapshot.paragraphs);
+    dto.pins = snapshot.pins.len();
     dto.revision = snapshot.revision;
     dto
 }
@@ -335,6 +339,7 @@ async fn load(
                 target_sentences: Vec::new(),
                 pairs: Vec::new(),
                 dropped_pins: Vec::new(),
+                pins: held.pins.len(),
             },
             pins: held.pins.len(),
             pages: held.pages.map(|p| p.0),
@@ -393,6 +398,12 @@ pub async fn editor_source_align(
     aligned(snapshot).await.map(Some)
 }
 
+/// 같은 역문 문장의 옛 고정은 바꾸고 새 고정을 더한다.
+fn add_pin(pins: &mut Vec<Pin>, pin: Pin) {
+    pins.retain(|p| !(p.target_id == pin.target_id && p.target_sentence == pin.target_sentence));
+    pins.push(pin);
+}
+
 /// 손 고정 하나 더하기(같은 역문 문장의 옛 고정은 바꾼다) → 다시 정렬 · 기억.
 #[tauri::command]
 pub async fn editor_source_pin(
@@ -403,10 +414,7 @@ pub async fn editor_source_pin(
 ) -> Result<AlignmentDto, CoreError> {
     let snapshot = with_slot(&state, &window, |slot| {
         let held = slot.held.as_mut().ok_or_else(no_source)?;
-        held.pins.retain(|p| {
-            !(p.target_id == pin.target_id && p.target_sentence == pin.target_sentence)
-        });
-        held.pins.push(pin);
+        add_pin(&mut held.pins, pin);
         persist(&app, slot);
         snapshot(slot)?.ok_or_else(no_source)
     })?;
@@ -492,6 +500,28 @@ mod tests {
             pins,
             pages: None,
         }
+    }
+
+    #[test]
+    fn pinning_the_same_target_sentence_again_replaces_and_the_dto_counts_it_once() {
+        let mut pins = Vec::new();
+        let pin = |source_sentence| Pin {
+            target_id: "t1".into(),
+            target_sentence: 0,
+            source_paragraph: 0,
+            source_sentence,
+        };
+        add_pin(&mut pins, pin(0));
+        add_pin(&mut pins, pin(1));
+        assert_eq!(pins, vec![pin(1)]);
+        let state = held(&["A. B."], pins);
+        let snapshot = Snapshot {
+            paragraphs: Vec::new(),
+            revision: 3,
+            material: state.material.clone(),
+            pins: state.pins.clone(),
+        };
+        assert_eq!(align_snapshot(&snapshot).pins, 1);
     }
 
     #[test]

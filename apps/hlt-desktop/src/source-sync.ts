@@ -56,6 +56,10 @@ export function createSourceSync(o: {
   markTarget(range: { paragraph: string; start: number; end: number } | null, grade: 'sentence' | 'paragraph'): void;
   pin(pin: PinDto): Promise<AlignmentDto>;
   say(text: string): void;
+  /** 문서 차례의 문단 id — 짝 없는 문단에서 앞쪽 가장 가까운 짝 문단을 찾는 데 쓴다. */
+  paragraphs(): string[];
+  /** 커서가 지금 화면에 보이는가(보이면 커서가 이기고 `followTop` 은 아무것도 안 한다). */
+  caretVisible?(): boolean;
   /** 열 때 · 다시 정렬했을 때 · 손 고정 뒤(머리 글의 수를 다시 그리라고). */
   changed?(a: AlignmentDto): void;
   /** 원문 문장 우클릭 메뉴(없으면 우클릭은 그냥 둔다). */
@@ -64,6 +68,8 @@ export function createSourceSync(o: {
   let alignment: AlignmentDto | null = null;
   let shown = false;
   let lastKey = '';
+  /** 고친 뒤 새 정렬이 올 때까지 참 — 옛 범위가 새 글 위에 앉으니 칠하지 않는다. */
+  let stale = false;
 
   function render(a: AlignmentDto) {
     o.pane.replaceChildren(
@@ -99,8 +105,19 @@ export function createSourceSync(o: {
     o.pane.querySelector('.current-para')?.classList.remove('current-para');
   }
 
+  /** 그 문단(짝이 없으면 앞쪽 가장 가까운 짝 문단)의 짝 원문 문단 — 칠하지 않고 보이기만 한다. */
+  function earlier(id: string): HTMLElement | null {
+    if (!alignment) return null;
+    const ids = o.paragraphs();
+    for (let at = ids.indexOf(id); at >= 0; at -= 1) {
+      const pair = alignment.pairs.find((each) => each.target_id === ids[at]);
+      if (pair) return o.pane.querySelector<HTMLElement>(`p[data-p="${pair.source_paragraph}"]`);
+    }
+    return null;
+  }
+
   function follow() {
-    if (!shown || !alignment) return;
+    if (!shown || !alignment || stale) return;
     const caret = o.caret();
     const pair = caret ? pairAtTarget(alignment, caret.paragraph, caret.offset) : null;
     const key = pair ? `${pair.grade}:${pair.source_paragraph}:${pair.source_sentence}` : '';
@@ -108,7 +125,10 @@ export function createSourceSync(o: {
     o.markTarget(range, pair?.grade ?? 'sentence');
     if (!pair) {
       clear();
-      lastKey = '';
+      const near = caret ? earlier(caret.paragraph) : null;
+      const key = near ? `near:${near.dataset.p}` : '';
+      if (near && key !== lastKey) o.pane.scrollTop = near.offsetTop;
+      lastKey = key;
       return;
     }
     const paragraph = o.pane.querySelector<HTMLElement>(`p[data-p="${pair.source_paragraph}"]`);
@@ -153,6 +173,7 @@ export function createSourceSync(o: {
     const pair = pairAtSource(alignment, index, start);
     const range = pair ? targetRange(alignment, pair) : null;
     if (range) o.go(range.paragraph, range.start);
+    else o.say('이 문장은 짝이 없습니다 — ⌥클릭으로 맞출 수 있습니다.');
   });
   o.pane.addEventListener('contextmenu', (event) => {
     const { paragraph, sentence, index } = spot(event);
@@ -164,6 +185,7 @@ export function createSourceSync(o: {
   function update(a: AlignmentDto) {
     const scroll = o.pane.scrollTop;
     alignment = a;
+    stale = false;
     render(a);
     o.pane.scrollTop = scroll;
     o.changed?.(a);
@@ -174,6 +196,7 @@ export function createSourceSync(o: {
     open(a: AlignmentDto) {
       shown = true;
       lastKey = '';
+      stale = false;
       alignment = a;
       render(a);
       o.pane.scrollTop = 0;
@@ -182,8 +205,24 @@ export function createSourceSync(o: {
     },
     update,
     follow,
+    /** 쪽을 스크롤했는데 커서가 안 보일 때: 맨 위 문단의 짝 원문 문단을(없으면 앞쪽 가장 가까운 것을) 칸 맨 위로. 칠하지 않는다. */
+    followTop(id: string | null) {
+      if (!shown || !id || o.caretVisible?.()) return;
+      const near = earlier(id);
+      const key = near ? `top:${near.dataset.p}` : '';
+      if (near && key !== lastKey) o.pane.scrollTop = near.offsetTop;
+      lastKey = key;
+    },
+    /** 고쳤다 — 새 정렬(`update`)이 올 때까지 칠한 것을 거둔다(칸 글은 그대로). */
+    invalidate() {
+      stale = true;
+      lastKey = '';
+      clear();
+      o.markTarget(null, 'sentence');
+    },
     close() {
       shown = false;
+      stale = false;
       alignment = null;
       lastKey = '';
       o.pane.replaceChildren();
