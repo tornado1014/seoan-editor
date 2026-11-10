@@ -6,7 +6,7 @@ use std::path::Path;
 
 use quick_xml::{Reader, events::Event};
 
-use crate::align::{target_claims, target_sentence_ranges};
+use crate::align::{Given, infer, target_claims, target_sentence_ranges};
 use crate::error::io_error;
 use crate::{
     Alignment, CoreError, EditorParagraph, ErrorCode, Grade, Lang, Pair, Pin, SourcePara,
@@ -715,6 +715,57 @@ pub fn align_xliff(target: &[EditorParagraph], segments: &[Segment], pins: &[Pin
             )),
             None => dropped.push(pin.clone()),
         }
+    }
+
+    // 6. 2단계: 문장 짝도 문단 짝도 못 받은 문서 문단 — XLIFF 묶음을 원문 문단, 세그먼트를 원문 문장으로 보고
+    //    추정 정렬(`infer`: 식별번호 · 청구항 번호 · 표제 닻 → 닻 사이 차례 → 문장 수 같고 숫자 관문 통과 때만 문장 짝).
+    //    1단계 짝이 우선이고(이미 짝이 있는 문단은 건드리지 않는다), 1단계가 쓴 묶음은 문장 짝을 못 낸다.
+    //    문장 칸에서 뺀다: 번역이 빈 세그먼트, 1단계에 안 맞은 원문과 같은 번역(번호 · 기호류).
+    let mut free = vec![true; target.len()];
+    let mut used = vec![false; source.len()];
+    let mut first_source: std::collections::BTreeMap<usize, u32> =
+        std::collections::BTreeMap::new();
+    for (t, _, p) in &pairs {
+        free[*t] = false;
+        used[p.source_paragraph as usize] = true;
+        let at = first_source.entry(*t).or_insert(p.source_paragraph);
+        *at = (*at).min(p.source_paragraph);
+    }
+    let fixed: Vec<(usize, usize)> = first_source
+        .iter()
+        .map(|(&t, &s)| (t, s as usize))
+        .collect();
+    let mut kept: Vec<Vec<u32>> = vec![Vec::new(); source.len()];
+    let mut ssent: Vec<Vec<(u32, u32)>> = vec![Vec::new(); source.len()];
+    for k in 0..n {
+        let Some((sp, ss)) = at_source[k] else {
+            continue;
+        };
+        let skipped = tgt[k].is_empty()
+            || (hits[k].is_none() && tgt[k] == src[k].chars().collect::<Vec<_>>());
+        if !skipped {
+            kept[sp as usize].push(ss);
+            ssent[sp as usize].push(source[sp as usize].sentences[ss as usize]);
+        }
+    }
+    let texts: Vec<String> = source.iter().map(|p| p.text.clone()).collect();
+    let given = Given {
+        ssent: &ssent,
+        free: &free,
+        used: &used,
+        fixed: &fixed,
+    };
+    for (t, mut p) in infer(target, &texts, &[], Some(&given)).pairs {
+        let order = match p.target_sentence {
+            Some(ts) => {
+                p.source_sentence = p
+                    .source_sentence
+                    .map(|j| kept[p.source_paragraph as usize][j as usize]);
+                ts + 1
+            }
+            None => 0,
+        };
+        pairs.push((t, order, p));
     }
     pairs.sort_by_key(|p| (p.0, p.1));
 

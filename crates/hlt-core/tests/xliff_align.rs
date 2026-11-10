@@ -566,9 +566,11 @@ fn single(doc: &str, seg_text: &str) -> hlt_core::Alignment {
 #[test]
 fn a_match_must_end_on_a_boundary() {
     // 다른 문장의 앞 조각 · 조사가 붙은 말 중간은 맞춤이 아니다.
-    assert!(single("도 1A는 평면도이다.", "도 1").pairs.is_empty());
-    assert!(single("도 1은 평면도이다.", "도 1").pairs.is_empty());
-    assert!(single("FIG. 1A shows a device.", "FIG. 1").pairs.is_empty());
+    // (2단계가 한 문단 ↔ 한 묶음을 차례로 채워 문단 짝을 낼 수는 있다 — 문장 짝만 없어야 한다.)
+    let no_sentence = |a: hlt_core::Alignment| a.pairs.iter().all(|p| p.grade != Grade::Sentence);
+    assert!(no_sentence(single("도 1A는 평면도이다.", "도 1")));
+    assert!(no_sentence(single("도 1은 평면도이다.", "도 1")));
+    assert!(no_sentence(single("FIG. 1A shows a device.", "FIG. 1")));
     // 다음 글자가 문장부호이면 맞춤.
     let a = single("A는 B이다. C는 D이다.", "A는 B이다");
     assert_eq!(pairs_of(&a), [sentence_pair("a", 0, 0, 0)]);
@@ -600,4 +602,288 @@ fn a_searched_match_must_start_on_a_boundary() {
         got,
         [("p0".to_string(), Some(0)), ("p1".to_string(), Some(0))]
     );
+}
+
+// ---- 2단계: 글자가 안 맞는 문단은 XLIFF 묶음 · 세그먼트로 추정 정렬 ----
+
+fn numbered(id: &str, text: &str, number: &str) -> EditorParagraph {
+    EditorParagraph {
+        number: Some(number.into()),
+        ..para(id, text)
+    }
+}
+
+fn of(a: &hlt_core::Alignment, id: &str) -> Vec<P> {
+    pairs_of(a).into_iter().filter(|p| p.0 == id).collect()
+}
+
+/// 묶음 하나: `[000N]` 식별번호로 시작하는 원문 + 세그먼트 번역(문서와 글자가 조금씩 다르다).
+fn group(n: u32, parts: &[(&str, &str)]) -> Vec<Segment> {
+    parts
+        .iter()
+        .enumerate()
+        .map(|(i, (s, t))| {
+            let source = if i == 0 {
+                format!("[{n:04}] {s}")
+            } else {
+                s.to_string()
+            };
+            seg(&source, t, Some(&format!("g{n}")))
+        })
+        .collect()
+}
+
+/// 문단 다섯: 세그먼트 번역은 문서 글과 낱말 하나씩 다르다(1단계 0짝). 문단 3 만 문장 수가 다르다.
+fn edited_five() -> (Vec<EditorParagraph>, Vec<Segment>) {
+    let doc = vec![
+        numbered("p1", "장치가 도시되었다. 층이 있다.", "0001"),
+        numbered("p2", "기판이 도시되었다. 전극이 있다.", "0002"),
+        numbered("p3", "제어부가 도시되었다. 전원이 있다.", "0003"),
+        numbered("p4", "센서가 도시되었다.", "0004"),
+        numbered("p5", "모터가 도시되었다. 축이 있다.", "0005"),
+    ];
+    let mut segs = Vec::new();
+    segs.extend(group(
+        1,
+        &[
+            ("The device is shown.", "장치가 도시된다."),
+            ("A layer exists.", "층이 존재한다."),
+        ],
+    ));
+    segs.extend(group(
+        2,
+        &[
+            ("The substrate is shown.", "기판이 도시된다."),
+            ("An electrode exists.", "전극이 존재한다."),
+        ],
+    ));
+    segs.extend(group(
+        3,
+        &[
+            ("The controller is shown.", "제어부가 도시된다."),
+            ("A power source exists.", "전원이 존재한다."),
+            ("Another thing exists.", "다른 것이 존재한다."),
+        ],
+    ));
+    segs.extend(group(4, &[("The sensor is shown.", "센서가 도시된다.")]));
+    segs.extend(group(
+        5,
+        &[
+            ("The motor is shown.", "모터가 도시된다."),
+            ("A shaft exists.", "축이 존재한다."),
+        ],
+    ));
+    (doc, segs)
+}
+
+#[test]
+fn stage_two_pairs_unmatched_paragraphs_by_ids_and_segment_boundaries() {
+    let (doc, segs) = edited_five();
+    let a = align_xliff(&doc, &segs, &[]);
+    assert_eq!(
+        of(&a, "p1"),
+        [sentence_pair("p1", 0, 0, 0), sentence_pair("p1", 1, 0, 1)]
+    );
+    assert_eq!(
+        of(&a, "p2"),
+        [sentence_pair("p2", 0, 1, 0), sentence_pair("p2", 1, 1, 1)]
+    );
+    // 문장 수(2) ≠ 세그먼트 수(3) → 문단 짝 하나.
+    assert_eq!(of(&a, "p3"), [paragraph_pair("p3", 2)]);
+    assert_eq!(of(&a, "p4"), [sentence_pair("p4", 0, 3, 0)]);
+    assert_eq!(
+        of(&a, "p5"),
+        [sentence_pair("p5", 0, 4, 0), sentence_pair("p5", 1, 4, 1)]
+    );
+    // 문장 범위는 문서의 `sentences` 가르기.
+    assert_eq!(
+        a.target_sentences
+            .iter()
+            .find(|t| t.0 == "p1")
+            .unwrap()
+            .1
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn a_stage_one_match_keeps_its_range_and_stage_two_fills_only_the_rest() {
+    let (mut doc, segs) = edited_five();
+    // 문단 2 를 글자까지 맞춘다 — 세그먼트 하나가 문서의 두 가르기 문장을 덮는다(1단계 적중 범위).
+    doc[1] = numbered("p2", "기판이 도시된다. 전극이 존재한다.", "0002");
+    let mut segs = segs;
+    segs.splice(
+        2..4,
+        [seg(
+            "[0002] The substrate is shown. An electrode exists.",
+            "기판이 도시된다. 전극이 존재한다.",
+            Some("g2"),
+        )],
+    );
+    let a = align_xliff(&doc, &segs, &[]);
+    assert_eq!(of(&a, "p2"), [sentence_pair("p2", 0, 1, 0)]);
+    let range = &a.target_sentences.iter().find(|t| t.0 == "p2").unwrap().1;
+    assert_eq!(range, &[(0, 19)]);
+    // 나머지는 2단계.
+    assert_eq!(of(&a, "p1").len(), 2);
+    assert_eq!(of(&a, "p5").len(), 2);
+}
+
+#[test]
+fn order_filled_stage_two_paragraphs_without_numerals_stay_paragraph_pairs() {
+    let doc = vec![
+        para("h1", "【기술분야】"),
+        para("x", "장치가 도시되었다. 층이 있다."),
+        para("y", "기판이 도시되었다. 전극이 있다."),
+        para("h2", "【배경기술】"),
+    ];
+    let mut segs = vec![seg("Technical Field", "기술 분야", Some("h1"))];
+    segs.extend([
+        seg("The device is shown.", "장치가 도시된다.", Some("x")),
+        seg("A layer exists.", "층이 존재한다.", Some("x")),
+        seg("The substrate is shown.", "기판이 도시된다.", Some("y")),
+        seg("An electrode exists.", "전극이 존재한다.", Some("y")),
+        seg("Background", "배경 기술", Some("h2")),
+    ]);
+    let a = align_xliff(&doc, &segs, &[]);
+    assert_eq!(of(&a, "x"), [paragraph_pair("x", 1)]);
+    assert_eq!(of(&a, "y"), [paragraph_pair("y", 2)]);
+    // 같은 도면부호가 양쪽에 있으면 문장 짝.
+    let doc = vec![
+        para("h1", "【기술분야】"),
+        para("x", "장치(110)가 도시되었다. 층이 있다."),
+        para("h2", "【배경기술】"),
+    ];
+    let segs = vec![
+        seg("Technical Field", "기술 분야", Some("h1")),
+        seg(
+            "The device 110 is shown.",
+            "장치(110)가 도시된다.",
+            Some("x"),
+        ),
+        seg("A layer exists.", "층이 존재한다.", Some("x")),
+        seg("Background", "배경 기술", Some("h2")),
+    ];
+    let a = align_xliff(&doc, &segs, &[]);
+    assert_eq!(
+        of(&a, "x"),
+        [sentence_pair("x", 0, 1, 0), sentence_pair("x", 1, 1, 1)]
+    );
+}
+
+#[test]
+fn a_claim_of_four_segments_pairs_its_four_component_lines() {
+    let doc = vec![
+        para("h", "【청구항 3】"),
+        para("c0", "장치로서,"),
+        para("c1", "기판(110)을 포함하고;"),
+        para("c2", "층(120)을 포함하며;"),
+        para("c3", "전극(130)을 포함하는, 장치."),
+    ];
+    let segs = vec![
+        seg("What is claimed is:", "", Some("g0")),
+        seg("3. A device comprising:", "장치를 포함하는:", Some("g1")),
+        seg("a substrate 110;", "기판(110);", Some("g1")),
+        seg("a layer 120; and", "층(120); 및", Some("g1")),
+        seg("an electrode 130.", "전극(130).", Some("g1")),
+    ];
+    let a = align_xliff(&doc, &segs, &[]);
+    let got: Vec<(String, u32, Option<u32>)> = a
+        .pairs
+        .iter()
+        .map(|p| (p.target_id.clone(), p.source_paragraph, p.source_sentence))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("c0".to_string(), 1, Some(0)),
+            ("c1".to_string(), 1, Some(1)),
+            ("c2".to_string(), 1, Some(2)),
+            ("c3".to_string(), 1, Some(3)),
+        ]
+    );
+    assert!(a.pairs.iter().all(|p| p.grade == Grade::Sentence));
+}
+
+#[test]
+fn a_group_whose_segments_stage_one_used_gets_no_second_use() {
+    // 묶음 g 의 첫 세그먼트는 1단계가 문단 a 에 맞췄다 — 나머지 글을 가진 문단 b 는 같은 묶음의 세그먼트를 다시 못 쓴다.
+    let doc = vec![
+        numbered("a", "첫 문장이다.", "0001"),
+        numbered("b", "둘째가 도시되었다. 셋째가 있다.", "0002"),
+    ];
+    let segs = vec![
+        seg("[0001] First.", "첫 문장이다.", Some("g")),
+        seg("Second.", "둘째가 도시된다.", Some("g")),
+        seg("Third.", "셋째가 존재한다.", Some("g")),
+    ];
+    let a = align_xliff(&doc, &segs, &[]);
+    assert_eq!(of(&a, "a"), [sentence_pair("a", 0, 0, 0)]);
+    assert!(of(&a, "b").iter().all(|p| p.4 != Grade::Sentence));
+    // 같은 원문 칸이 두 번 나오지 않는다.
+    let mut used: Vec<(u32, Option<u32>)> = a
+        .pairs
+        .iter()
+        .map(|p| (p.source_paragraph, p.source_sentence))
+        .collect();
+    used.sort();
+    used.dedup();
+    assert_eq!(used.len(), a.pairs.len());
+}
+
+#[test]
+fn stage_two_sentence_pairs_need_every_sentences_numerals_to_agree() {
+    let doc = vec![
+        numbered(
+            "p1",
+            "장치(110)가 있다. 기판(120)이 있다. 전극(130)이 있다.",
+            "0001",
+        ),
+        numbered(
+            "p2",
+            "장치(110)가 있다. 기판(120)이 있다. 전극(130)이 있다.",
+            "0002",
+        ),
+    ];
+    let mut segs = group(
+        1,
+        &[
+            ("A device 110 exists.", "장치(110)가 존재한다."),
+            ("A substrate 140 exists.", "기판(140)이 존재한다."),
+            ("An electrode 150 exists.", "전극(150)이 존재한다."),
+        ],
+    );
+    segs.extend(group(
+        2,
+        &[
+            ("A device 110 exists.", "장치(110)가 존재한다."),
+            ("A substrate 120 exists.", "기판(120)이 존재한다."),
+            ("An electrode 130 exists.", "전극(130)이 존재한다."),
+        ],
+    ));
+    let a = align_xliff(&doc, &segs, &[]);
+    assert_eq!(of(&a, "p1"), [paragraph_pair("p1", 0)]);
+    assert_eq!(of(&a, "p2").len(), 3);
+    assert!(of(&a, "p2").iter().all(|p| p.4 == Grade::Sentence));
+}
+
+#[test]
+fn a_group_split_over_two_document_paragraphs_keeps_both_stage_one_pairs() {
+    // 묶음 g 의 세그먼트가 문서 문단 둘에 맞았다 — 둘째 문단은 닻이 못 되지만 2단계 후보도 아니다.
+    // 그래서 다음 문단 b 는 다음 묶음 h 와 차례로 짝지어진다.
+    let doc = vec![
+        para("a1", "첫째 문단 글이 여기 있다."),
+        para("a2", "둘째 문단 글이 여기 있다."),
+        para("b", "다른 문장이다."),
+    ];
+    let segs = vec![
+        seg("One.", "첫째 문단 글이 여기 있다.", Some("g")),
+        seg("Two.", "둘째 문단 글이 여기 있다.", Some("g")),
+        seg("Other.", "다른 문장이 다.", Some("h")),
+    ];
+    let a = align_xliff(&doc, &segs, &[]);
+    assert_eq!(of(&a, "a1"), [sentence_pair("a1", 0, 0, 0)]);
+    assert_eq!(of(&a, "a2"), [sentence_pair("a2", 0, 0, 1)]);
+    assert_eq!(of(&a, "b"), [paragraph_pair("b", 1)]);
 }

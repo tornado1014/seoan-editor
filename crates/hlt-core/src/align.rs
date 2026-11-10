@@ -192,6 +192,52 @@ pub fn align_inferred(
     source_texts: &[String],
     pins: &[Pin],
 ) -> Alignment {
+    let r = infer(target, source_texts, pins, None);
+    Alignment {
+        source: (0..source_texts.len())
+            .map(|i| SourcePara {
+                key: r.skeys[i].clone(),
+                text: source_texts[i].clone(),
+                sentences: r.ssent[i].clone(),
+            })
+            .collect(),
+        target_sentences: (0..target.len())
+            .filter(|&i| !r.tsent[i].is_empty())
+            .map(|i| (target[i].id.clone(), r.tsent[i].clone()))
+            .collect(),
+        pairs: r.pairs.into_iter().map(|(_, p)| p).collect(),
+        dropped_pins: r.dropped.into_iter().map(|n| pins[n].clone()).collect(),
+    }
+}
+
+/// `align_xliff` 의 2단계가 `infer` 에 밖에서 주는 것 — 원문 문장 범위(세그먼트 경계) · 1단계가 이미 쓴 자리.
+pub(crate) struct Given<'a> {
+    /// 원문 문단별 문장 범위(글자 단위 · 글은 `source_texts`).
+    pub ssent: &'a [Vec<(u32, u32)>],
+    /// 편집 문단 중 짝을 받을 수 있는 것(1단계에서 문장 짝도 문단 짝도 못 받은 것).
+    pub free: &'a [bool],
+    /// 1단계가 이미 쓴 원문 문단 — 문장 짝 금지(문단 짝만) · 차례 채움 후보 아님.
+    pub used: &'a [bool],
+    /// 1단계 짝이 가리키는 (편집 문단, 원문 문단) — 구간을 가르는 가장 센 닻(짝은 더 만들지 않는다).
+    pub fixed: &'a [(usize, usize)],
+}
+
+pub(crate) struct Inferred {
+    pub skeys: Vec<Option<String>>,
+    pub ssent: Vec<Vec<(u32, u32)>>,
+    pub tsent: Vec<Vec<(u32, u32)>>,
+    /// (편집 문단 차례, 짝) · 편집 문서 차례.
+    pub pairs: Vec<(usize, Pair)>,
+    /// 못 쓴 손 고정(입력 번호 · 오름차순).
+    pub dropped: Vec<usize>,
+}
+
+pub(crate) fn infer(
+    target: &[EditorParagraph],
+    source_texts: &[String],
+    pins: &[Pin],
+    given: Option<&Given>,
+) -> Inferred {
     let (nt, ns) = (target.len(), source_texts.len());
     let source_refs: Vec<&str> = source_texts.iter().map(String::as_str).collect();
     let skeys = source_keys(&source_refs);
@@ -213,13 +259,19 @@ pub fn align_inferred(
     }
     let tclaim = target_claims(target, &tkeys);
     let tsent = target_sentence_ranges(target, &tclaim);
-    let ssent: Vec<Vec<(u32, u32)>> = (0..ns)
-        .map(|i| sentences(&source_texts[i], Lang::En, sclaim[i].is_some()))
-        .collect();
+    let ssent: Vec<Vec<(u32, u32)>> = match given {
+        Some(g) => g.ssent.to_vec(),
+        None => (0..ns)
+            .map(|i| sentences(&source_texts[i], Lang::En, sclaim[i].is_some()))
+            .collect(),
+    };
+    let free = |i: usize| given.is_none_or(|g| g.free[i]);
+    let used = |i: usize| given.is_some_and(|g| g.used[i]);
 
     let is_claim_key = |k: &Option<String>| k.as_deref().is_some_and(|k| k.starts_with("claim:"));
     let tcand = |i: usize| {
-        !tsent[i].is_empty()
+        free(i)
+            && !tsent[i].is_empty()
             && !is_claim_key(&tkeys[i])
             && theads[i].is_none()
             && !target[i].text.trim().starts_with('【')
@@ -232,8 +284,16 @@ pub fn align_inferred(
         source: source_texts,
         tsent: &tsent,
         ssent: &ssent,
+        used: given.map_or(&[], |g| g.used),
     };
     let mut anchors: BTreeMap<usize, usize> = BTreeMap::new();
+    // 1단계 짝(밖에서 줌)이 가리키는 닻 — 구간만 가르고 짝은 내보내지 않는다.
+    let mut fixed_t: Vec<usize> = Vec::new();
+    for &(t, s) in given.map_or(&[][..], |g| g.fixed) {
+        if add_anchor(&mut anchors, t, s) {
+            fixed_t.push(t);
+        }
+    }
     let mut pinned: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
     let mut claim_pins: HashMap<u32, Vec<ClaimPin>> = HashMap::new();
     let mut dropped: Vec<usize> = Vec::new();
@@ -293,7 +353,7 @@ pub fn align_inferred(
 
     let mut out: Vec<(usize, Pair)> = Vec::new();
     for (&t, &s) in &anchors {
-        if theads[t].is_none() {
+        if theads[t].is_none() && !fixed_t.contains(&t) {
             emit_paragraph(
                 &mut out,
                 &cx,
@@ -312,7 +372,7 @@ pub fn align_inferred(
             .filter(|&i| tcand(i))
             .collect();
         let ss: Vec<usize> = ((w[0].1 + 1) as usize..w[1].1 as usize)
-            .filter(|&i| scand(i))
+            .filter(|&i| scand(i) && !used(i))
             .collect();
         // 차례로 채운 짝(ordered)은 닻이 아니라 순서가 근거다 — 숫자 증거가 있어야 문장 짝이 된다.
         let ordered = ts.len() == ss.len();
@@ -347,6 +407,10 @@ pub fn align_inferred(
     for number in numbers_seen {
         let mut claim_pins = claim_pins.remove(&number).unwrap_or_default();
         let ts: Vec<usize> = (0..nt).filter(|&i| tclaim[i] == Some(number)).collect();
+        if !ts.iter().all(|&i| free(i)) {
+            dropped.extend(claim_pins.iter().map(|p| p.0));
+            continue;
+        }
         let starts: Vec<usize> = (0..ns)
             .filter(|&i| skeys[i].as_deref() == Some(&format!("claim:{number}")))
             .collect();
@@ -393,24 +457,14 @@ pub fn align_inferred(
         );
     }
     out.sort_by_key(|(t, _)| *t);
+    dropped.sort_unstable();
 
-    Alignment {
-        source: (0..ns)
-            .map(|i| SourcePara {
-                key: skeys[i].clone(),
-                text: source_texts[i].clone(),
-                sentences: ssent[i].clone(),
-            })
-            .collect(),
-        target_sentences: (0..nt)
-            .filter(|&i| !tsent[i].is_empty())
-            .map(|i| (target[i].id.clone(), tsent[i].clone()))
-            .collect(),
-        pairs: out.into_iter().map(|(_, p)| p).collect(),
-        dropped_pins: {
-            dropped.sort_unstable();
-            dropped.into_iter().map(|n| pins[n].clone()).collect()
-        },
+    Inferred {
+        skeys,
+        ssent,
+        tsent,
+        pairs: out,
+        dropped,
     }
 }
 
@@ -436,6 +490,8 @@ struct Ctx<'a> {
     source: &'a [String],
     tsent: &'a [Vec<(u32, u32)>],
     ssent: &'a [Vec<(u32, u32)>],
+    /// 문장 짝 금지인 원문 문단(비어 있으면 없음).
+    used: &'a [bool],
 }
 
 /// 손 고정 문장 쌍을 더한다 — 이미 받은 것들과 양쪽 차례가 같아야 한다(어긋나면 false).
@@ -492,6 +548,9 @@ fn emit_group(
     fallback: (usize, usize),
     claim: bool,
 ) {
+    if sunits.iter().any(|&(s, _)| cx.used.get(s) == Some(&true)) {
+        return paragraph_pair(out, cx, fallback); // 이미 쓴 원문 문단은 문단 짝만
+    }
     let pair = |a: usize, b: usize| {
         let ((t, tk), (s, sk)) = (tunits[a], sunits[b]);
         (
