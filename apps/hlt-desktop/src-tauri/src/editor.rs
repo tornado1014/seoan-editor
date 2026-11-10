@@ -1230,7 +1230,7 @@ fn save_current(
     keep_history(app, &path);
     with_session(state, window, |session| session.save_over(&path))?;
     if let Ok(mut slot) = state.slot(window.label()).lock() {
-        slot.source = Some(path.clone());
+        crate::source_pane::retarget_logged(app, &mut slot, path.clone());
         slot.stamp = stamp_of(&path);
     }
     crate::recovery::discard(app, window.label());
@@ -2200,6 +2200,11 @@ pub async fn editor_number_paragraphs(
 /// 맥 `~/Library/Logs/<앱 id>` · 윈도 `%LOCALAPPDATA%\<앱 id>\logs`.
 #[tauri::command]
 pub async fn editor_log(app: AppHandle, line: String) -> Result<(), CoreError> {
+    append_log(&app, &line)
+}
+
+/// `editor.log` 에 한 줄(Rust 쪽 실패도 같은 파일에 남긴다).
+pub fn append_log(app: &AppHandle, line: &str) -> Result<(), CoreError> {
     use std::io::Write;
     let dir = app
         .path()
@@ -2245,14 +2250,7 @@ pub async fn editor_save_as(
     })?;
     if unlocked {
         if let Ok(mut slot) = state.slot(window.label()).lock() {
-            // 기억해 둔 원문 · 손 고정도 새 경로 열쇠로 옮긴다.
-            if let (Some(old), Some(file)) = (
-                slot.source.as_deref(),
-                crate::source_pane::memory_file(&app),
-            ) {
-                crate::source_memory::move_key(&file, old, &path);
-            }
-            slot.source = Some(path.clone());
+            crate::source_pane::retarget_logged(&app, &mut slot, path.clone());
             slot.stamp = stamp_of(&path);
         }
         crate::recent::changed(&app, Some(&path));

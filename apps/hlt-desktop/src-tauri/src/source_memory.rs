@@ -1,5 +1,6 @@
 //! 문서마다 기억한 원문: 앱 자료 폴더 `source-memory.json`.
 //! `{ "<역문 정규 경로>": { source, fingerprint(원문 SHA-256 앞 16자), pins } }` — 같은 문서를 다시 열면 원문 · 손 고정이 돌아온다.
+//! 가정: 한 프로세스의 창들은 `FILE_LOCK` 으로 줄을 세우고, 프로세스 사이는 마지막에 쓴 쪽이 이긴다(임시 파일 이름이 프로세스마다 달라 서로의 쓰기를 깨뜨리지는 않는다).
 //! 원문 파일이 바뀌었으면(지문이 다르면) 손 고정은 버리고 경로만 남긴다. 깨진 파일은 `.bad` 로 옮기고 빈 것으로 읽는다.
 
 use std::{
@@ -66,20 +67,21 @@ fn read_map(file: &Path) -> Map {
     })
 }
 
-/// 옆 임시 파일에 쓴 뒤 바꿔 끼운다(쓰다 끊겨도 옛 파일이 남는다).
-fn write_map(file: &Path, map: &Map) {
+/// 옆 임시 파일(`.tmp.<프로세스 번호>`)에 쓴 뒤 바꿔 끼운다(쓰다 끊겨도 옛 파일이 남는다).
+fn write_map(file: &Path, map: &Map) -> Result<(), String> {
+    let fail = |what: &str, e: &dyn std::fmt::Display| format!("source-memory {what}: {e}");
     if let Some(dir) = file.parent() {
-        let _ = std::fs::create_dir_all(dir);
+        std::fs::create_dir_all(dir).map_err(|e| fail("mkdir", &e))?;
     }
-    let Ok(bytes) = serde_json::to_vec_pretty(map) else {
-        return;
-    };
+    let bytes = serde_json::to_vec_pretty(map).map_err(|e| fail("encode", &e))?;
     let mut tmp = file.as_os_str().to_owned();
-    tmp.push(".tmp");
+    tmp.push(format!(".tmp.{}", std::process::id()));
     let tmp = PathBuf::from(tmp);
-    if std::fs::write(&tmp, bytes).is_ok() {
-        let _ = std::fs::rename(&tmp, file);
-    }
+    std::fs::write(&tmp, bytes).map_err(|e| fail("write", &e))?;
+    std::fs::rename(&tmp, file).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        fail("rename", &e)
+    })
 }
 
 fn locked<T>(run: impl FnOnce() -> T) -> T {
@@ -90,7 +92,13 @@ fn locked<T>(run: impl FnOnce() -> T) -> T {
 }
 
 /// 이 문서(`doc`)의 원문 · 손 고정을 적는다.
-pub fn remember(file: &Path, doc: &Path, source: &Path, fingerprint: &str, pins: &[Pin]) {
+pub fn remember(
+    file: &Path,
+    doc: &Path,
+    source: &Path,
+    fingerprint: &str,
+    pins: &[Pin],
+) -> Result<(), String> {
     locked(|| {
         let mut map = read_map(file);
         map.insert(
@@ -101,8 +109,8 @@ pub fn remember(file: &Path, doc: &Path, source: &Path, fingerprint: &str, pins:
                 pins: pins.to_vec(),
             },
         );
-        write_map(file, &map);
-    });
+        write_map(file, &map)
+    })
 }
 
 /// 기억한 원문 — 파일이 아직 있을 때만. 지문이 달라졌으면 손 고정은 비운다(경로는 남긴다).
@@ -118,15 +126,16 @@ pub fn recall(file: &Path, doc: &Path) -> Option<Recalled> {
     })
 }
 
-/// 「다른 이름으로 저장」: 기억을 새 경로 열쇠로 옮긴다.
-pub fn move_key(file: &Path, from: &Path, to: &Path) {
+/// 「다른 이름으로 저장」: 기억을 새 경로 열쇠로 옮긴다. 옮길 것이 있었으면 `true`.
+pub fn move_key(file: &Path, from: &Path, to: &Path) -> Result<bool, String> {
     locked(|| {
         let mut map = read_map(file);
-        if let Some(entry) = map.remove(&key(from)) {
-            map.insert(key(to), entry);
-            write_map(file, &map);
-        }
-    });
+        let Some(entry) = map.remove(&key(from)) else {
+            return Ok(false);
+        };
+        map.insert(key(to), entry);
+        write_map(file, &map).map(|()| true)
+    })
 }
 
 #[cfg(test)]
@@ -162,7 +171,7 @@ mod tests {
         assert_eq!(recall(&file, &doc), None);
         let fp = fingerprint(&src).unwrap();
         assert_eq!(fp.len(), 16);
-        remember(&file, &doc, &src, &fp, &[pin(0), pin(1)]);
+        remember(&file, &doc, &src, &fp, &[pin(0), pin(1)]).unwrap();
         assert_eq!(
             recall(&file, &doc),
             Some(Recalled {
@@ -180,14 +189,14 @@ mod tests {
         assert!(file.with_extension("json.bad").exists());
         assert!(!file.exists());
         // 덮어쓰기도 된다.
-        remember(&file, &doc, &src, &fingerprint(&src).unwrap(), &[pin(0)]);
+        remember(&file, &doc, &src, &fingerprint(&src).unwrap(), &[pin(0)]).unwrap();
         assert!(recall(&file, &doc).is_some());
     }
 
     #[test]
     fn changed_source_drops_pins_but_keeps_the_path() {
         let (file, doc, src) = fixture("fp");
-        remember(&file, &doc, &src, &fingerprint(&src).unwrap(), &[pin(0)]);
+        remember(&file, &doc, &src, &fingerprint(&src).unwrap(), &[pin(0)]).unwrap();
         std::fs::write(&src, "원문이 달라졌다").unwrap();
         assert_eq!(
             recall(&file, &doc),
@@ -204,10 +213,11 @@ mod tests {
     #[test]
     fn save_as_moves_the_key() {
         let (file, doc, src) = fixture("mv");
-        remember(&file, &doc, &src, &fingerprint(&src).unwrap(), &[pin(3)]);
+        remember(&file, &doc, &src, &fingerprint(&src).unwrap(), &[pin(3)]).unwrap();
         let other = doc.with_file_name("새 이름.HLT");
         std::fs::write(&other, "y").unwrap();
-        move_key(&file, &doc, &other);
+        assert!(move_key(&file, &doc, &other).unwrap());
+        assert!(!move_key(&file, &doc, &other).unwrap());
         assert_eq!(recall(&file, &doc), None);
         assert_eq!(recall(&file, &other).unwrap().pins, vec![pin(3)]);
     }

@@ -382,6 +382,8 @@ export type PairDto = {
 export type PinDto = { target_id: string; target_sentence: number; source_paragraph: number; source_sentence: number };
 export type SourceParaDto = { key: string | null; text: string; sentences: [number, number][] };
 export type AlignmentDto = {
+  /** 정렬을 뜬 때의 문서 판 번호 — 지금 화면 판보다 오래된 결과는 버린다. */
+  revision: number;
   source: SourceParaDto[];
   target_sentences: [string, [number, number][]][];
   pairs: PairDto[];
