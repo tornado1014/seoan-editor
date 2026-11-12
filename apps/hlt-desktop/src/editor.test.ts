@@ -2002,6 +2002,18 @@ describe('page editing', () => {
     expect(root.querySelector('.editor-error')!.textContent).toContain('저장한 파일의 글이 화면과 다릅니다');
   });
 
+  test('HLT 만들기가 읽지 못하는 그림으로 멈추면 그 까닭을 사람 말로 알린다(코드 · phase 만 내지 않는다)', async () => {
+    const root = await open();
+    const base = vi.mocked(invoke).getMockImplementation()!;
+    vi.mocked(invoke).mockImplementation((async (command: string, args?: Record<string, unknown>) => {
+      if (command === 'editor_import') throw { code: 'structure_invalid', phase: 'docx_relationships', details: { reason: 'picture_unreadable' } };
+      return base(command, args);
+    }) as never);
+    q(root, '[data-action="import"]').click();
+    await settle(10);
+    expect(root.querySelector('.editor-error')!.textContent).toContain('서안이 읽지 못하는 그림(EMF 등)');
+  });
+
   test('⌘K 명령 찾기: 툴바 · 도구를 이름으로 거르고 ↑↓ Enter 로 실행 · Esc 로 닫기', async () => {
     texts = ['【청구범위】', '【청구항 1】', '장치.'];
     const root = await open();

@@ -65,6 +65,7 @@ fn reason(error: &crate::CoreError) -> String {
     match error.details.get("reason").map(String::as_str) {
         // XML 은 그림을 옆 파일로 부른다(실물: XML 만 옮기면 이렇게 실패한다).
         Some("image_source") => "그림 파일을 찾지 못함(XML 옆에 그림 파일이 있어야 합니다)".into(),
+        Some("picture_unreadable") => error.message.clone(),
         Some(reason) => format!("{} · {reason}", error.code),
         None => error.code.to_string(),
     }

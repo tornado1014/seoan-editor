@@ -4790,6 +4790,7 @@ function describe(error: unknown): string {
       open_elsewhere: '그 파일은 다른 탭에 열려 있습니다 — 그 탭에서 저장하거나 닫은 뒤 하세요',
       read_only_save: '읽기 전용으로 연 문서입니다 — 「다른 이름으로 저장」으로 사본을 만드세요',
       history_none: '이전 판이 없습니다',
+      picture_unreadable: '이 워드에는 서안이 읽지 못하는 그림(EMF 등)이 있어 HLT 로 만들 수 없습니다. 그림을 PNG · JPG 로 바꾼 KIPO 포맷 워드로 다시 시도하세요.',
       sequence_not_st26: 'ST.26(XML) 서열목록 파일이 아닙니다 — WIPO Sequence 로 만든 .xml 을 고르세요(ST.25 .app 은 2022.7.1. 이전 출원용)',
       sequence_file_missing: '서열목록 파일이 없습니다 — 옮겼거나 지웠다면 「서열목록 넣기…」로 다시 고르세요',
       sequence_path_cp949: '파일 경로에 통특기 문자 집합(CP949)에 없는 글자가 있습니다 — 폴더 · 파일 이름을 바꾼 뒤 고르세요',

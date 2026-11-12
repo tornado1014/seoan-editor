@@ -259,9 +259,9 @@ fn inspect_docx(path: &Path, with_pictures: bool) -> Result<DocxDocument, CoreEr
         let payload = read_part(&mut archive, part, &source_text)?;
         let (pixel_width, pixel_height) = ImageReader::new(Cursor::new(payload.as_slice()))
             .with_guessed_format()
-            .map_err(|_| relationships_error(&source_text))?
+            .map_err(|_| picture_unreadable_error(&source_text))?
             .into_dimensions()
-            .map_err(|_| relationships_error(&source_text))?;
+            .map_err(|_| picture_unreadable_error(&source_text))?;
         let media_name = target.rsplit('/').next().unwrap_or(&target).to_string();
         media.push(DocxMediaAsset {
             relationship_id: relationship.id,
@@ -1406,6 +1406,18 @@ fn package_error(source: &str) -> CoreError {
 fn duplicate_part_error(source: &str) -> CoreError {
     let mut error = CoreError::new(ErrorCode::StructureInvalid, "docx_package", false);
     error.source = safe_source(source);
+    error
+}
+
+/// 그림 크기를 해독하지 못했다(EMF · WMF 등) — 오류 코드 · phase 는 관계 오류와 같고 안내만 덧붙인다.
+fn picture_unreadable_error(source: &str) -> CoreError {
+    let mut error = relationships_error(source);
+    error.message = "이 워드에는 서안이 읽지 못하는 그림(EMF 등)이 있어 HLT 로 만들 수 없습니다. \
+                     그림을 PNG · JPG 로 바꾼 KIPO 포맷 워드로 다시 시도하세요."
+        .to_string();
+    error
+        .details
+        .insert("reason".to_string(), "picture_unreadable".to_string());
     error
 }
 

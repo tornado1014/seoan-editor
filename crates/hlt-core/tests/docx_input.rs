@@ -794,6 +794,16 @@ fn text_only_read_skips_undecodable_pictures_but_hlt_build_still_rejects_them() 
     let error = inspect_docx_path(file.path()).unwrap_err();
     assert_eq!(error.code, ErrorCode::StructureInvalid);
     assert_eq!(error.phase, "docx_relationships");
+    // 화면이 알아볼 수 있게: 읽지 못하는 그림이라는 한국어 안내 + 화면 · 폴더 일괄 표가 고르는 까닭.
+    assert!(
+        error.message.contains("읽지 못하는 그림"),
+        "{}",
+        error.message
+    );
+    assert_eq!(
+        error.details.get("reason").map(String::as_str),
+        Some("picture_unreadable")
+    );
 
     // 그림 파트가 아예 없어도(관계만 남음) 글은 나온다.
     let missing = write_docx(&[
