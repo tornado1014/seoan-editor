@@ -94,8 +94,8 @@ pub use cp949_safe::{
     scan_cp949, scan_cp949_text,
 };
 pub use docx::{
-    DocxDocument, DocxMediaAsset, DocxPackageSummary, DocxPageBreak, inspect_docx_path,
-    load_docx_image_payloads,
+    DocxDocument, DocxMediaAsset, DocxPackageSummary, DocxPageBreak, docx_paragraph_texts,
+    inspect_docx_path, load_docx_image_payloads,
 };
 pub use docx_write::{comparison_table_docx, docx_bytes};
 pub use drawmark::{DrawMark, read_drf, write_drf};

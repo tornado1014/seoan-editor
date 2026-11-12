@@ -155,17 +155,8 @@ fn read_source(path: &Path) -> Result<SourceState, CoreError> {
     })?;
     let (material, pages) = match kind {
         Kind::Xliff => (Material::Segments(hlt_core::read_xliff(path)?), None),
-        Kind::Docx => (
-            Material::Texts(
-                hlt_core::inspect_docx_path(path)?
-                    .document
-                    .paragraphs
-                    .iter()
-                    .map(|p| p.text.clone())
-                    .collect(),
-            ),
-            None,
-        ),
+        // 글만 읽는다 — 「HLT 만들기」의 그림 해독(EMF 등)에 막히지 않게.
+        Kind::Docx => (Material::Texts(hlt_core::docx_paragraph_texts(path)?), None),
         Kind::Pdf => {
             let text = hlt_core::pdf_text(path)?;
             (

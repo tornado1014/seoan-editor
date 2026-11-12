@@ -177,6 +177,21 @@ struct ParagraphDraft {
 }
 
 pub fn inspect_docx_path(path: &Path) -> Result<DocxDocument, CoreError> {
+    inspect_docx(path, true)
+}
+
+/// 원문 창용 — 문단 글만. 그림 관계는 읽지 않고 그림 자리는 비워 둔다
+/// (해독 못 하는 EMF · 없는 미디어 파트 · 낯선 관계로 실패하지 않는다).
+pub fn docx_paragraph_texts(path: &Path) -> Result<Vec<String>, CoreError> {
+    Ok(inspect_docx(path, false)?
+        .document
+        .paragraphs
+        .into_iter()
+        .map(|paragraph| paragraph.text)
+        .collect())
+}
+
+fn inspect_docx(path: &Path, with_pictures: bool) -> Result<DocxDocument, CoreError> {
     let source_text = path.to_string_lossy();
     let metadata =
         fs::metadata(path).map_err(|error| io_error(&error, "docx_read", &source_text))?;
@@ -229,9 +244,13 @@ pub fn inspect_docx_path(path: &Path) -> Result<DocxDocument, CoreError> {
     let media_count = u32::try_from(media_parts.len()).map_err(|_| package_error(&source_text))?;
 
     let main_bytes = read_part(&mut archive, main, &source_text)?;
-    let relationships_bytes = read_part(&mut archive, relationships, &source_text)?;
-    let image_relationships = parse_image_relationships(&relationships_bytes, &source_text)?;
     let mut media = Vec::new();
+    let image_relationships = if with_pictures {
+        let relationships_bytes = read_part(&mut archive, relationships, &source_text)?;
+        parse_image_relationships(&relationships_bytes, &source_text)?
+    } else {
+        Vec::new()
+    };
     for relationship in image_relationships {
         let target = normalize_relationship_target(&relationship.target, &source_text)?;
         let part = parts
@@ -258,7 +277,7 @@ pub fn inspect_docx_path(path: &Path) -> Result<DocxDocument, CoreError> {
     let source = safe_source(&source_text).unwrap_or_default();
     let (document, page_breaks, image_sources) = normalize_word_document(
         &main_bytes,
-        &media,
+        with_pictures.then_some(media.as_slice()),
         source.clone(),
         source_sha256.clone(),
         &source_text,
@@ -330,7 +349,7 @@ pub fn load_docx_image_payloads(
 
 fn normalize_word_document(
     bytes: &[u8],
-    media: &[DocxMediaAsset],
+    media: Option<&[DocxMediaAsset]>,
     source: String,
     source_sha256: String,
     display_source: &str,
@@ -342,10 +361,13 @@ fn normalize_word_document(
     let body = root
         .first_descendant("body")
         .ok_or_else(|| document_error(display_source))?;
-    let media_by_relationship: BTreeMap<_, _> = media
-        .iter()
-        .map(|asset| (asset.relationship_id.as_str(), asset))
-        .collect();
+    let media_by_relationship: Option<BTreeMap<_, _>> = media.map(|media| {
+        media
+            .iter()
+            .map(|asset| (asset.relationship_id.as_str(), asset))
+            .collect()
+    });
+    let media_by_relationship = media_by_relationship.as_ref();
     let mut document = HmlDocument {
         source,
         source_sha256,
@@ -375,7 +397,7 @@ fn normalize_word_document(
                 &mut current_section,
                 &mut page_breaks,
                 &mut image_sources,
-                &media_by_relationship,
+                media_by_relationship,
                 child,
                 body_paragraph_index,
                 display_source,
@@ -394,7 +416,7 @@ fn normalize_word_document(
             append_word_table(
                 &mut document,
                 &mut image_sources,
-                &media_by_relationship,
+                media_by_relationship,
                 child,
                 tail,
                 display_source,
@@ -429,7 +451,7 @@ fn append_word_paragraph(
     current_section: &mut Option<String>,
     page_breaks: &mut Vec<DocxPageBreak>,
     image_sources: &mut Vec<DocxImageSource>,
-    media: &BTreeMap<&str, &DocxMediaAsset>,
+    media: Option<&BTreeMap<&str, &DocxMediaAsset>>,
     paragraph: &WordNode,
     body_paragraph_index: u32,
     source: &str,
@@ -510,7 +532,7 @@ fn append_word_paragraph(
 fn append_word_table(
     document: &mut HmlDocument,
     image_sources: &mut Vec<DocxImageSource>,
-    media: &BTreeMap<&str, &DocxMediaAsset>,
+    media: Option<&BTreeMap<&str, &DocxMediaAsset>>,
     table: &WordNode,
     tail: Option<&WordNode>,
     source: &str,
@@ -878,7 +900,7 @@ fn paragraph_has_page_break(paragraph: &WordNode) -> bool {
 fn materialize_docx_inlines(
     document: &mut HmlDocument,
     image_sources: &mut Vec<DocxImageSource>,
-    media: &BTreeMap<&str, &DocxMediaAsset>,
+    media: Option<&BTreeMap<&str, &DocxMediaAsset>>,
     paragraph_id: &str,
     cell_id: Option<&str>,
     seeds: Vec<DocxInlineSeed>,
@@ -899,6 +921,8 @@ fn materialize_docx_inlines(
                 relationship_id,
                 extent_mm,
             } => {
+                // 글 전용 읽기: 그림 자리는 비운다.
+                let Some(media) = media else { continue };
                 let asset = media
                     .get(relationship_id.as_str())
                     .ok_or_else(|| relationships_error(source))?;

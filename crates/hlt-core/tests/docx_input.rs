@@ -759,3 +759,52 @@ fn word_indents_survive_the_hlt() {
     // 워드의 왼쪽 들여쓰기(w:left · 「들여쓰기 늘리기」)는 문단 전체 여백으로 온다.
     assert_eq!(indent("일반"), (800, 1600));
 }
+
+/// 원문 창은 글만 읽는다 — 해독 못 하는 그림(EMF 등)이나 그림 관계 때문에 실패하지 않는다.
+/// 「HLT 만들기」의 `inspect_docx_path` 는 종전대로 그림을 해독하고 실패하면 거절한다.
+#[test]
+fn text_only_read_skips_undecodable_pictures_but_hlt_build_still_rejects_them() {
+    const DOC: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+ xmlns:v="urn:schemas-microsoft-com:vml"><w:body>
+<w:p><w:r><w:t xml:space="preserve">그림 앞 </w:t></w:r><w:r><w:pict><v:shape><v:imagedata r:id="rId9"/></v:shape></w:pict></w:r><w:r><w:t xml:space="preserve"> 그림 뒤</w:t></w:r></w:p>
+<w:p><w:r><w:t>보통 문단</w:t></w:r></w:p>
+</w:body></w:document>"#;
+    const RELS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.emf"/>
+</Relationships>"#;
+    let file = write_docx(&[
+        ("[Content_Types].xml", b"<Types/>"),
+        ("word/document.xml", DOC.as_bytes()),
+        ("word/_rels/document.xml.rels", RELS.as_bytes()),
+        (
+            "word/media/image1.emf",
+            b"\x01\x00\x00\x00not a decodable picture",
+        ),
+    ]);
+
+    let texts = hlt_core::docx_paragraph_texts(file.path()).unwrap();
+    assert_eq!(
+        texts,
+        vec!["그림 앞  그림 뒤".to_string(), "보통 문단".to_string()]
+    );
+
+    let error = inspect_docx_path(file.path()).unwrap_err();
+    assert_eq!(error.code, ErrorCode::StructureInvalid);
+    assert_eq!(error.phase, "docx_relationships");
+
+    // 그림 파트가 아예 없어도(관계만 남음) 글은 나온다.
+    let missing = write_docx(&[
+        ("[Content_Types].xml", b"<Types/>"),
+        ("word/document.xml", DOC.as_bytes()),
+        ("word/_rels/document.xml.rels", RELS.as_bytes()),
+    ]);
+    assert_eq!(
+        hlt_core::docx_paragraph_texts(missing.path())
+            .unwrap()
+            .len(),
+        2
+    );
+}
