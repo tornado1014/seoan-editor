@@ -51,6 +51,8 @@ const same = (a: PinDto, b: PinDto) =>
 
 export function createSourceSync(o: {
   pane: HTMLElement;
+  /** 원문 문단 mousedown — 입력 칸 포커스를 지키게(기본 동작 막기). */
+  keepFocus?(event: MouseEvent): void;
   caret(): { paragraph: string; offset: number } | null;
   go(paragraph: string, offset: number): void;
   markTarget(range: { paragraph: string; start: number; end: number } | null, grade: 'sentence' | 'paragraph'): void;
@@ -190,6 +192,9 @@ export function createSourceSync(o: {
     const paragraph = target.closest<HTMLElement>('p[data-p]');
     return { paragraph, sentence: target.closest<HTMLElement>('[data-s]'), index: Number(paragraph?.dataset.p) };
   };
+  o.pane.addEventListener('mousedown', (event) => {
+    if (alignment && spot(event).paragraph) o.keepFocus?.(event);
+  });
   o.pane.addEventListener('click', (event) => {
     if (!alignment) return;
     const { paragraph, sentence, index } = spot(event);

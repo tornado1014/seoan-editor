@@ -1027,6 +1027,7 @@ export function mountEditor(root: HTMLElement): void {
         note.textContent = node.note;
         label.append(note);
       }
+      label.addEventListener('mousedown', keepInputFocus);
       label.addEventListener('click', () => {
         if (node.id) goAndFocus(node.id);
         else pageHost(0)?.scrollIntoView();
@@ -1110,6 +1111,9 @@ export function mountEditor(root: HTMLElement): void {
   const PINNED_MIN = 80;
   // 손잡이를 잡아도 입력 칸의 포커스가 빠지지 않게(한글 조합이 끝나지 않게) — 포커스 이동은 mousedown 의 기본 동작이다.
   pinnedGrip.addEventListener('mousedown', (event) => event.preventDefault());
+  pinnedHost.addEventListener('mousedown', (event) => {
+    if ((event.target as HTMLElement).closest('.pinned-body p[data-id]')) keepInputFocus(event);
+  });
   pinnedGrip.addEventListener('pointerdown', (event) => {
     event.preventDefault();
     const startY = event.clientY;
@@ -1194,6 +1198,7 @@ export function mountEditor(root: HTMLElement): void {
   }
   const sourceSync = createSourceSync({
     pane: q<HTMLElement>('.source-body'),
+    keepFocus: keepInputFocus,
     caret: () => caret,
     go: (paragraph, offset) => goAndFocus(paragraph, offset),
     markTarget(range, grade) {
@@ -1402,6 +1407,14 @@ export function mountEditor(root: HTMLElement): void {
     const land = landingOf(view?.paragraphs ?? [], id, offset);
     jumpTo(land.paragraph, land.offset);
     input.focus({ preventScroll: true });
+  }
+  /**
+   * 옆 창 마디 · 문단을 누르는 mousedown: 기본 동작(포커스를 입력 칸 밖으로)을 막는다. 막지 않으면 눌러 가기마다 입력 칸이
+   * blur → 다시 focus 되고, WKWebView 는 이 포커스 왕복 직후 첫 키를 조합 없이 넣을 수 있다(첫 글자 「ㅇㅣ」 쪼개짐).
+   * 쪽 · 고정 창 손잡이 · 점검 동그라미와 같은 방식. 왼쪽 단추만(우클릭 메뉴는 그대로).
+   */
+  function keepInputFocus(event: MouseEvent) {
+    if (event.button === 0) event.preventDefault();
   }
   /** 화면 맨 위에 보이는 문단(그린 쪽의 줄 자리로 · 못 정하면 `null`). */
   function topParagraph(): string | null {

@@ -2798,6 +2798,38 @@ describe('page editing', () => {
     await settle(500);
   });
 
+  test('C: 구조 · 고정 · 원문 창의 mousedown 은 입력 칸 포커스를 빼앗지 않는다 · 조합 중에 이동 뒤처리가 와도 입력 칸 값 · 포커스 그대로', async () => {
+    texts = ['【발명의 설명】', '가나다. 라마.', '【청구범위】', '【청구항 1】', '장치.'];
+    sourceAnswer = xliffSource();
+    settingsAnswer = { ...SETTINGS, zoom: 1, pinned_on: true };
+    const root = await open();
+    await settle(10);
+    q(root, '[data-action="source"]').click();
+    await settle(10);
+    const input = root.querySelector<HTMLTextAreaElement>('.caret-input')!;
+    // mousedown 의 기본 동작(포커스 옮기기)을 막아야 포커스가 한 번도 입력 칸을 떠나지 않는다(쪽 · 손잡이 · 점검 동그라미와 같게).
+    const down = (element: Element) => {
+      const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 });
+      element.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    expect(down(root.querySelector('.tree-label:not(.root)')!), '구조 창').toBe(true);
+    expect(down(root.querySelector('.pinned-body p[data-id="paragraph:1"]')!), '고정 창').toBe(true);
+    expect(down(sourceSpan(root, 1)), '원문 창').toBe(true);
+    // 첫 키의 조합이 시작된 뒤 이동(커서 옮기기 · 다시 그리기)이 와도 입력 칸은 그대로 · 조합이 끝나면 새 자리에 들어간다.
+    input.focus();
+    input.dispatchEvent(new Event('compositionstart'));
+    input.value = 'ㅇ';
+    root.querySelector<HTMLElement>('.pinned-body p[data-id="paragraph:4"]')!.click();
+    await settle(50);
+    expect(input.value).toBe('ㅇ');
+    expect(document.activeElement).toBe(input);
+    input.value = '이';
+    input.dispatchEvent(new Event('compositionend'));
+    await settle(500);
+    expect(last('editor_replace_text')).toEqual(['editor_replace_text', expect.objectContaining({ paragraphId: 'paragraph:4', text: '이장치.' })]);
+  });
+
   test('F-2: 상시 점검 띠는 가운데 열 안쪽에 있다(원문 창 · 툴바 밖) · 열 기준 왼쪽 아래(스타일은 구조 단언 밖 — 보고서에 위치 기술)', async () => {
     const root = await open();
     await settle(10);
