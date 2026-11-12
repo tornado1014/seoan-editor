@@ -56,7 +56,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     };
     let action = |name: &str, text: &str| item(&format!("action:{name}"), text);
     let file = SubmenuBuilder::new(app, "파일")
-        .item(&action("new-tab", "새 탭 (⌘T)")?)
+        .item(&action("new-tab", if cfg!(windows) { "새 창 (⌘T)" } else { "새 탭 (⌘T)" })?)
         .item(&action("new-opinion", "새 의견서")?)
         .item(&action("new-spec", "새 명세서…")?)
         .item(&action("import", "워드/XML로 HLT 만들기…")?)

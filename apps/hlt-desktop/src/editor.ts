@@ -1,7 +1,10 @@
 // 편집 화면(P5): 도구 막대 · 구조 창 · 쪽 화면 · 문단 고치기 창.
 // 쪽은 보일 때 한 쪽씩 받아 그린다. 고치면 문서 전체가 다시 구워지고 보이는 쪽을 다시 받는다.
 import { listen } from '@tauri-apps/api/event';
-import { osKeys } from './keys';
+import { isWindows, osKeys } from './keys';
+
+/** 윈도는 창 탭이 없어 새 창으로 열린다 — 이름도 그렇게. */
+const NEW_TAB = isWindows() ? '새 창' : '새 탭';
 import { claimsStart, createPinnedPane } from './pinned-pane';
 import { installDrop } from './drop';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -118,7 +121,6 @@ import {
   type AmendmentMarksDto,
   type CitationIssueDto,
   type SubmitIssueDto,
-  type LiveIssueDto,
   type SourceDto,
   type AlignmentDto,
   type ClaimBasisDto,
@@ -185,7 +187,7 @@ export function toCsv(rows: string[][]): string {
 /** 단축키 모음(도움말). */
 const SHORTCUTS: [string, string][] = [
   ['⌘O', '열기'],
-  ['⌘T · ⌘N', '새 탭'],
+  ['⌘T · ⌘N', NEW_TAB],
   ['⌘S · ⇧⌘S', '저장 · 다른 이름으로 저장'],
   ['⌘W', '탭 닫기'],
   ['⌘Z · ⇧⌘Z', '되돌리기 · 다시 하기'],
@@ -314,7 +316,7 @@ export function mountEditor(root: HTMLElement): void {
       <div class="editor-toolbar" role="toolbar">
         <div class="tb-group" role="group" aria-label="파일">
           <button type="button" data-action="open" title="열기 (⌘O) — HLT · 제출파일(.fin · .hlz)을 엽니다 · 최근 문서는 메뉴 「파일」">${icon('open')}<span>열기</span></button>
-          <button type="button" data-action="new-menu" title="새로 만들기 — 새 의견서 · 워드/XML/HML로 HLT 만들기 · 새 탭(⌘T)">${icon('fileNew')}<span>새로 만들기 ▾</span></button>
+          <button type="button" data-action="new-menu" title="새로 만들기 — 새 의견서 · 워드/XML/HML로 HLT 만들기 · ${NEW_TAB}(⌘T)">${icon('fileNew')}<span>새로 만들기 ▾</span></button>
           <button type="button" data-action="save" disabled title="저장 — 연 HLT 에 덮어쓰기 (⌘S)">${icon('save')}<span>저장</span></button>
           <button type="button" data-action="save-as" disabled title="다른 이름으로 저장 (⇧⌘S)">${icon('saveAs')}</button>
           <button type="button" data-action="close-document" disabled title="문서 닫기 — 저장하지 않은 고침이 있으면 묻습니다">${icon('close')}<span>닫기</span></button>
@@ -323,7 +325,7 @@ export function mountEditor(root: HTMLElement): void {
           <button type="button" data-action="new-opinion" title="새 의견서 — 빈 의견서(【의견내용】)를 새로 만듭니다">${icon('opinion')}<span>새 의견서</span></button>
           <button type="button" data-action="new-spec" title="새 명세서 — 특허 · 실용신안 · PCT 국내진입 빈 명세서(통특기 새문서와 같은 꼴)">${icon('fileNew')}<span>새 명세서</span></button>
           <button type="button" data-action="import" title="워드/XML로 HLT 만들기 — 워드 · KIPO XML · HML 을 불러와 새 HLT 로 만듭니다">${icon('import')}<span>워드/XML로 HLT 만들기</span></button>
-          <button type="button" data-action="new-tab" title="새 탭 (⌘T · ⌘N)">${icon('tab')}<span>새 탭</span></button>
+          <button type="button" data-action="new-tab" title="${NEW_TAB} (⌘T · ⌘N)">${icon('tab')}<span>${NEW_TAB}</span></button>
           <button type="button" data-action="open-read-only" title="읽기 전용으로 열기 — 원본을 실수로 고치지 않게(사본은 「다른 이름으로 저장」)"><span>읽기 전용으로 열기</span></button>
           <button type="button" data-action="history" disabled title="이전 판 — 저장할 때 덮인 판을 골라 새 탭에서 엽니다(최근 판 · 지난 날수는 설정)"><span>이전 판</span></button>
           <button type="button" data-action="settings" title="설정 (⌘,) — 자동 저장 간격 · 이전 판 보관 · 문서 배율 · 문단부호 기본"><span>설정</span></button>
@@ -628,7 +630,6 @@ export function mountEditor(root: HTMLElement): void {
     drawNumbers(host, page);
     drawMarks(host, page);
     drawAmendMarks(host, page);
-    drawLive(host, page);
     drawTargetMark(host);
     paint();
     markCurrent();
@@ -677,22 +678,13 @@ export function mountEditor(root: HTMLElement): void {
     }
   }
 
-  /** 상시 점검: 쪽 왼쪽 여백의 동그라미(오류 · 경고) + 위 상태 띠 건수. 설정 「상시 점검 표시」가 끈다(`liveWanted`). */
+  /** 상시 점검: 문서 칸 왼쪽 아래 띠의 건수(오류 · 경고 · 누르면 점검 목록). 설정 「상시 점검 표시」가 끈다(`liveWanted`). */
   let liveWanted = true;
-  let liveMarks = new Map<string, LiveIssueDto[]>();
   const liveStrip = q<HTMLButtonElement>('.live-strip');
   const live = createLiveChecks({
     fetch: () => (root.isConnected ? editorLiveChecks() : Promise.reject(new Error('닫힌 편집기'))),
     revision: () => view?.revision ?? 0,
-    draw(byParagraph) {
-      liveMarks = byParagraph;
-      for (const [index, page] of pages) {
-        const host = pageHost(index);
-        if (!host || host.dataset.drawn !== '1') continue;
-        host.querySelectorAll('.nk-live').forEach((mark) => mark.remove());
-        drawLive(host, page);
-      }
-    },
+    draw() {}, // 여백 표시는 뺐다 — 띠의 건수만 보인다
     strip(errors, warnings) {
       liveStrip.hidden = false;
       liveStrip.textContent = errors + warnings === 0 ? '점검 통과' : `점검 오류 ${errors} · 경고 ${warnings}`;
@@ -703,62 +695,12 @@ export function mountEditor(root: HTMLElement): void {
   function syncLive(opening: boolean) {
     if (!liveWanted || view?.live_checks === false) {
       live.stop();
-      liveMarks.clear();
       liveStrip.hidden = true;
-      pagesRoot.querySelectorAll('.nk-live').forEach((mark) => mark.remove());
     } else if (opening) {
       live.stop(); // 옛 문서의 늦은 점검 결과가 새 문서 위에 그려지지 않게(같은 탭 문서 교체)
-      liveMarks.clear();
       liveStrip.hidden = true;
       void live.now();
     } else live.touch();
-  }
-  function drawLive(host: HTMLElement, page: PlannedPageDto) {
-    if (liveMarks.size === 0) return;
-    const body = page.lines.filter((line) => line.paragraph && !line.cell && line.stops?.length);
-    const margin = body.length ? Math.min(...body.map((line) => line.stops![0])) : 60;
-    // 표 칸 문단은 표(칸 id 의 둘째 마디) 단위로 묶어 그 쪽의 표 첫 줄 옆에.
-    const spots = new Map<string, { top: number; issues: LiveIssueDto[] }>();
-    const put = (key: string, top: number, issues: LiveIssueDto[]) => {
-      const spot = spots.get(key);
-      if (!spot) spots.set(key, { top, issues: [...issues] });
-      else {
-        spot.top = Math.min(spot.top, top);
-        spot.issues.push(...issues);
-      }
-    };
-    for (const line of page.lines) {
-      if (line.cell) {
-        const table = line.cell.split(':')[1];
-        const own = [...liveMarks].filter(([id]) => isCell(id) && id.split(':')[1] === table).flatMap(([, list]) => list);
-        if (own.length) put(`table:${table}`, line.top, spots.has(`table:${table}`) ? [] : own);
-      } else if (line.paragraph && line.start === 0 && liveMarks.has(line.paragraph)) put(line.paragraph, line.top, liveMarks.get(line.paragraph)!);
-    }
-    for (const { top, issues } of spots.values()) {
-      issues.sort((a, b) => Number(b.severity === 'error') - Number(a.severity === 'error'));
-      const mark = document.createElement('button');
-      mark.type = 'button';
-      mark.className = `nk-live ${issues[0].severity}`;
-      mark.title = issues.map((issue) => `${issue.code ?? '점검'} · ${issue.detail}`).join('\n');
-      mark.style.left = `${Math.max(2, margin - 56) * scale}px`;
-      mark.style.top = `${top * scale}px`;
-      mark.style.width = mark.style.height = `${14 * scale}px`;
-      // 식별번호([0001] 8pt 바탕체 ≈ 24~28pt 폭)는 margin-31 ~ margin-3 에 오른쪽 맞춤 — 동그라미는 margin-56 ~ margin-42 로 겹치지 않는다.
-      // 쪽을 누르면 커서가 놓인다 — 이 동그라미는 커서를 건드리지 않고 점검 창만 연다.
-      mark.addEventListener('mousedown', (event) => {
-        event.stopPropagation();
-        event.preventDefault(); // 포커스를 입력 칸에 둔다(한글 조합이 끝나지 않게)
-      });
-      mark.addEventListener('contextmenu', (event) => {
-        event.preventDefault();
-        event.stopPropagation(); // 쪽 메뉴를 띄우지 않는다
-      });
-      mark.addEventListener('click', (event) => {
-        event.stopPropagation();
-        void openChecks(issues[0].paragraph_id);
-      });
-      host.append(mark);
-    }
   }
   /** 점검 창을 보기만 하는 꼴로(제출파일을 만들지 않는다) · 그 항목에 표시. */
   async function openChecks(focusId: string | null) {
@@ -972,7 +914,6 @@ export function mountEditor(root: HTMLElement): void {
     resetAmendBase();
     hidePinned();
     live.stop();
-    liveMarks.clear();
     liveStrip.hidden = true;
     images.clear();
     caret = anchor = null;
@@ -1413,7 +1354,7 @@ export function mountEditor(root: HTMLElement): void {
   /**
    * 옆 창 마디 · 문단을 누르는 mousedown: 기본 동작(포커스를 입력 칸 밖으로)을 막는다. 막지 않으면 눌러 가기마다 입력 칸이
    * blur → 다시 focus 되고, WKWebView 는 이 포커스 왕복 직후 첫 키를 조합 없이 넣을 수 있다(첫 글자 「ㅇㅣ」 쪼개짐).
-   * 쪽 · 고정 창 손잡이 · 점검 동그라미와 같은 방식. 왼쪽 단추만(우클릭 메뉴는 그대로).
+   * 쪽 · 고정 창 손잡이와 같은 방식. 왼쪽 단추만(우클릭 메뉴는 그대로).
    */
   function keepInputFocus(event: MouseEvent) {
     if (event.button === 0) event.preventDefault();
@@ -1487,7 +1428,6 @@ export function mountEditor(root: HTMLElement): void {
       drawNumbers(host, page);
       drawMarks(host, page);
       drawAmendMarks(host, page);
-      drawLive(host, page);
       drawTargetMark(host);
     }
   }
@@ -3306,7 +3246,7 @@ export function mountEditor(root: HTMLElement): void {
   document.addEventListener('keydown', (event) => {
     if ((event.metaKey || event.ctrlKey) && ['t', 'n'].includes(event.key.toLowerCase()) && !event.shiftKey) {
       event.preventDefault();
-      void editorNewTab().catch((error) => fail('새 탭', error));
+      void editorNewTab().catch((error) => fail(NEW_TAB, error));
       return;
     }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's' && view) {
@@ -4241,7 +4181,7 @@ export function mountEditor(root: HTMLElement): void {
         break;
       }
       case 'new-tab':
-        await editorNewTab().catch((error) => fail('새 탭', error));
+        await editorNewTab().catch((error) => fail(NEW_TAB, error));
         break;
       case 'open-read-only': {
         try {
@@ -4336,7 +4276,7 @@ export function mountEditor(root: HTMLElement): void {
             { text: '새 의견서', action: () => q<HTMLButtonElement>('[data-action="new-opinion"]').click() },
             { text: '새 명세서…', action: () => q<HTMLButtonElement>('[data-action="new-spec"]').click() },
             { text: '워드/XML로 HLT 만들기…', action: () => q<HTMLButtonElement>('[data-action="import"]').click() },
-            { text: '새 탭', accelerator: 'CmdOrCtrl+T', action: () => q<HTMLButtonElement>('[data-action="new-tab"]').click() },
+            { text: NEW_TAB, accelerator: 'CmdOrCtrl+T', action: () => q<HTMLButtonElement>('[data-action="new-tab"]').click() },
           ],
         });
         await menu.popup();

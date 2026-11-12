@@ -1719,19 +1719,16 @@ describe('page editing', () => {
   const strip = (root: HTMLElement) => root.querySelector<HTMLButtonElement>('.live-strip')!;
   const checks = () => calls.filter(([c]) => c === 'editor_live_checks').length;
 
-  test('상시 점검: 오류가 있는 문서를 열면 띠에 건수 · 여백 동그라미 · 고쳐서 없애면 1초 뒤 0', async () => {
+  test('상시 점검: 오류가 있는 문서를 열면 띠에 건수(여백 표시는 없다) · 고쳐서 없애면 1초 뒤 0', async () => {
     liveIssues = [issueOf('error', 'paragraph:0'), issueOf('warning', 'paragraph:1'), issueOf('warning', null)];
     const root = await open();
     await settle(10);
     expect(strip(root).hidden).toBe(false);
     expect(strip(root).textContent).toBe('점검 오류 1 · 경고 2');
-    const marks = [...root.querySelectorAll<HTMLElement>('.nk-live')];
-    expect(marks.map((mark) => mark.className)).toEqual(['nk-live error', 'nk-live warning']);
-    expect(marks[0].title).toBe('K-1 · 이유');
-    // 동그라미를 눌러도 커서가 놓이지 않고 · 제출파일은 만들지 않는다(점검 창만 · 「그래도 만들기」 없음).
+    expect(root.querySelectorAll('.nk-live').length, '여백 동그라미는 그리지 않는다').toBe(0);
+    // 띠를 누르면 점검 창만 — 커서가 놓이지 않고 · 제출파일은 만들지 않는다(「그래도 만들기」 없음).
     submitAnswer = [{ kind: 'spacing', paragraph_id: 'paragraph:0', detail: '공백' }];
-    marks[0].dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
-    marks[0].click();
+    strip(root).click();
     await settle(10);
     expect(root.querySelector('.nk-caret'), '커서가 놓이지 않았다').toBeNull();
     expect(root.querySelector('.submit-ask button[type="submit"]')).toBeNull();
@@ -1755,7 +1752,7 @@ describe('page editing', () => {
     settingsAnswer = { ...SETTINGS, zoom: 1, live_checks: true };
     const root = await open();
     await settle(10);
-    expect(root.querySelectorAll('.nk-live').length).toBe(1);
+    expect(strip(root).hidden).toBe(false);
     q(root, '[data-action="tools"]').click();
     await settle(10);
     const item = menus.at(-1)!.find((entry) => entry.text?.endsWith('상시 점검 표시'))!;
@@ -2825,7 +2822,7 @@ describe('page editing', () => {
     q(root, '[data-action="source"]').click();
     await settle(10);
     const input = root.querySelector<HTMLTextAreaElement>('.caret-input')!;
-    // mousedown 의 기본 동작(포커스 옮기기)을 막아야 포커스가 한 번도 입력 칸을 떠나지 않는다(쪽 · 손잡이 · 점검 동그라미와 같게).
+    // mousedown 의 기본 동작(포커스 옮기기)을 막아야 포커스가 한 번도 입력 칸을 떠나지 않는다(쪽 · 손잡이와 같게).
     const down = (element: Element) => {
       const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 });
       element.dispatchEvent(event);
@@ -2968,7 +2965,7 @@ describe('page editing', () => {
     expect(tourSource).not.toContain('「연 뒤 고친 것」 기준)');
   });
 
-  test('F-8: 고정 창 높이 손잡이와 점검 동그라미는 눌러도 입력 칸 포커스를 빼앗지 않는다 · 동그라미 우클릭은 쪽 메뉴를 안 띄운다', async () => {
+  test('F-8: 고정 창 높이 손잡이는 눌러도 입력 칸 포커스를 빼앗지 않는다', async () => {
     texts = ['【청구범위】', '가나다'];
     settingsAnswer = { ...SETTINGS, zoom: 1, pinned_on: true };
     liveIssues = [issueOf('error', 'paragraph:1')];
@@ -2986,14 +2983,6 @@ describe('page editing', () => {
     const grip = root.querySelector('.pinned-grip')!;
     expect(fire(grip, 'mousedown').defaultPrevented, '손잡이 mousedown').toBe(true);
     expect(fire(grip, 'pointerdown').defaultPrevented, '손잡이 pointerdown').toBe(true);
-    const circle = root.querySelector('.nk-live')!;
-    expect(circle).not.toBeNull();
-    expect(fire(circle, 'mousedown').defaultPrevented, '동그라미 mousedown').toBe(true);
-    let reached = false;
-    root.addEventListener('contextmenu', () => (reached = true));
-    const menu = fire(circle, 'contextmenu');
-    expect(menu.defaultPrevented).toBe(true);
-    expect(reached, '쪽 메뉴 쪽으로 번지지 않는다').toBe(false);
     expect(document.activeElement).toBe(input);
     await settle(500);
   });

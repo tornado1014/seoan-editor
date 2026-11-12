@@ -484,10 +484,6 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 .editor-source.drop-source { background: var(--accent-soft); }
 
 /* 상시 점검: 쪽 왼쪽 여백 동그라미(배치에 끼지 않는 절대 위치) + 상태 띠(가운데 열 안쪽 왼쪽 아래 — 배율 상자는 같은 열 오른쪽 아래, 원문 창은 다른 열이라 서로 안 덮는다) */
-.nk-live { position: absolute; padding: 0; border: 0; border-radius: 50%; cursor: pointer; opacity: .85; }
-.nk-live:hover { opacity: 1; }
-.nk-live.error { background: var(--error); }
-.nk-live.warning { background: var(--warn-ink); }
 .live-strip { position: absolute; left: 1rem; bottom: 14px; z-index: 6; padding: .3rem .75rem; border: 1px solid var(--line, currentColor); border-radius: 999px; background: color-mix(in srgb, var(--surface) 90%, transparent); box-shadow: var(--lift-1); font-size: 12px; cursor: pointer; color: var(--muted); }
 .live-strip.has-error { color: var(--error); }
 .live-strip.has-warning { color: var(--warn-ink); }
