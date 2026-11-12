@@ -1113,7 +1113,8 @@ describe('page editing', () => {
     label('청구항 2').click();
     type(root, 'X');
     await settle(500);
-    expect(last('editor_replace_text')).toEqual(['editor_replace_text', expect.objectContaining({ paragraphId: 'paragraph:5' })]);
+    // 표제를 누르면 표제 뒤 첫 본문 문단 처음(표제 글 앞에 들어가지 않는다).
+    expect(last('editor_replace_text')).toEqual(['editor_replace_text', expect.objectContaining({ paragraphId: 'paragraph:6', text: 'X라마' })]);
     // 화면 맨 위 = 넷째 줄(【청구항 1】 · 줄 top = 100 + 20 × 3).
     const pagesRoot = root.querySelector<HTMLElement>('.editor-pages')!;
     pagesRoot.getBoundingClientRect = () => ({ top: 0, bottom: 800 }) as DOMRect;
@@ -1139,7 +1140,7 @@ describe('page editing', () => {
     row('청구항 3').querySelector<HTMLButtonElement>('.tree-label')!.click();
     type(root, 'X');
     await settle(500);
-    expect(last('editor_replace_text')).toEqual(['editor_replace_text', expect.objectContaining({ paragraphId: 'paragraph:5' })]);
+    expect(last('editor_replace_text')).toEqual(['editor_replace_text', expect.objectContaining({ paragraphId: 'paragraph:6', text: 'X다' })]);
   });
 
   test('자동 저장: 판이 바뀐 뒤 2분 손을 멈추면 한 번 · 그 사이 고치면 다시 센다', async () => {
@@ -1864,6 +1865,17 @@ describe('page editing', () => {
     release();
     await settle(10);
     expect(pane.hidden).toBe(true);
+  });
+
+  test('고정 창: 표제 문단을 누르고 치면 표제 뒤 첫 본문 문단 처음에 들어간다', async () => {
+    texts = ['【청구범위】', '【청구항 1】', '가나다'];
+    settingsAnswer = { ...SETTINGS, zoom: 1, pinned_on: true };
+    const root = await open();
+    await settle(10);
+    root.querySelector<HTMLElement>('.pinned-body p[data-id="paragraph:1"]')!.click();
+    type(root, 'X');
+    await settle(500);
+    expect(last('editor_replace_text')).toEqual(['editor_replace_text', expect.objectContaining({ paragraphId: 'paragraph:2', text: 'X가나다' })]);
   });
 
   test('고정 창: 설정 pinned_on 이 참이면 문서를 열 때 켜진다', async () => {

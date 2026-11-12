@@ -95,6 +95,23 @@ export interface OutlineNode {
   note?: string;
 }
 
+/**
+ * 옆 창(구조 · 고정 · 원문)에서 눌러 갈 커서 자리. 절 표제(【…】)를 누르면 그 뒤 첫 본문 문단 처음 —
+ * 다음 문단이 없거나 또 표제 · 표/그림 문단이면 표제 끝. 본문 문단은 그대로.
+ */
+export function landingOf(
+  paragraphs: { id: string; text: string; has_objects?: boolean }[],
+  id: string,
+  offset: number,
+): { paragraph: string; offset: number } {
+  const at = paragraphs.findIndex((paragraph) => paragraph.id === id);
+  const heading = (text: string) => /^\s*【[^】]+】\s*$/.test(text);
+  if (at < 0 || !heading(paragraphs[at].text)) return { paragraph: id, offset };
+  const next = paragraphs[at + 1];
+  if (next && !heading(next.text) && !next.has_objects) return { paragraph: next.id, offset: 0 };
+  return { paragraph: id, offset: Array.from(paragraphs[at].text).length };
+}
+
 /** 큰 절(뿌리 바로 아래). */
 const TOP = new Set(['발명의 설명', '청구범위', '특허청구범위', '요약서', '도면']);
 /** 둘째 절 아래 셋째 절: 【발명의 내용】 · 【선행기술문헌】 의 아래 칸. */

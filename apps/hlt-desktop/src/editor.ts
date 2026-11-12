@@ -128,7 +128,7 @@ import {
   type ReviewOutcomeDto,
   type ReviewReportDto,
 } from './contracts';
-import { documentStats, htmlRuns, nestClaims, outlineTree, repeatedSentences, renderPage, richParagraph, sectionOf, selectOffsets, selectionOffsets } from './editor-view';
+import { documentStats, htmlRuns, landingOf, nestClaims, outlineTree, repeatedSentences, renderPage, richParagraph, sectionOf, selectOffsets, selectionOffsets } from './editor-view';
 import type { OutlineNode } from './editor-view';
 import { openHelp as openTourList, runTour, TOURS } from './tour';
 import {
@@ -1396,9 +1396,11 @@ export function mountEditor(root: HTMLElement): void {
     revealBlock = 'center';
     place({ paragraph: id, offset }, false);
   }
-  /** 옆 창(구조 · 고정 · 원문)에서 눌러 커서를 옮길 때: 입력 포커스를 숨은 입력 칸으로 돌려 바로 이어 칠 수 있게(쪽을 누를 때의 mousedown 처럼). */
+  /** 옆 창(구조 · 고정 · 원문)에서 눌러 커서를 옮길 때(셋 다 이 관문): 표제를 누르면 표제 뒤 첫 본문 문단으로(`landingOf`) ·
+   *  입력 포커스를 숨은 입력 칸으로 돌려 바로 이어 칠 수 있게(쪽을 누를 때의 mousedown 처럼). */
   function goAndFocus(id: string, offset = 0) {
-    jumpTo(id, offset);
+    const land = landingOf(view?.paragraphs ?? [], id, offset);
+    jumpTo(land.paragraph, land.offset);
     input.focus({ preventScroll: true });
   }
   /** 화면 맨 위에 보이는 문단(그린 쪽의 줄 자리로 · 못 정하면 `null`). */

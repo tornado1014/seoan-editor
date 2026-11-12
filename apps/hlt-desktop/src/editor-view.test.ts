@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 
-import { htmlRuns, outlineTree, renderPage, richParagraph, selectOffsets, selectionOffsets, repeatedSentences, documentStats } from './editor-view';
+import { htmlRuns, landingOf, outlineTree, renderPage, richParagraph, selectOffsets, selectionOffsets, repeatedSentences, documentStats } from './editor-view';
 import type { OutlineNode } from './editor-view';
 
 describe('renderPage', () => {
@@ -225,5 +225,28 @@ describe('htmlRuns', () => {
   it('returns null when nothing is formatted (plain paste path)', () => {
     expect(htmlRuns('<p>그냥 글</p><p>둘째 줄</p>')).toBeNull();
     expect(htmlRuns('<p><b> </b></p>')).toBeNull();
+  });
+});
+
+describe('landingOf — 옆 창에서 눌러 갈 때 커서 자리', () => {
+  const doc = [
+    { id: 'h1', text: '【청구항 1】' },
+    { id: 'b1', text: '장치.' },
+    { id: 'h2', text: '【청구항 2】' },
+    { id: 'h3', text: '【도 1】' },
+    { id: 'f1', text: '', has_objects: true },
+    { id: 'last', text: ' 【요약서】 ' },
+  ];
+  it('표제를 누르면 다음 본문 문단 처음', () => {
+    expect(landingOf(doc, 'h1', 0)).toEqual({ paragraph: 'b1', offset: 0 });
+  });
+  it('본문 없이 다음이 표제 · 그림 문단 · 문서 끝이면 표제 끝', () => {
+    expect(landingOf(doc, 'h2', 0)).toEqual({ paragraph: 'h2', offset: 7 });
+    expect(landingOf(doc, 'h3', 0)).toEqual({ paragraph: 'h3', offset: 5 });
+    expect(landingOf(doc, 'last', 0)).toEqual({ paragraph: 'last', offset: 7 });
+  });
+  it('본문 문단은 그대로', () => {
+    expect(landingOf(doc, 'b1', 2)).toEqual({ paragraph: 'b1', offset: 2 });
+    expect(landingOf(doc, 'nope', 0)).toEqual({ paragraph: 'nope', offset: 0 });
   });
 });
