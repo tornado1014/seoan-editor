@@ -1062,11 +1062,13 @@ export function mountEditor(root: HTMLElement): void {
     renderOutline(next);
   }
 
-  /** 개요 마디(문서 차례) — 화면 맨 위 문단이 든 절을 강조한다. */
+  /** 개요 마디(문서 차례) — 커서가 보이면 커서가 든 절을, 안 보이면 화면 맨 위 문단이 든 절을 강조한다
+   *  (눌러 간 마디는 커서를 화면 가운데에 두므로, 맨 위 문단으로만 고르면 앞 절이 강조된다). */
   let outlineMarks: { index: number; label: HTMLElement }[] = [];
   function markCurrent() {
-    const id = topParagraph();
-    const at = id === null ? -1 : view?.paragraphs.findIndex((paragraph) => paragraph.id === id) ?? -1;
+    const indexOf = (id: string | null | undefined) => (id ? view?.paragraphs.findIndex((paragraph) => paragraph.id === id) ?? -1 : -1);
+    const atCaret = caretVisible() ? indexOf(caret?.paragraph) : -1;
+    const at = atCaret >= 0 ? atCaret : indexOf(topParagraph());
     const current = at < 0 ? undefined : outlineMarks.filter((mark) => mark.index <= at).pop();
     for (const mark of outlineMarks) {
       const on = mark === current;
@@ -1444,6 +1446,7 @@ export function mountEditor(root: HTMLElement): void {
   /** 커서 · 고른 구간 · 조합 중인 글을 다시 그린다. */
   function paint() {
     paintCaret();
+    markCurrent(); // 구조 창 강조도 커서를 따라온다
     if (sourceSync.shown) sourceSync.follow(); // 커서가 어디로 가든 원문 창이 따라온다
   }
   function paintCaret() {

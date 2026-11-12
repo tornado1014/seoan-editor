@@ -1105,7 +1105,7 @@ describe('page editing', () => {
     expect(root.querySelector('.go-ask')).toBeNull();
   });
 
-  test('개요: 마디를 누르면 그 문단에 커서 · 화면 맨 위 문단이 든 절이 강조된다', async () => {
+  test('개요: 마디를 누르면 그 문단에 커서 · 커서가 보이면 커서의 절, 안 보이면 화면 맨 위 문단의 절이 강조된다', async () => {
     texts = ['【발명의 설명】', '가나', '【청구범위】', '【청구항 1】', '가나', '【청구항 2】', '라마'];
     const root = await open();
     const label = (name: string) =>
@@ -1119,6 +1119,12 @@ describe('page editing', () => {
     const pagesRoot = root.querySelector<HTMLElement>('.editor-pages')!;
     pagesRoot.getBoundingClientRect = () => ({ top: 0, bottom: 800 }) as DOMRect;
     root.querySelector<HTMLElement>('.nk-page')!.getBoundingClientRect = () => ({ top: -160 * 1.3, bottom: 900 }) as DOMRect;
+    pagesRoot.dispatchEvent(new Event('scroll'));
+    await settle(50);
+    // 커서(【청구항 2】 아래 문단)가 화면에 보인다 — 맨 위 문단의 절(청구항 1)이 아니라 눌러 간 절.
+    expect([...root.querySelectorAll('.tree-label.current')].map((each) => each.textContent)).toEqual(['청구항 2']);
+    // 커서가 화면 아래로 벗어나면 맨 위 문단이 든 절.
+    pagesRoot.getBoundingClientRect = () => ({ top: 0, bottom: 50 }) as DOMRect;
     pagesRoot.dispatchEvent(new Event('scroll'));
     await settle(50);
     expect([...root.querySelectorAll('.tree-label.current')].map((each) => each.textContent)).toEqual(['청구항 1']);
