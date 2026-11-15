@@ -3628,9 +3628,10 @@ fn set_text_keeping_formats(paragraph: &mut crate::HmlParagraph, text: &str) {
 
 /// 그림을 흑백 2색으로(통특기 「붙이기」 — 컬러 · 회색조 그림도 흑백이 된다 · 매뉴얼 4.7.2): 밝기 128 문턱 → 0/255 회색조 PNG.
 pub fn monochrome_png(bytes: &[u8]) -> Result<Vec<u8>, CoreError> {
-    let mut luma = image::load_from_memory(bytes)
-        .map_err(|_| editor_error("figure_image"))?
-        .to_luma8();
+    let mut luma = crate::generate_images::flatten_on_white(
+        image::load_from_memory(bytes).map_err(|_| editor_error("figure_image"))?,
+    )
+    .to_luma8();
     for pixel in luma.pixels_mut() {
         pixel.0[0] = if pixel.0[0] < 128 { 0 } else { 255 };
     }

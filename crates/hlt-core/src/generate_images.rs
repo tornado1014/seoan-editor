@@ -162,7 +162,9 @@ pub fn plan_hlt_images(
         let payload = payload_map
             .get(image.id.as_str())
             .ok_or_else(|| image_error("missing_payload"))?;
-        let decoded = image::load_from_memory(payload).map_err(|_| image_error("decode"))?;
+        let decoded = flatten_on_white(
+            image::load_from_memory(payload).map_err(|_| image_error("decode"))?,
+        );
         // 통특기는 원본의 색 모드를 보존한다 (PCT 저장본 그레이스케일, 옛 저장본 RGB).
         let gray = matches!(
             decoded.color(),
@@ -224,6 +226,35 @@ pub fn plan_hlt_images(
         object_count,
         images: objects,
     })
+}
+
+/// 투명도가 있는 그림을 흰 바탕에 합성한다(없으면 그대로).
+///
+/// `to_rgb8` · `to_luma8` 는 알파를 버리고 색값만 남긴다. 투명 픽셀의 색값은 흔히 검정(0,0,0)이라
+/// 워드에서는 흰 바탕으로 보이던 그림 가장자리가 검은 선이 된다. 회색조(La)는 회색조(L8)로 남긴다.
+pub(crate) fn flatten_on_white(image: image::DynamicImage) -> image::DynamicImage {
+    if !image.color().has_alpha() {
+        return image;
+    }
+    let gray = matches!(
+        image.color(),
+        image::ColorType::La8 | image::ColorType::La16
+    );
+    let rgba = image.to_rgba8();
+    let mut rgb = image::RgbImage::new(rgba.width(), rgba.height());
+    for (src, dst) in rgba.pixels().zip(rgb.pixels_mut()) {
+        let alpha = u32::from(src.0[3]);
+        for channel in 0..3 {
+            let value = u32::from(src.0[channel]) * alpha + 255 * (255 - alpha);
+            dst.0[channel] = ((value + 127) / 255) as u8;
+        }
+    }
+    let flat = image::DynamicImage::ImageRgb8(rgb);
+    if gray {
+        image::DynamicImage::ImageLuma8(flat.to_luma8())
+    } else {
+        flat
+    }
 }
 
 pub fn build_rgb_tiff(width: u32, height: u32, pixels: &[u8]) -> Result<Vec<u8>, CoreError> {
@@ -372,4 +403,34 @@ fn image_error(reason: &str) -> CoreError {
     let mut error = CoreError::new(ErrorCode::StructureInvalid, "generate_images", false);
     error.details.insert("reason".into(), reason.into());
     error
+}
+
+#[cfg(test)]
+mod tests {
+    use super::flatten_on_white;
+
+    #[test]
+    fn transparent_edge_becomes_white_not_black() {
+        // 맨 아래 줄만 완전 투명(색값 검정) — 흔한 SVG 래스터 결과
+        let mut rgba = image::RgbaImage::from_pixel(4, 3, image::Rgba([255, 255, 255, 255]));
+        rgba.put_pixel(1, 1, image::Rgba([0, 0, 0, 255]));
+        for x in 0..4 {
+            rgba.put_pixel(x, 2, image::Rgba([0, 0, 0, 0]));
+        }
+        let flat = flatten_on_white(image::DynamicImage::ImageRgba8(rgba));
+        assert_eq!(flat.color(), image::ColorType::Rgb8);
+        let rgb = flat.to_rgb8();
+        assert!((0..4).all(|x| rgb.get_pixel(x, 2).0 == [255, 255, 255]));
+        assert_eq!(rgb.get_pixel(1, 1).0, [0, 0, 0], "불투명한 선은 그대로");
+    }
+
+    #[test]
+    fn gray_with_alpha_stays_gray_and_opaque_is_untouched() {
+        let la = image::GrayAlphaImage::from_pixel(2, 1, image::LumaA([0, 0]));
+        let flat = flatten_on_white(image::DynamicImage::ImageLumaA8(la));
+        assert_eq!(flat.color(), image::ColorType::L8);
+        assert_eq!(flat.to_luma8().get_pixel(0, 0).0, [255]);
+        let rgb = image::DynamicImage::ImageRgb8(image::RgbImage::new(1, 1));
+        assert_eq!(flatten_on_white(rgb.clone()), rgb);
+    }
 }
