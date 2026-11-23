@@ -6,6 +6,27 @@ pub fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+/// 저장소 밖 실물 자료(`work/`, `fixtures/` 아래 로컬 전용 파일)가 다 있는지 본다.
+/// 하나라도 없으면 그 사실을 stderr 에 남기고 false 를 돌려 테스트가 건너뛰게 한다.
+/// 새로 받은 저장소와 CI 에서는 합성 자료 테스트만 돈다.
+/// ⛔ 실물 자료가 있는 작업 기계에서는 `SEOAN_REQUIRE_LOCAL_FIXTURES=1` 로 돌린다.
+/// 그러면 건너뛰지 않고 붉게 실패하므로 자료가 빠져도 조용히 넘어가지 않는다.
+pub fn has_local_files(relatives: &[&str]) -> bool {
+    let missing: Vec<_> = relatives
+        .iter()
+        .map(|relative| repo_root().join(relative))
+        .filter(|path| !path.exists())
+        .collect();
+    if missing.is_empty() {
+        return true;
+    }
+    if std::env::var_os("SEOAN_REQUIRE_LOCAL_FIXTURES").is_some_and(|value| value == "1") {
+        panic!("로컬 실물 자료가 없다(저장소 밖 자료): {missing:?}");
+    }
+    eprintln!("건너뜀 — 로컬 실물 자료가 없다(저장소 밖 자료): {missing:?}");
+    false
+}
+
 pub fn pct_table_fixture() -> tempfile::NamedTempFile {
     let encoded = include_str!("../../../../fixtures/phase2/pct_table_probe.HLT.hex");
     let digits: Vec<u8> = encoded

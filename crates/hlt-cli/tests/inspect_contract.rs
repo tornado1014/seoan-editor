@@ -69,6 +69,9 @@ fn pct_table_summary_and_table_page_use_the_bounded_contract() {
 
 #[test]
 fn inspect_summary_is_one_schema_valid_bounded_envelope() {
+    if !support::has_local_files(&["work/pct_a/pct_a_full_v5.HLT"]) {
+        return;
+    }
     let output = inspect(&[
         "inspect",
         "work/pct_a/pct_a_full_v5.HLT",
@@ -113,6 +116,9 @@ fn inspect_summary_is_one_schema_valid_bounded_envelope() {
 
 #[test]
 fn adjacent_section_pages_have_no_duplicate_ids() {
+    if !support::has_local_files(&["work/pct_a/pct_a_full_v5.HLT"]) {
+        return;
+    }
     let first = json(&inspect(&[
         "inspect",
         "work/pct_a/pct_a_full_v5.HLT",
@@ -153,6 +159,9 @@ fn adjacent_section_pages_have_no_duplicate_ids() {
 
 #[test]
 fn table_and_image_pages_expose_geometry_and_occurrence_not_payloads() {
+    if !support::has_local_files(&["work/pct_a/pct_a_full_v5.HLT"]) {
+        return;
+    }
     let tables = json(&inspect(&[
         "inspect",
         "work/pct_a/pct_a_full_v5.HLT",
@@ -196,6 +205,9 @@ fn rejects_zero_or_limit_over_500_with_one_usage_envelope() {
 
 #[test]
 fn cursor_beyond_last_page_is_empty_and_terminal() {
+    if !support::has_local_files(&["work/pct_a/pct_a_full_v5.HLT"]) {
+        return;
+    }
     let value = json(&inspect(&[
         "inspect",
         "work/pct_a/pct_a_full_v5.HLT",
@@ -213,6 +225,9 @@ fn cursor_beyond_last_page_is_empty_and_terminal() {
 
 #[test]
 fn inspect_schema_rejects_body_or_base64_in_items() {
+    if !support::has_local_files(&["work/pct_a/pct_a_full_v5.HLT"]) {
+        return;
+    }
     let output = inspect(&[
         "inspect",
         "work/pct_a/pct_a_full_v5.HLT",

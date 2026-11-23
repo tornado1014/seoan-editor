@@ -10,6 +10,9 @@ fn repo(path: &str) -> PathBuf {
 
 #[test]
 fn exposes_title_content_and_raw_first_line_indent() {
+    if !support::has_local_files(&["fixtures/align/align_a.HLT", "work/pct_a/pct_a_full_v5.HLT"]) {
+        return;
+    }
     for relative in ["fixtures/align/align_a.HLT", "work/pct_a/pct_a_full_v5.HLT"] {
         let document = inspect_path(&repo(relative), InspectOptions::default()).unwrap();
         let title = &document.paragraphs[2];
@@ -33,6 +36,9 @@ fn exposes_title_content_and_raw_first_line_indent() {
 
 #[test]
 fn makes_the_missing_v5_wipo_identifier_axis_visible() {
+    if !support::has_local_files(&["fixtures/align/align_a.HLT", "work/pct_a/pct_a_full_v5.HLT"]) {
+        return;
+    }
     let source = inspect_path(
         &repo("fixtures/align/align_a.HLT"),
         InspectOptions::default(),
@@ -54,6 +60,9 @@ mod support;
 
 #[test]
 fn reads_an_opinion_whose_section_table_is_empty() {
+    if !support::has_local_files(&["fixtures/opinion/OA_opinion_no_section_table.HLT.hex"]) {
+        return;
+    }
     let fixture = support::opinion_without_section_table_fixture();
     let document = inspect_path(fixture.path(), InspectOptions::default()).unwrap();
 

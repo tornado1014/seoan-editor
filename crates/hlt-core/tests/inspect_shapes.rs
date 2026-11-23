@@ -8,6 +8,9 @@ use hlt_core::{InspectOptions, inspect_path};
 /// 쪽을 넘긴다(결함 A).
 #[test]
 fn reads_the_line_spacing_of_the_shape_the_line_actually_uses() {
+    if !support::has_local_files(&["fixtures/table/domestic_application_table.HLT.hex"]) {
+        return;
+    }
     let fixture = support::application_table_fixture();
     let document = inspect_path(fixture.path(), InspectOptions::default()).unwrap();
 
@@ -45,6 +48,9 @@ fn reads_the_line_spacing_of_the_shape_the_line_actually_uses() {
 /// 뜻은 `& 0xFFF` 로 읽고 상위 비트는 버리지 않는다.
 #[test]
 fn keeps_reading_shapes_past_an_alignment_with_high_bits() {
+    if !support::has_local_files(&["fixtures/table/domestic_application_table.HLT.hex"]) {
+        return;
+    }
     let plain = inspect_path(
         support::application_table_fixture().path(),
         InspectOptions::default(),
@@ -87,6 +93,9 @@ fn keeps_reading_shapes_past_an_alignment_with_high_bits() {
 /// 정본 바이트: 줄 697 은 모양 14 = 들여쓰기 800, justified, 줄 높이 280.
 #[test]
 fn a_paragraph_that_holds_a_table_keeps_its_own_shape() {
+    if !support::has_local_files(&["fixtures/table/domestic_application_table.HLT.hex"]) {
+        return;
+    }
     let fixture = support::application_table_fixture();
     let document = inspect_path(fixture.path(), InspectOptions::default()).unwrap();
 
@@ -118,6 +127,9 @@ fn a_paragraph_that_holds_a_table_keeps_its_own_shape() {
 /// 다음 쪽으로 밀었다.
 #[test]
 fn a_rebaked_domestic_specification_keeps_every_line_height() {
+    if !support::has_local_files(&["fixtures/table/domestic_application_table.HLT.hex"]) {
+        return;
+    }
     let fixture = support::application_table_fixture();
     let before = inspect_path(fixture.path(), InspectOptions::default()).unwrap();
 
@@ -202,6 +214,9 @@ fn a_rebaked_domestic_specification_keeps_every_line_height() {
 /// 둘이 한 문단이다. 같은 꼴이 837(절 31), 844(절 34), 849(절 36) 에도 있다.
 #[test]
 fn a_paragraph_opened_by_a_page_break_takes_the_section_on_its_title_line() {
+    if !support::has_local_files(&["fixtures/table/domestic_application_table.HLT.hex"]) {
+        return;
+    }
     let fixture = support::application_table_fixture();
     let document = inspect_path(fixture.path(), InspectOptions::default()).unwrap();
 
@@ -232,6 +247,9 @@ fn a_paragraph_opened_by_a_page_break_takes_the_section_on_its_title_line() {
 /// 그 자리에 절 40 을 한 번 더 찍으면 안 된다.
 #[test]
 fn a_rebaked_domestic_specification_keeps_every_section_anchor() {
+    if !support::has_local_files(&["fixtures/table/domestic_application_table.HLT.hex"]) {
+        return;
+    }
     let fixture = support::application_table_fixture();
     let before = inspect_path(fixture.path(), InspectOptions::default()).unwrap();
 

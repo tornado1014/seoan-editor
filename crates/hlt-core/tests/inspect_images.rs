@@ -13,6 +13,9 @@ fn repo(path: &str) -> PathBuf {
 
 #[test]
 fn preserves_281_image_occurrences_independent_of_object_code() {
+    if !support::has_local_files(&["fixtures/align/align_a.HLT", "work/pct_a/pct_a_full_v5.HLT"]) {
+        return;
+    }
     let cases = [
         ("fixtures/align/align_a.HLT", 1_u32, 288_u32),
         ("work/pct_a/pct_a_full_v5.HLT", 24_u32, 304_u32),
@@ -89,6 +92,9 @@ fn reads_grayscale_tiff_payloads_from_the_native_pct_file() {
 /// 못 푸는 그림은 지문을 비우고, 판독 자체는 계속 되어야 한다.
 #[test]
 fn a_compressed_tiff_leaves_the_fingerprint_empty_instead_of_failing() {
+    if !support::has_local_files(&["fixtures/domestic/domestic_b_spec.HLT.hex"]) {
+        return;
+    }
     let fixture = support::domestic_specification_fixture();
     let document = hlt_core::inspect_path(
         fixture.path(),

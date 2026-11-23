@@ -17,8 +17,29 @@ pub fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+/// 저장소 밖 실물 자료(`work/`, `fixtures/` 아래 로컬 전용 파일)가 다 있는지 본다.
+/// 하나라도 없으면 그 사실을 stderr 에 남기고 false 를 돌려 테스트가 건너뛰게 한다.
+/// 새로 받은 저장소와 CI 에서는 합성 자료 테스트만 돈다.
+/// ⛔ 실물 자료가 있는 작업 기계에서는 `SEOAN_REQUIRE_LOCAL_FIXTURES=1` 로 돌린다.
+/// 그러면 건너뛰지 않고 붉게 실패하므로 자료가 빠져도 조용히 넘어가지 않는다.
+pub fn has_local_files(relatives: &[&str]) -> bool {
+    let missing: Vec<_> = relatives
+        .iter()
+        .map(|relative| repo_root().join(relative))
+        .filter(|path| !path.exists())
+        .collect();
+    if missing.is_empty() {
+        return true;
+    }
+    if std::env::var_os("SEOAN_REQUIRE_LOCAL_FIXTURES").is_some_and(|value| value == "1") {
+        panic!("로컬 실물 자료가 없다(저장소 밖 자료): {missing:?}");
+    }
+    eprintln!("건너뜀 — 로컬 실물 자료가 없다(저장소 밖 자료): {missing:?}");
+    false
+}
+
 /// 고객 사건에서 온 실물 픽스처 — 저장소에 없다(.gitignore · 2026-10-16 히스토리에서 걷어냈다). 로컬 디스크에만 있어
-/// 컴파일 때 박지 않고 실행 때 읽는다(없으면 그 테스트만 붉다 · 새로 받은 저장소도 컴파일된다).
+/// 컴파일 때 박지 않고 실행 때 읽는다(새로 받은 저장소도 컴파일된다). 쓰는 테스트는 먼저 [`has_local_files`] 로 확인한다.
 fn local_fixture(relative: &str) -> String {
     let path = repo_root().join(relative);
     std::fs::read_to_string(&path).unwrap_or_else(|_| {

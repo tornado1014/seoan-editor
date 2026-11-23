@@ -34,6 +34,9 @@ fn assert_no_forbidden_keys(value: &serde_json::Value) {
 
 #[test]
 fn real_hml_summary_uses_a_one_line_bounded_envelope() {
+    if !support::has_local_files(&["work/pct_a/pct_a_v5.hml"]) {
+        return;
+    }
     let output = inspect_hml(&[
         "inspect-hml",
         "work/pct_a/pct_a_v5.hml",
@@ -68,6 +71,9 @@ fn real_hml_summary_uses_a_one_line_bounded_envelope() {
 
 #[test]
 fn hml_sections_tables_cells_and_images_are_independently_pageable() {
+    if !support::has_local_files(&["work/pct_a/pct_a_v5.hml"]) {
+        return;
+    }
     let path = "work/pct_a/pct_a_v5.hml";
     let sections = json(&inspect_hml(&[
         "inspect-hml",
@@ -127,6 +133,9 @@ fn hml_sections_tables_cells_and_images_are_independently_pageable() {
 
 #[test]
 fn hml_paragraph_pages_retain_shape_and_inline_order() {
+    if !support::has_local_files(&["work/pct_a/pct_a_v5.hml"]) {
+        return;
+    }
     let first_content = json(&inspect_hml(&[
         "inspect-hml",
         "work/pct_a/pct_a_v5.hml",

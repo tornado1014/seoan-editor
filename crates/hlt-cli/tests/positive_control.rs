@@ -4,6 +4,9 @@ use std::process::Command;
 
 #[test]
 fn positive_control_emits_one_schema_valid_json_line_and_exit_zero() {
+    if !support::has_local_files(&["work/pct_a/pct_a_full_v5.HLT"]) {
+        return;
+    }
     let output = Command::new(env!("CARGO_BIN_EXE_hlt-cli"))
         .args(["verify", "work/pct_a/pct_a_full_v5.HLT"])
         .current_dir(support::repo_root())

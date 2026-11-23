@@ -198,6 +198,9 @@ fn exports_a_submission_set_from_the_native_pct_file() {
 /// 풀리면 JPEG 로 굽고, 안 풀리면 원본 TIFF 바이트를 그대로 싣는다.
 #[test]
 fn a_domestic_submission_ships_unreadable_drawings_as_their_original_tiff() {
+    if !support::has_local_files(&["fixtures/table/domestic_application_table.HLT.hex"]) {
+        return;
+    }
     let fixture = support::application_table_fixture();
     let export = export_fin_path(
         fixture.path(),

@@ -86,6 +86,9 @@ fn an_unknown_header_type_is_retained_without_guessing_a_tree() {
 /// `Unknown`** 으로 떨어졌다.
 #[test]
 fn a_real_domestic_application_header_is_the_korean_specification_tree() {
+    if !support::has_local_files(&["fixtures/table/domestic_application_table.HLT.hex"]) {
+        return;
+    }
     let source = support::application_table_fixture();
     let summary = inspect_path(source.path(), InspectOptions::default())
         .unwrap()
@@ -107,6 +110,9 @@ fn a_real_domestic_application_header_is_the_korean_specification_tree() {
 /// 국내 출원서 실물 44건이 쓰는 값은 `0x8000 + 140` = **32908** 이다.
 #[test]
 fn a_generated_domestic_specification_carries_the_same_header_type_as_nkeditor() {
+    if !support::has_local_files(&["fixtures/table/domestic_application_table.HLT.hex"]) {
+        return;
+    }
     use hlt_core::{
         GenerationDialect, WriteOptions, hml_document_from_hlt, save_generated_hlt_as_new,
     };

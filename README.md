@@ -147,7 +147,7 @@
 
 ```sh
 cargo test -p hlt-core -p hlt-cli                 # 합성 자료로 도는 테스트
-cd apps/hlt-desktop && npm ci && npx vitest run   # 화면
+cd apps/hlt-desktop && npm ci && npm run vendor && npx vitest run   # 화면(vendor 가 수식·화학식 편집기 자산을 public/ 에 복사한다 · 빼면 jsme 테스트가 실패)
 bash apps/hlt-desktop/scripts/install-mac.sh      # 맥 앱 빌드 · 설치
 ```
 
@@ -155,7 +155,7 @@ bash apps/hlt-desktop/scripts/install-mac.sh      # 맥 앱 빌드 · 설치
 
 **릴리스:** `tauri.conf.json` 의 `version` 을 올리고, 그 판에서 달라진 점을 `release-notes/v0.6.4.md` 처럼 태그 이름의 파일로 함께 커밋한 뒤(쓰는 형식은 `## 제목` · `- 항목` · 문단 — 앱이 업데이트 뒤 첫 실행에 이 노트를 보여 준다 · 파일이 없으면 설치 안내 한 줄) 같은 판의 태그(`v0.6.4` 등)를 올리면, GitHub Actions(`.github/workflows/release.yml`)가 맥·윈도 설치 파일과 업데이트 파일(`latest.json` · 서명)을 만들어 Release 에 올립니다. 업데이트 서명 키는 저장소 시크릿에만 있습니다.
 
-실제 출원 문서는 저장소에 넣지 않습니다. 실제 문서로 재는 테스트(`#[ignore]`)는 그 자료가 있는 환경에서만 돕니다.
+실제 출원 문서는 저장소에 넣지 않습니다. 실제 문서로 재는 테스트(`#[ignore]`)는 그 자료가 있는 환경에서만 돕니다. 저장소 밖 실물 자료(`work/`, `fixtures/` 아래 로컬 파일)를 쓰는 테스트는 그 파일이 없으면 건너뛰므로, 새로 받은 저장소에서도 위 두 명령이 통과합니다. 실물 자료가 있는 기계에서 빠진 파일을 실패로 잡으려면 `SEOAN_REQUIRE_LOCAL_FIXTURES=1 cargo test -p hlt-core -p hlt-cli` 로 돌립니다. 같은 두 명령을 GitHub Actions(`.github/workflows/test.yml`)가 `main` 에 푸시할 때와 PR 마다 돌립니다.
 
 ---
 
