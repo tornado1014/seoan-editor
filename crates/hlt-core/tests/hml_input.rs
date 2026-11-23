@@ -205,3 +205,33 @@ fn real_counterpart_hml_matches_the_python_generator() {
         matches!(&first.inlines[0], HmlInline::Text { text, formats, .. } if text == "화합물" && formats == &[CharacterFormat::Bold])
     );
 }
+
+/// 출원서 서식 HML 인데 들여쓰기 · 양쪽 정렬이 빠졌으면 불러올 때 본문에 표준 모양을 입힌다(2026-11-23).
+#[test]
+fn bare_kipo_form_hml_gets_standard_indent_and_justify_on_import() {
+    let text = r#"<!DOCTYPE HWPML SYSTEM>
+<HWPML VER="HWPML1.1" CODE=KS>
+<HEAD><information><fontlist><korfont n=1><font id=0>신명조</font></korfont></fontlist></information></HEAD>
+<BODY>
+<p styleid=0><pstyle indent=0 lspace=160 align=center><text>【발명의 설명】</text></p>
+<p styleid=0><pstyle indent=0 lspace=280 align=left><text>【기술분야】</text></p>
+<p styleid=0><pstyle indent=0 lspace=280 align=left><text>맨 문단</text></p>
+<p styleid=0><pstyle indent=0 lspace=160 align=center><text>가운데 문단</text></p>
+</BODY></HWPML>"#;
+    let file = write_hml(text, "utf-8");
+    let (document, _, _) = hlt_core::load_generation_input(file.path()).unwrap();
+    let shape = |wanted: &str| {
+        document
+            .paragraphs
+            .iter()
+            .find(|p| p.text == wanted)
+            .map(|p| (p.align.clone(), p.indent_raw))
+            .unwrap()
+    };
+    assert_eq!(
+        shape("맨 문단"),
+        ("justified".to_string(), hlt_core::KIPO_BODY_INDENT_RAW)
+    );
+    assert_eq!(shape("가운데 문단"), ("center".to_string(), 0));
+    assert_eq!(shape("【기술분야】"), ("left".to_string(), 0));
+}

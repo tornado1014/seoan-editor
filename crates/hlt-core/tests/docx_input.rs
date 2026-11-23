@@ -818,3 +818,111 @@ fn text_only_read_skips_undecodable_pictures_but_hlt_build_still_rejects_them() 
         2
     );
 }
+
+/// 출원서 서식이지만 들여쓰기 · 양쪽 정렬이 빠진 워드 원고는 불러올 때 본문에 표준 모양을 입힌다
+/// (사용자 요청 2026-11-23). 표제 · 가운데 정렬 · 왼쪽 여백 · 표는 그대로 둔다.
+const BARE_FORM_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+ xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+ xmlns:v="urn:schemas-microsoft-com:vml"><w:body>
+<w:p><w:r><w:t>【발명의 설명】</w:t></w:r></w:p>
+<w:p><w:r><w:t>【발명의 명칭】</w:t></w:r></w:p>
+<w:p><w:pPr><w:jc w:val="left"/></w:pPr><w:r><w:t>맨 문단</w:t></w:r></w:p>
+<w:p><w:r><w:t>【기술분야】</w:t></w:r></w:p>
+<w:p><w:r><w:t>정렬 없는 문단</w:t></w:r></w:p>
+<w:p><w:pPr><w:jc w:val="left"/><w:ind w:firstLine="400"/></w:pPr><w:r><w:t>왼쪽 들여쓴 문단</w:t></w:r></w:p>
+<w:p><w:pPr><w:ind w:left="1280"/></w:pPr><w:r><w:t>여백 문단</w:t></w:r></w:p>
+<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>가운데 문단</w:t></w:r></w:p>
+<w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:t>오른쪽 문단</w:t></w:r></w:p>
+<w:p><w:pPr><w:jc w:val="left"/></w:pPr><w:r><w:pict><v:shape><v:imagedata r:id="rId4"/></v:shape></w:pict></w:r></w:p>
+<w:p><w:r><w:t>【청구범위】</w:t></w:r></w:p>
+<w:p><w:r><w:t>【청구항 1】</w:t></w:r></w:p>
+<w:p><w:pPr><w:jc w:val="left"/></w:pPr><w:r><w:t>청구 내용</w:t></w:r></w:p>
+</w:body></w:document>"#;
+
+fn bare_docx(xml: &str) -> (tempfile::NamedTempFile, Vec<u8>) {
+    let mut png = Vec::new();
+    image::RgbImage::from_pixel(8, 8, image::Rgb([0, 0, 0]))
+        .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let parts = vec![
+        ("[Content_Types].xml", b"<Types/>".as_slice()),
+        ("word/document.xml", xml.as_bytes()),
+        ("word/_rels/document.xml.rels", RELS_XML.as_bytes()),
+        ("word/media/image1.png", png.as_slice()),
+    ];
+    (write_docx(&parts), png)
+}
+
+#[test]
+fn bare_kipo_form_docx_gets_standard_indent_and_justify_on_import() {
+    let (file, _) = bare_docx(BARE_FORM_XML);
+    let (document, payloads, _) = hlt_core::load_generation_input(file.path()).unwrap();
+    let shape = |text: &str| {
+        document
+            .paragraphs
+            .iter()
+            .find(|p| p.text == text)
+            .map(|p| (p.align.as_str(), p.indent_raw, p.lmargin_raw))
+            .unwrap_or_else(|| panic!("{text}"))
+    };
+    let indent = hlt_core::KIPO_BODY_INDENT_RAW;
+    assert_eq!(shape("맨 문단"), ("justified", indent, 0));
+    assert_eq!(shape("정렬 없는 문단"), ("justified", indent, 0));
+    assert_eq!(shape("청구 내용"), ("justified", indent, 0));
+    // 이미 들여쓴 값 · 왼쪽 여백은 지키고 정렬만 맞춘다.
+    assert_eq!(shape("왼쪽 들여쓴 문단"), ("justified", 500, 0));
+    assert_eq!(shape("여백 문단"), ("justified", 0, 1600));
+    // 가운데 · 오른쪽 · 표제는 그대로.
+    assert_eq!(shape("가운데 문단"), ("center", 0, 0));
+    assert_eq!(shape("오른쪽 문단"), ("right", 0, 0));
+    assert_eq!(shape("【청구항 1】").1, 0);
+    // 그림만 든 문단은 들여쓰기만(KIPO XML 처럼 왼쪽 정렬 유지).
+    let picture = document
+        .paragraphs
+        .iter()
+        .find(|p| !p.image_ids.is_empty())
+        .unwrap();
+    assert_eq!((picture.align.as_str(), picture.indent_raw), ("left", indent));
+
+    // HLT 로 구워 다시 읽어도 본문 첫 줄 들여쓰기(파일 값 800)가 남는다.
+    let dir = tempfile::tempdir().unwrap();
+    let hlt = dir.path().join("서식.HLT");
+    hlt_core::save_generated_hlt_as_new(
+        file.path(),
+        &document,
+        hlt_core::GenerationDialect::PatentSpecificationKo,
+        &payloads,
+        &hlt,
+        hlt_core::WriteOptions::default(),
+    )
+    .unwrap();
+    let (reopened, _, _) = hlt_core::load_generation_input(&hlt).unwrap();
+    let reopened_shape = |text: &str| {
+        reopened
+            .paragraphs
+            .iter()
+            .find(|p| p.text == text)
+            .map(|p| (p.align.clone(), p.indent_raw))
+            .unwrap()
+    };
+    assert_eq!(reopened_shape("맨 문단"), ("justified".to_string(), 800));
+    assert_eq!(reopened_shape("청구 내용"), ("justified".to_string(), 800));
+}
+
+#[test]
+fn docx_without_kipo_headings_keeps_its_own_layout() {
+    let xml = BARE_FORM_XML
+        .replace("<w:p><w:r><w:t>【발명의 설명】</w:t></w:r></w:p>", "")
+        .replace("<w:p><w:r><w:t>【발명의 명칭】</w:t></w:r></w:p>", "")
+        .replace("<w:p><w:r><w:t>【기술분야】</w:t></w:r></w:p>", "")
+        .replace("<w:p><w:r><w:t>【청구범위】</w:t></w:r></w:p>", "");
+    let (file, _) = bare_docx(&xml);
+    let (document, _, _) = hlt_core::load_generation_input(file.path()).unwrap();
+    let plain = document
+        .paragraphs
+        .iter()
+        .find(|p| p.text == "맨 문단")
+        .unwrap();
+    assert_eq!((plain.align.as_str(), plain.indent_raw), ("left", 0));
+}

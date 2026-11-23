@@ -30,6 +30,7 @@ mod generate_images;
 mod generate_profile;
 mod generate_tail;
 mod hml;
+mod import_layout;
 mod import_opinion;
 mod inspect;
 mod kipo_rules;
@@ -166,6 +167,7 @@ pub use hml::{
     HmlCell, HmlDocument, HmlImage, HmlInline, HmlParagraph, HmlSection, HmlSummary, HmlTable,
     hml_semantic_sha256, inspect_hml_path,
 };
+pub use import_layout::{KIPO_BODY_INDENT_RAW, apply_kipo_body_layout, looks_like_kipo_form};
 pub use import_opinion::{
     AmendmentItem, amendment_hlt_from_items, amendment_items, opinion_hlt_from_text,
 };

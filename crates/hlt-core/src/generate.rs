@@ -361,6 +361,8 @@ fn generation_error(reason: &str) -> CoreError {
 
 /// 생성 입력(`.docx` · KIPO `.xml` · `.hml` · `.HLT`/`.HBK`) → 의미 모델 + 그림 원본. 확장자로 고른다.
 /// CLI `generate-hlt` 와 편집기 「불러와 HLT 만들기」가 같은 길을 쓴다.
+/// `.docx` · `.hml` 이 출원서 서식이면 본문 문단의 빠진 들여쓰기 · 양쪽 정렬을 표준 값으로 채운다
+/// ([`crate::apply_kipo_body_layout`]).
 /// 글은 CP949 로 쓸 수 있게 바꿔서 낸다(바꾼 글자 목록 · 대응 없는 글자는 거부 — [`crate::make_cp949_safe`]).
 pub fn load_generation_input(
     input: &std::path::Path,
@@ -393,7 +395,8 @@ pub fn load_generation_source(
     };
     match extension.as_str() {
         "hml" => {
-            let document = crate::inspect_hml_path(input)?;
+            let mut document = crate::inspect_hml_path(input)?;
+            crate::apply_kipo_body_layout(&mut document);
             let payloads = crate::load_hml_image_payloads_from_directory(&document, root)?;
             Ok((document, payloads))
         }
@@ -403,8 +406,9 @@ pub fn load_generation_source(
             Ok((parsed.document, payloads))
         }
         "docx" => {
-            let parsed = crate::inspect_docx_path(input)?;
+            let mut parsed = crate::inspect_docx_path(input)?;
             let payloads = crate::load_docx_image_payloads(input, &parsed)?;
+            crate::apply_kipo_body_layout(&mut parsed.document);
             Ok((parsed.document, payloads))
         }
         // 이미 받은 HLT 안의 표를 고치는 길. 역변환기가 의미 모델과 그림 원본을 함께 낸다.
