@@ -330,6 +330,9 @@ where
     if args.first().is_some_and(|value| value == "new-opinion") {
         return run_new_opinion(&args, stdout);
     }
+    if args.first().is_some_and(|value| value == "new-spec") {
+        return run_new_spec(&args, stdout);
+    }
     if args
         .first()
         .is_some_and(|value| value == "set-paragraph-shapes-as-new")
@@ -1377,6 +1380,60 @@ fn run_new_opinion(args: &[String], stdout: &mut impl Write) -> u8 {
         Ok(serde_json::json!({ "paragraphs": text.lines().count() }))
     })();
     finish_value("new-opinion", result, stdout)
+}
+
+/// 새 명세서(앱 「새 명세서…」와 같은 빈 서식):
+/// `new-spec <absent-output.HLT> [--kind patent|utility|pct] [--drawings] [--deferred] [--industrial]`.
+/// 실용신안은 도면이 늘 있고 PCT 는 제출유예가 없다 — 결과에 실제로 적용한 선택사항을 적는다.
+fn run_new_spec(args: &[String], stdout: &mut impl Write) -> u8 {
+    fn usage(stdout: &mut impl Write) -> u8 {
+        let error = CoreError::new(ErrorCode::VerificationFailed, "usage", false);
+        let _ = write_envelope(
+            stdout,
+            &error_envelope::<serde_json::Value>("new-spec", error),
+        );
+        EXIT_USAGE
+    }
+    let Some(output) = args.get(1).filter(|value| !value.starts_with("--")) else {
+        return usage(stdout);
+    };
+    let mut kind = hlt_core::SpecKind::Patent;
+    let mut options = hlt_core::SpecOptions::default();
+    let mut rest = args[2..].iter();
+    while let Some(flag) = rest.next() {
+        match flag.as_str() {
+            "--drawings" => options.drawings = true,
+            "--deferred" => options.deferred = true,
+            "--industrial" => options.industrial = true,
+            "--kind" => {
+                kind = match rest.next().map(String::as_str) {
+                    Some("patent") => hlt_core::SpecKind::Patent,
+                    Some("utility") => hlt_core::SpecKind::Utility,
+                    Some("pct") => hlt_core::SpecKind::Pct,
+                    _ => return usage(stdout),
+                }
+            }
+            _ => return usage(stdout),
+        }
+    }
+    let result = (|| {
+        if Path::new(output).exists() {
+            return Err(CoreError::new(ErrorCode::OutputExists, "output", false));
+        }
+        hlt_core::save_new_specification(Path::new(output), kind, options)?;
+        let name = match kind {
+            hlt_core::SpecKind::Patent => "patent",
+            hlt_core::SpecKind::Utility => "utility",
+            hlt_core::SpecKind::Pct => "pct",
+        };
+        Ok(serde_json::json!({
+            "kind": name,
+            "drawings": options.drawings || kind == hlt_core::SpecKind::Utility,
+            "deferred": options.deferred && kind != hlt_core::SpecKind::Pct,
+            "industrial": options.industrial,
+        }))
+    })();
+    finish_value("new-spec", result, stdout)
 }
 
 fn finish_value(

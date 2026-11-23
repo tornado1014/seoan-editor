@@ -1,4 +1,4 @@
-//! 하네스용 명령: `new-opinion` → `export-fin` → `open-package` 왕복 · `export-docx`.
+//! 하네스용 명령: `new-spec` · `new-opinion` → `export-fin` → `open-package` 왕복 · `export-docx`.
 
 mod support;
 
@@ -65,6 +65,61 @@ fn opinion_from_text_round_trips_through_a_final_file() {
     assert_eq!(value["error"]["code"], "output_exists");
 }
 
+/// 빈 명세서: 앱 「새 명세서…」와 같은 서식 · 선택사항 · 있는 파일은 덮지 않는다.
+#[test]
+fn new_spec_makes_the_blank_forms_and_never_overwrites() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = |name: &str| dir.path().join(name).to_str().unwrap().to_string();
+
+    let (code, value) = run(&["new-spec", &path("p.HLT")]);
+    assert_eq!(code, Some(0), "{value}");
+    assert_eq!(value["result"]["kind"], "patent");
+    assert_eq!(value["result"]["drawings"], false);
+    let plain = texts(Path::new(&path("p.HLT")));
+    assert!(plain.iter().any(|t| t.trim() == "【발명의 명칭】"));
+    assert!(plain.iter().any(|t| t.trim() == "【청구범위】"));
+    assert!(!plain.iter().any(|t| t.trim() == "【도면】"));
+
+    let (code, value) = run(&[
+        "new-spec",
+        &path("d.HLT"),
+        "--kind",
+        "patent",
+        "--drawings",
+        "--deferred",
+        "--industrial",
+    ]);
+    assert_eq!(code, Some(0), "{value}");
+    let full = texts(Path::new(&path("d.HLT")));
+    assert!(full.iter().any(|t| t.trim() == "【도면】"));
+    assert!(full.iter().any(|t| t.trim() == "【산업상 이용가능성】"));
+    assert!(!full.iter().any(|t| t.trim() == "【청구범위】"));
+
+    // 실용신안은 도면이 늘 있고 PCT 는 제출유예가 없다(앱과 같다) — 결과에 실제 선택사항을 적는다.
+    let (code, value) = run(&["new-spec", &path("u.HLT"), "--kind", "utility"]);
+    assert_eq!(code, Some(0), "{value}");
+    assert_eq!(value["result"]["drawings"], true);
+    assert!(
+        texts(Path::new(&path("u.HLT")))
+            .iter()
+            .any(|t| t.trim() == "【고안의 명칭】")
+    );
+    let (code, value) = run(&["new-spec", &path("c.HLT"), "--kind", "pct", "--deferred"]);
+    assert_eq!(code, Some(0), "{value}");
+    assert_eq!(value["result"]["deferred"], false);
+    assert!(
+        texts(Path::new(&path("c.HLT")))
+            .iter()
+            .any(|t| t.trim() == "【청구범위】")
+    );
+
+    let before = std::fs::read(path("p.HLT")).unwrap();
+    let (code, value) = run(&["new-spec", &path("p.HLT"), "--kind", "pct"]);
+    assert_eq!(code, Some(2));
+    assert_eq!(value["error"]["code"], "output_exists");
+    assert_eq!(std::fs::read(path("p.HLT")).unwrap(), before);
+}
+
 #[test]
 fn export_docx_reads_back_and_never_overwrites() {
     let fixture = support::pct_table_fixture();
@@ -97,6 +152,10 @@ fn harness_commands_reject_bad_arguments() {
         &["export-docx", "a.HLT"][..],
         &["open-package"][..],
         &["new-opinion", "o.HLT", "--body"][..],
+        &["new-spec"][..],
+        &["new-spec", "s.HLT", "--kind"][..],
+        &["new-spec", "s.HLT", "--kind", "design"][..],
+        &["new-spec", "s.HLT", "--drawing"][..],
     ] {
         let (code, value) = run(args);
         assert_eq!(code, Some(64), "{args:?}");
