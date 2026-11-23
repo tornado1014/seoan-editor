@@ -1,3 +1,5 @@
+mod support;
+
 use std::{
     io::Write,
     path::{Path, PathBuf},
@@ -114,6 +116,9 @@ fn inspects_pct_table_tail_and_hidden_boundary_cells() {
 
 #[test]
 fn exposes_two_tables_and_literal_cell_geometry() {
+    if !support::has_local_files(&["fixtures/align/align_a.HLT", "work/pct_a/pct_a_full_v5.HLT"]) {
+        return;
+    }
     // 행 수는 파일마다 다르다. align_a 는 통특기 저장본이고, pct_a_full_v5 는 파이썬 세대
     // 생성 후보라 표마다 빈 행이 하나씩 더 붙어 있다(실측: tail 셀 테이블에 행 17, 21 이
     // 높이 104 와 실제 줄 번호를 가지고 존재한다). 그 차이를 파서가 감추지 않는다.
@@ -190,6 +195,9 @@ fn exposes_two_tables_and_literal_cell_geometry() {
 
 #[test]
 fn table_cells_have_stable_ids_ranges_and_line_links() {
+    if !support::has_local_files(&["work/pct_a/pct_a_full_v5.HLT"]) {
+        return;
+    }
     let document = inspect_path(
         &repo("work/pct_a/pct_a_full_v5.HLT"),
         InspectOptions::default(),

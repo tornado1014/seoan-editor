@@ -168,6 +168,9 @@ fn rejects_undecodable_hml_without_replacement_characters() {
 
 #[test]
 fn real_counterpart_hml_matches_the_python_generator() {
+    if !support::has_local_files(&["work/pct_a/pct_a_v5.hml"]) {
+        return;
+    }
     let path = support::repo_root().join("work/pct_a/pct_a_v5.hml");
     let document = inspect_hml_path(&path).unwrap();
 

@@ -413,6 +413,9 @@ fn generates_builtin_section_and_next_line_wipo_register_slots() {
 /// 이 오프셋이 아닌 것으로 보인다(PCT 가 +1080 으로도 통과한다).
 #[test]
 fn a_domestic_table_gets_a_sentinel_row_like_nkeditor() {
+    if !support::has_local_files(&["fixtures/table/domestic_application_table.HLT.hex"]) {
+        return;
+    }
     let fixture = support::application_table_fixture();
     let (document, _) = hlt_core::hml_document_from_hlt(fixture.path()).unwrap();
     let body =

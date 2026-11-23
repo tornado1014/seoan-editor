@@ -1,0 +1,37 @@
+# 합성 자료로 도는 테스트. 저장소 밖 실물 자료를 쓰는 테스트는 파일이 없으면 스스로 건너뛴다.
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked -p hlt-core -p hlt-cli
+
+  ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/hlt-desktop
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/hlt-desktop/package-lock.json
+      - run: npm ci
+      - run: npm run vendor
+      - run: npx vitest run

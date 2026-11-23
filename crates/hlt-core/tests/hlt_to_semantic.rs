@@ -18,6 +18,9 @@ fn repo(path: &str) -> PathBuf {
 
 #[test]
 fn recovers_the_semantic_model_of_a_real_domestic_specification() {
+    if !support::has_local_files(&["fixtures/domestic/domestic_b_spec.HLT.hex"]) {
+        return;
+    }
     let fixture = support::domestic_specification_fixture();
     let source = inspect_path(
         fixture.path(),
@@ -208,6 +211,9 @@ fn a_rebuilt_file_keeps_the_source_line_breaks() {
 /// **원본을 아는 경우**(`source_line_bytes` 가 있는 문단)에만 끄는 것이 맞다.
 #[test]
 fn a_rebuilt_domestic_specification_keeps_its_line_count() {
+    if !support::has_local_files(&["fixtures/table/domestic_application_table.HLT.hex"]) {
+        return;
+    }
     let fixture = support::application_table_fixture();
     let before = inspect_path(fixture.path(), InspectOptions::default()).unwrap();
     let (document, payloads) = hml_document_from_hlt(fixture.path()).unwrap();

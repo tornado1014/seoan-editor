@@ -55,6 +55,9 @@ fn bake(
 
 #[test]
 fn the_fixture_is_one_table_of_eleven_rows_and_three_columns() {
+    if !support::has_local_files(&["fixtures/table/domestic_application_table.HLT.hex"]) {
+        return;
+    }
     let fixture = support::application_table_fixture();
     let (document, _) = hml_document_from_hlt(fixture.path()).unwrap();
     assert_eq!(document.tables.len(), 1);
@@ -66,6 +69,9 @@ fn the_fixture_is_one_table_of_eleven_rows_and_three_columns() {
 /// 행을 하나 지우고 **곧바로 한 행을 끼운다.** 지운 행 말고는 글자가 제자리에 있어야 한다.
 #[test]
 fn deleting_each_row_in_turn_leaves_the_other_rows_where_they_were() {
+    if !support::has_local_files(&["fixtures/table/domestic_application_table.HLT.hex"]) {
+        return;
+    }
     let fixture = support::application_table_fixture();
     let (source, payloads) = hml_document_from_hlt(fixture.path()).unwrap();
     let before = grid(&source);
@@ -99,6 +105,9 @@ fn deleting_each_row_in_turn_leaves_the_other_rows_where_they_were() {
 /// 열을 하나 지우고 **곧바로 그 자리를 다시 쪼갠다.** 남은 열의 글자가 밀리면 안 된다.
 #[test]
 fn deleting_each_column_in_turn_leaves_the_other_columns_where_they_were() {
+    if !support::has_local_files(&["fixtures/table/domestic_application_table.HLT.hex"]) {
+        return;
+    }
     let fixture = support::application_table_fixture();
     let (source, payloads) = hml_document_from_hlt(fixture.path()).unwrap();
     let before = grid(&source);
@@ -144,6 +153,9 @@ fn deleting_each_column_in_turn_leaves_the_other_columns_where_they_were() {
 /// 이어짐 셀은 저장된 뒤에만 존재하므로 병합한 그 연산에서는 안 드러난다.
 #[test]
 fn a_later_edit_does_not_shift_rows_that_a_merge_covers() {
+    if !support::has_local_files(&["fixtures/table/domestic_application_table.HLT.hex"]) {
+        return;
+    }
     let fixture = support::application_table_fixture();
     let (source, payloads) = hml_document_from_hlt(fixture.path()).unwrap();
     let before = grid(&source);
@@ -188,6 +200,9 @@ fn a_later_edit_does_not_shift_rows_that_a_merge_covers() {
 /// ⛔ 다만 **그 열에 새 칸을 하나 더 만들어서** 3열 표의 새 행이 4칸이 됐다.
 #[test]
 fn inserting_a_row_under_a_merge_anchor_keeps_the_column_count() {
+    if !support::has_local_files(&["fixtures/table/domestic_application_table.HLT.hex"]) {
+        return;
+    }
     let fixture = support::application_table_fixture();
     let (source, payloads) = hml_document_from_hlt(fixture.path()).unwrap();
     let before = grid(&source);
@@ -250,6 +265,9 @@ fn inserting_a_row_under_a_merge_anchor_keeps_the_column_count() {
 /// - 원본 칸 글자는 지운 것 말고 하나도 안 사라진다.
 #[test]
 fn every_operation_pair_keeps_the_grid_rectangular() {
+    if !support::has_local_files(&["fixtures/table/domestic_application_table.HLT.hex"]) {
+        return;
+    }
     let fixture = support::application_table_fixture();
     let (source, _) = hml_document_from_hlt(fixture.path()).unwrap();
     let id = source.tables[0].id.clone();

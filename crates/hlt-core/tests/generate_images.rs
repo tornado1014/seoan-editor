@@ -1,3 +1,5 @@
+mod support;
+
 use hlt_core::{
     GeneratedImageAnchor, GeneratedImagePayload, GeneratedLine, GeneratedLineEnding,
     GenerationDialect, HltBodyPlan, HmlDocument, HmlImage, HmlSummary, TiffPixels,
@@ -110,6 +112,9 @@ fn appends_image_occurrences_in_order_and_reuses_identical_source_payloads() {
 
 #[test]
 fn plans_all_281_counterpart_image_occurrences_from_123_named_files() {
+    if !support::has_local_files(&["work/pct_a/pct_a.xml"]) {
+        return;
+    }
     let source = repo_root().join("work/pct_a/pct_a.xml");
     let parsed = inspect_kipo_xml_path(&source).unwrap();
     let body = plan_hlt_body(&parsed.document, GenerationDialect::PatentSpecificationKo).unwrap();

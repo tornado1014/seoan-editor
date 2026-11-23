@@ -156,6 +156,9 @@ mod support;
 /// 부호의 설명을 줄마다 쪼개 여러 문단으로 썼다.
 #[test]
 fn maps_the_domestic_specification_sections_like_the_authoritative_fin() {
+    if !support::has_local_files(&["fixtures/domestic/domestic_b_spec.HLT.hex"]) {
+        return;
+    }
     let fixture = support::domestic_specification_fixture();
     let export = export_kipo_xml_path(fixture.path(), &KipoExportOptions::default()).unwrap();
 

@@ -1,3 +1,5 @@
+mod support;
+
 use std::path::{Path, PathBuf};
 
 use hlt_core::{InspectOptions, inspect_path};
@@ -10,6 +12,9 @@ fn repo(path: &str) -> PathBuf {
 
 #[test]
 fn links_literal_sections_to_anchor_lines_and_paragraphs() {
+    if !support::has_local_files(&["fixtures/align/align_a.HLT", "work/pct_a/pct_a_full_v5.HLT"]) {
+        return;
+    }
     for relative in ["fixtures/align/align_a.HLT", "work/pct_a/pct_a_full_v5.HLT"] {
         let document = inspect_path(&repo(relative), InspectOptions::default()).unwrap();
         assert_eq!(document.sections.len(), 60);
@@ -29,6 +34,9 @@ fn links_literal_sections_to_anchor_lines_and_paragraphs() {
 
 #[test]
 fn stable_ids_and_ranges_repeat_across_reads() {
+    if !support::has_local_files(&["work/pct_a/pct_a_full_v5.HLT"]) {
+        return;
+    }
     let path = repo("work/pct_a/pct_a_full_v5.HLT");
     let first = inspect_path(&path, InspectOptions::default()).unwrap();
     let second = inspect_path(&path, InspectOptions::default()).unwrap();
@@ -39,6 +47,9 @@ fn stable_ids_and_ranges_repeat_across_reads() {
 
 #[test]
 fn summary_exposes_document_title_and_fixed_block_fingerprints() {
+    if !support::has_local_files(&["fixtures/align/align_a.HLT", "work/pct_a/pct_a_full_v5.HLT"]) {
+        return;
+    }
     let cases = [
         (
             "fixtures/align/align_a.HLT",
@@ -74,6 +85,9 @@ fn summary_exposes_document_title_and_fixed_block_fingerprints() {
 
 #[test]
 fn ranges_match_independently_derived_offsets() {
+    if !support::has_local_files(&["fixtures/align/align_a.HLT", "work/pct_a/pct_a_full_v5.HLT"]) {
+        return;
+    }
     let cases = [
         (
             "fixtures/align/align_a.HLT",

@@ -9,6 +9,9 @@ use hlt_core::{ErrorCode, VerifyOptions, verify_path, verify_reader};
 
 #[test]
 fn verifies_recorded_python_positive_control() {
+    if !support::has_local_files(&["work/pct_a/pct_a_full_v5.HLT"]) {
+        return;
+    }
     let result = verify_path(
         &repo_path("work/pct_a/pct_a_full_v5.HLT"),
         Default::default(),
