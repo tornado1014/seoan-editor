@@ -883,7 +883,10 @@ fn bare_kipo_form_docx_gets_standard_indent_and_justify_on_import() {
         .iter()
         .find(|p| !p.image_ids.is_empty())
         .unwrap();
-    assert_eq!((picture.align.as_str(), picture.indent_raw), ("left", indent));
+    assert_eq!(
+        (picture.align.as_str(), picture.indent_raw),
+        ("left", indent)
+    );
 
     // HLT 로 구워 다시 읽어도 본문 첫 줄 들여쓰기(파일 값 800)가 남는다.
     let dir = tempfile::tempdir().unwrap();

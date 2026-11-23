@@ -161,7 +161,7 @@ export interface EditorViewDto {
 export const editorOpen = () => invoke<EditorViewDto | null>('editor_open');
 /** 놓은 파일 열기(고르기 창만 건너뛴다 · `editorOpen` 과 같은 몸통). */
 export const editorOpenDropped = (path: string) => invoke<EditorViewDto | null>('editor_open_dropped', { path });
-/** 불러와 HLT 만들기: 워드 · XML · HML → 새 `.HLT` 를 굽고 연다(이 탭에 문서가 있으면 새 탭 · `null`). */
+/** 불러와 HLT 만들기: 워드 · 한글 · XML · HML → 새 `.HLT` 를 굽고 연다(이 탭에 문서가 있으면 새 탭 · `null`). */
 /** CP949(HLT)에 없는 글자 한 종류 — 확인 표 한 줄. `suggestion` 이 `null` 이면 대응표에 없다. */
 export interface Cp949FindingDto {
   from: string;

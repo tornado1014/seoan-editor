@@ -71,14 +71,14 @@ fn reason(error: &crate::CoreError) -> String {
     }
 }
 
-/// 폴더 안 `.docx` · `.xml` · `.hml` 을 같은 이름 `.HLT` 로 옆에 만든다. 같은 이름 HLT 가 있으면 덮지 않고 「있음」.
+/// 폴더 안 `.docx` · `.hwp` · `.hwpx` · `.xml` · `.hml` 을 같은 이름 `.HLT` 로 옆에 만든다. 같은 이름 HLT 가 있으면 덮지 않고 「있음」.
 /// 쓸 수 없는 글자는 자동 대응으로 바꾸고 그 수를 적는다(대응 없는 글자가 있으면 「실패」).
 pub fn batch_generate_hlt(
     folder: &Path,
     dialect: GenerationDialect,
     mut step: impl FnMut(usize, usize, &str) -> bool,
 ) -> Vec<BatchRow> {
-    let inputs = files(folder, &["docx", "xml", "hml"]);
+    let inputs = files(folder, &["docx", "hwp", "hwpx", "xml", "hml"]);
     let total = inputs.len();
     let mut stopped = false;
     inputs

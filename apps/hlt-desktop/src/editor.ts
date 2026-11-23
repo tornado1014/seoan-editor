@@ -6,7 +6,7 @@ import { isWindows, osKeys } from './keys';
 /** 윈도는 창 탭이 없어 새 창으로 열린다 — 이름도 그렇게. */
 const NEW_TAB = isWindows() ? '새 창' : '새 탭';
 import { claimsStart, createPinnedPane } from './pinned-pane';
-import { HWP_NOTICE, installDrop } from './drop';
+import { installDrop } from './drop';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Menu } from '@tauri-apps/api/menu';
 import { createLiveChecks, createRevisionedFetch } from './live-checks';
@@ -324,7 +324,7 @@ export function mountEditor(root: HTMLElement): void {
         <div class="tb-hidden" hidden>
           <button type="button" data-action="new-opinion" title="새 의견서 — 빈 의견서(【의견내용】)를 새로 만듭니다">${icon('opinion')}<span>새 의견서</span></button>
           <button type="button" data-action="new-spec" title="새 명세서 — 특허 · 실용신안 · PCT 국내진입 빈 명세서(통특기 새문서와 같은 꼴)">${icon('fileNew')}<span>새 명세서</span></button>
-          <button type="button" data-action="import" title="워드/XML로 HLT 만들기 — 워드 · KIPO XML · HML 을 불러와 새 HLT 로 만듭니다. 한글 .hwp · .hwpx 는 지원하지 않으니 한글에서 HML(.hml) 또는 워드(.docx)로 저장한 뒤 불러오세요">${icon('import')}<span>워드/XML로 HLT 만들기</span></button>
+          <button type="button" data-action="import" title="워드/XML로 HLT 만들기 — 워드 · 한글(.hwp · .hwpx) · KIPO XML · HML 을 불러와 새 HLT 로 만듭니다">${icon('import')}<span>워드/XML로 HLT 만들기</span></button>
           <button type="button" data-action="new-tab" title="${NEW_TAB} (⌘T · ⌘N)">${icon('tab')}<span>${NEW_TAB}</span></button>
           <button type="button" data-action="open-read-only" title="읽기 전용으로 열기 — 원본을 실수로 고치지 않게(사본은 「다른 이름으로 저장」)"><span>읽기 전용으로 열기</span></button>
           <button type="button" data-action="history" disabled title="이전 판 — 저장할 때 덮인 판을 골라 새 탭에서 엽니다(최근 판 · 지난 날수는 설정)"><span>이전 판</span></button>
@@ -4123,8 +4123,7 @@ export function mountEditor(root: HTMLElement): void {
     else if (route === 'import') await importDocument(() => editorImportDropped(path));
     else if (route === 'source') {
       await showSource(() => editorSourceLoad(path));
-    } else if (route === 'hwp') say(HWP_NOTICE);
-    else say(`열 수 없는 파일입니다 — ${fileName(path)}`);
+    } else say(`열 수 없는 파일입니다 — ${fileName(path)}`);
   });
 
   root.addEventListener('click', async (event) => {

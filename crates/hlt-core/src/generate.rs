@@ -413,13 +413,11 @@ pub fn load_generation_source(
         }
         // 이미 받은 HLT 안의 표를 고치는 길. 역변환기가 의미 모델과 그림 원본을 함께 낸다.
         "hlt" | "hbk" => crate::hml_document_from_hlt(input),
-        // 한글 원본은 읽지 못한다 — HML(.hml) 또는 워드(.docx)로 저장해 오게 이유를 단다.
+        // 한글 원본은 rhwp 로 읽어 최소 워드 패키지로 옮긴 뒤 워드 길을 그대로 탄다.
         "hwp" | "hwpx" => {
-            let mut error = CoreError::new(ErrorCode::UnsupportedFormat, "generate_input", false);
-            error
-                .details
-                .insert("reason".into(), "hwp_save_as_hml_or_docx".into());
-            Err(error)
+            let (mut document, payloads) = load_hwp_source(input)?;
+            crate::apply_kipo_body_layout(&mut document);
+            Ok((document, payloads))
         }
         _ => {
             let mut error = CoreError::new(ErrorCode::UnsupportedFormat, "generate_input", false);
@@ -430,6 +428,33 @@ pub fn load_generation_source(
             Err(error)
         }
     }
+}
+
+/// `.hwp` · `.hwpx` → 의미 모델 + 그림 원본. 바꾼 워드 패키지는 임시 폴더에만 두고, 출처 이름 · 해시는 원본 한글 파일로 고친다.
+fn load_hwp_source(
+    input: &std::path::Path,
+) -> Result<(HmlDocument, Vec<GeneratedImagePayload>), CoreError> {
+    use sha2::{Digest, Sha256};
+    let converted = crate::hwp_path_to_docx(input)?;
+    let temp_error = |error: std::io::Error| crate::error::io_error(&error, "hwp_convert", "");
+    let dir = tempfile::tempdir().map_err(temp_error)?;
+    let stem = input
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("hwp");
+    let docx = dir.path().join(format!("{stem}.docx"));
+    std::fs::write(&docx, &converted.docx).map_err(temp_error)?;
+    let mut parsed = crate::inspect_docx_path(&docx)?;
+    let payloads = crate::load_docx_image_payloads(&docx, &parsed)?;
+    let original = std::fs::read(input)
+        .map_err(|error| crate::error::io_error(&error, "hwp_read", &input.to_string_lossy()))?;
+    parsed.document.source = input
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_string();
+    parsed.document.source_sha256 = format!("{:X}", Sha256::digest(&original));
+    Ok((parsed.document, payloads))
 }
 
 /// 보정 명세서의 줄마다 식별번호(통특기 「최종본 불러오기」 HLT 와 줄마다 같다 · 실측 328/328):

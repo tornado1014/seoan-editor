@@ -589,8 +589,8 @@ pub async fn editor_import(
         .dialog()
         .file()
         .add_filter(
-            "워드 · KIPO XML · HML (한글 .hwp · .hwpx 는 HML 로 저장 후)",
-            &["docx", "xml", "hml"],
+            "워드 · 한글 · KIPO XML · HML",
+            &["docx", "hwp", "hwpx", "xml", "hml"],
         )
         .blocking_pick_file()
         .and_then(|picked| picked.into_path().ok())
@@ -608,7 +608,7 @@ pub async fn editor_import_dropped(
     state: State<'_, EditorState>,
     path: String,
 ) -> Result<ImportDto, CoreError> {
-    let path = dropped(path, &["docx", "xml", "hml"])?;
+    let path = dropped(path, &["docx", "hwp", "hwpx", "xml", "hml"])?;
     import_picked(&window, &app, &state, path).await
 }
 

@@ -19,6 +19,8 @@ serde_json = "1"
 sha2 = "0.10"
 thiserror = "1"
 tempfile = "3"
+# 한글 원본(.hwp · .hwpx) 읽기 — MIT. 기본 기능(PDF 가져오기 · WASM 바인딩)은 끈다.
+rhwp = { version = "=0.9.1", default-features = false }
 zip = { version = "3", default-features = false, features = ["deflate"] }
 jpeg-encoder = "0.7.1"
 krilla = { version = "0.8", optional = true }
