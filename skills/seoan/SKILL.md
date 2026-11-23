@@ -3,7 +3,7 @@ name: seoan
 description: >
   서안(Seoan) 명령줄 hlt-cli 로 KIPO 전자출원 문서를 만들고 바꾸고 고친다 — .HLT 명세서 · 의견서 · 보정서 ·
   제출파일(.hlz/.fin). Use when the user wants to read or edit an .HLT, save an .HLT as Word (.docx),
-  build an .HLT from Word/KIPO XML, write a new 의견서, make a 보정서 from a 최종본 .fin,
+  build an .HLT from Word/KIPO XML, start a blank 명세서 (특허 · 실용신안 · PCT) or a new 의견서, make a 보정서 from a 최종본 .fin,
   print an .HLT to PDF, or export/validate KIPO submission XML — from an agent harness or any shell.
 ---
 
@@ -62,7 +62,15 @@ HLT 는 CP949 로 저장한다. CP949 밖 글자(`−` `é` NBSP …)는 대응�
 - 서식 · 표 · 문단모양: `format-plan`/`save-formats-as-new` · `table-plan`/`save-table-as-new` · `set-paragraph-shapes-as-new` (요청 형식 = 저장소 `contracts/*.schema.json`)
 - 식별번호 매기기: `hlt-cli number-paragraphs doc.HLT numbered.HLT`
 
-### 5. 의견서 새로 쓰기
+### 5. 빈 명세서 · 의견서 새로 쓰기
+빈 명세서(앱 「새 명세서…」와 같은 서식). 종류 기본값은 `patent`, 선택사항은 쓴 것만 켠다:
+```bash
+hlt-cli new-spec spec.HLT --kind patent --drawings          # patent | utility | pct · --deferred(청구범위 제출유예) · --industrial(산업상 이용가능성)
+```
+실용신안은 도면이 늘 있고 PCT 는 제출유예가 없다 — `result` 에 실제로 적용한 선택사항이 나온다.
+표제 아래 빈 문단은 아직 4번(`edit-plan-variable`)으로 채울 수 없다(`plain_code_unavailable`) — 내용이 있는 명세서는 Word 로 써서 3번으로 만들고, 빈 서식은 앱에서 채운다.
+
+새 의견서:
 본문을 글 파일로 쓴다 — **줄 하나 = 문단 하나**, 빈 줄 = 빈 문단. 【의견내용】 표제는 자동으로 붙는다.
 ```bash
 hlt-cli new-opinion opinion.HLT --body body.txt
@@ -87,4 +95,5 @@ hlt-cli check-claims doc.HLT --checker-dir <청구항 점검기 폴더>
 
 ## 한계
 - 표 삽입 · 칸 병합 · 그림 삽입은 아직 앱(서안 편집기)에서만 된다.
+- 빈 문단(글자 0)에 글 넣기는 아직 앱에서만 된다(`new-spec` 서식의 표제 아래 빈 문단 포함).
 - Word 내보내기는 줄 · 쪽을 Word 가 다시 흘린다(HLT 쪽과 같지 않다).
