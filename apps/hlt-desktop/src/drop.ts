@@ -1,11 +1,15 @@
 // 놓은 파일 → 확장자 · 놓은 자리로 기존 길(열기 · 불러오기 · 원문)에 보낸다. 이벤트 원천은 인자로 갈아 끼울 수 있다(테스트).
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 
-export type DropRoute = 'open' | 'import' | 'source' | 'unknown';
+export type DropRoute = 'open' | 'import' | 'source' | 'hwp' | 'unknown';
 
 const OPEN = ['hlt', 'fin', 'hlz'];
 const IMPORT = ['docx', 'xml', 'hml'];
 const SOURCE = ['docx', 'pdf', 'xlf', 'xliff', 'txlf', 'mxliff'];
+// 한글 원본(.hwp · .hwpx)은 읽지 못한다 — HML 또는 워드로 저장해 오라고 알린다.
+const HWP = ['hwp', 'hwpx'];
+export const HWP_NOTICE =
+  '한글 .hwp · .hwpx 파일은 지원하지 않습니다 — 한글에서 「다른 이름으로 저장」으로 HML(.hml) 또는 워드(.docx)로 저장한 뒤 불러오세요';
 
 export function routeDrop(path: string, overSource: boolean): DropRoute {
   const name = path.split(/[\\/]/).pop() ?? '';
@@ -14,6 +18,7 @@ export function routeDrop(path: string, overSource: boolean): DropRoute {
   if (OPEN.includes(ext)) return 'open';
   if (overSource && SOURCE.includes(ext)) return 'source';
   if (IMPORT.includes(ext)) return 'import';
+  if (HWP.includes(ext)) return 'hwp';
   return 'unknown';
 }
 

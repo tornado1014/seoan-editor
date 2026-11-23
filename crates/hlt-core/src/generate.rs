@@ -413,6 +413,14 @@ pub fn load_generation_source(
         }
         // 이미 받은 HLT 안의 표를 고치는 길. 역변환기가 의미 모델과 그림 원본을 함께 낸다.
         "hlt" | "hbk" => crate::hml_document_from_hlt(input),
+        // 한글 원본은 읽지 못한다 — HML(.hml) 또는 워드(.docx)로 저장해 오게 이유를 단다.
+        "hwp" | "hwpx" => {
+            let mut error = CoreError::new(ErrorCode::UnsupportedFormat, "generate_input", false);
+            error
+                .details
+                .insert("reason".into(), "hwp_save_as_hml_or_docx".into());
+            Err(error)
+        }
         _ => {
             let mut error = CoreError::new(ErrorCode::UnsupportedFormat, "generate_input", false);
             error.source = input

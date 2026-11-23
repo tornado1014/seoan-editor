@@ -235,3 +235,20 @@ fn bare_kipo_form_hml_gets_standard_indent_and_justify_on_import() {
     assert_eq!(shape("가운데 문단"), ("center".to_string(), 0));
     assert_eq!(shape("【기술분야】"), ("left".to_string(), 0));
 }
+
+/// 한글 원본(.hwp · .hwpx)은 읽지 못한다 — 이유를 달아 거절한다(화면 · CLI 가 HML/워드로 저장하라고 알린다).
+#[test]
+fn hwp_and_hwpx_inputs_are_refused_with_a_save_as_reason() {
+    for ext in ["hwp", "HWPX"] {
+        let file = tempfile::Builder::new()
+            .suffix(&format!(".{ext}"))
+            .tempfile()
+            .unwrap();
+        let error = hlt_core::load_generation_source(file.path()).unwrap_err();
+        assert_eq!(error.code, ErrorCode::UnsupportedFormat);
+        assert_eq!(
+            error.details.get("reason").map(String::as_str),
+            Some("hwp_save_as_hml_or_docx")
+        );
+    }
+}

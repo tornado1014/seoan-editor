@@ -34,6 +34,8 @@ describe('놓은 파일 길 가르기', () => {
     expect(routeDrop('/a/x.docx', false)).toBe('import');
     expect(routeDrop('/a/x.XML', false)).toBe('import');
     expect(routeDrop('/a/x.hml', false)).toBe('import');
+    expect(routeDrop('/a/x.hwp', false)).toBe('hwp'); // 한글 원본은 알림만
+    expect(routeDrop('/a/x.HWPX', true)).toBe('hwp');
     expect(routeDrop('/a/x.docx', true)).toBe('source');
     for (const ext of ['pdf', 'xlf', 'xliff', 'txlf', 'mxliff']) expect(routeDrop(`/a/x.${ext}`, true)).toBe('source');
     expect(routeDrop('/a/x.pdf', false)).toBe('unknown'); // 원문 창 밖의 pdf 는 열 것이 아니다

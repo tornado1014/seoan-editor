@@ -588,7 +588,10 @@ pub async fn editor_import(
     let Some(input) = app
         .dialog()
         .file()
-        .add_filter("워드 · KIPO XML · HML", &["docx", "xml", "hml"])
+        .add_filter(
+            "워드 · KIPO XML · HML (한글 .hwp · .hwpx 는 HML 로 저장 후)",
+            &["docx", "xml", "hml"],
+        )
         .blocking_pick_file()
         .and_then(|picked| picked.into_path().ok())
     else {
