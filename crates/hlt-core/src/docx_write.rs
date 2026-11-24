@@ -37,11 +37,20 @@ pub fn docx_bytes(
             })
             .collect(),
     };
-    for paragraph in &document.paragraphs {
+    let paragraphs = &document.paragraphs;
+    for (index, paragraph) in paragraphs.iter().enumerate() {
+        // 도면 쪽은 통특기 조판(`paginate`)처럼 — 표제(【도 N】)는 바로 뒤 그림과 같은 쪽(keepNext),
+        // 그림만 든 문단은 한 줄 간격(배수 2.8 이 그림 높이에도 곱해져 그림이 한 쪽을 다 먹는다).
+        let figure_line = image_only(paragraph);
+        let keep_next = figure_caption(document, index);
         let props = paragraph_props(
             &paragraph.align,
             paragraph.indent_raw,
             paragraph.lmargin_raw,
+            Layout {
+                keep_next,
+                single_spacing: figure_line,
+            },
         );
         let page = if paragraph.page_break {
             r#"<w:r><w:br w:type="page"/></w:r>"#
@@ -209,6 +218,7 @@ impl Media<'_> {
                 .unwrap_or((100, 100));
             (w, h) = (pw * 3 / 4, ph * 3 / 4);
         }
+        let (w, h) = fit_page(w, h);
         let (cx, cy) = (u64::from(w) * EMU_PER_PT, u64::from(h) * EMU_PER_PT);
         format!(
             r#"<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{cx}" cy="{cy}"/><wp:docPr id="{n}" name="그림 {n}"/><a:graphic><a:graphicData uri="{PIC}"><pic:pic><pic:nvPicPr><pic:cNvPr id="{n}" name="image{n}.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="rIdImg{n}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#
@@ -216,7 +226,100 @@ impl Media<'_> {
     }
 }
 
-fn paragraph_props(align: &str, indent_raw: i32, lmargin_raw: i32) -> String {
+/// 도면 절(【도면】 뒤)의 쪽 나눔을 통특기 조판대로 옮긴다 — 통특기가 새 쪽에 놓은 표제(【도 N】)
+/// 앞에 쪽나눔을 단다. 통특기 파일의 도면 사이 쪽나눔은 대개 저장된 폼피드가 아니라 **조판 결과**라
+/// (`generate_body` 참고) Word 에 그대로 흘리면 Word 글자 줄 높이로 다시 쌓여 표제와 그림이 갈린다.
+/// `pages` = 문단 id → (첫 줄 쪽, 끝 줄 쪽). 본문은 Word 가 다시 흘리므로 건드리지 않는다.
+pub(crate) fn mirror_drawing_pages(
+    document: &mut HmlDocument,
+    pages: &BTreeMap<String, (usize, usize)>,
+) {
+    let mut in_drawings = false;
+    for index in 0..document.paragraphs.len() {
+        let paragraph = &document.paragraphs[index];
+        match paragraph.text.trim() {
+            "【도면】" => {
+                in_drawings = true;
+                continue;
+            }
+            "【발명의 설명】" | "【청구범위】" | "【요약서】" => {
+                in_drawings = false
+            }
+            _ => {}
+        }
+        if !in_drawings || index == 0 || paragraph.page_break || !figure_caption(document, index) {
+            continue;
+        }
+        let previous = &document.paragraphs[index - 1];
+        let (Some(&(page, _)), Some(&(_, previous_page))) =
+            (pages.get(&paragraph.id), pages.get(&previous.id))
+        else {
+            continue;
+        };
+        if page > previous_page {
+            document.paragraphs[index].page_break = true;
+        }
+    }
+}
+
+/// 바로 뒤가 그림만 든 문단인 한 줄 표제(표 닻 문단 제외).
+fn figure_caption(document: &HmlDocument, index: usize) -> bool {
+    let paragraphs = &document.paragraphs;
+    paragraphs[index].table_id.is_none()
+        && is_caption(&paragraphs[index])
+        && paragraphs
+            .get(index + 1)
+            .is_some_and(|next| next.table_id.is_none() && image_only(next))
+}
+
+/// 글자 없이 그림만 든 문단(도면 · 화학식 그림 줄).
+fn image_only(paragraph: &crate::HmlParagraph) -> bool {
+    let mut image = false;
+    for inline in &paragraph.inlines {
+        match inline {
+            HmlInline::Image { .. } => image = true,
+            HmlInline::Text { text, .. } if !text.trim().is_empty() => return false,
+            HmlInline::Text { .. } => {}
+        }
+    }
+    image
+}
+
+/// 한 줄 표제(【도 N】 · 【화학식 1】 …).
+fn is_caption(paragraph: &crate::HmlParagraph) -> bool {
+    let text = paragraph.text.trim();
+    text.starts_with('【') && text.ends_with('】') && !text.contains('\n')
+}
+
+#[derive(Default, Clone, Copy)]
+struct Layout {
+    keep_next: bool,
+    single_spacing: bool,
+}
+
+/// 본문 폭(A4 − 좌우 여백 1440tw = 451pt).
+const BODY_WIDTH_PT: u32 = 451;
+/// 그림 최대 높이 — 본문 높이(684pt)에서 표제 한 줄(배수 2.8 ≈ 40pt)을 남긴다.
+/// 통특기도 표제와 합쳐 한 쪽을 넘는 도면은 줄여 그려 한 쪽에 넣는다(`paginate`).
+const MAX_IMAGE_HEIGHT_PT: u32 = 630;
+
+/// 쪽을 넘는 그림은 비율을 지켜 줄인다(Word 는 넘치는 그림을 쪽 밖으로 잘라 버리고 표제와도 떨어진다).
+fn fit_page(w: u32, h: u32) -> (u32, u32) {
+    let scale = f64::min(
+        1.0,
+        f64::min(
+            f64::from(BODY_WIDTH_PT) / f64::from(w.max(1)),
+            f64::from(MAX_IMAGE_HEIGHT_PT) / f64::from(h.max(1)),
+        ),
+    );
+    if scale >= 1.0 {
+        return (w, h);
+    }
+    let shrink = |v: u32| ((f64::from(v) * scale).floor() as u32).max(1);
+    (shrink(w), shrink(h))
+}
+
+fn paragraph_props(align: &str, indent_raw: i32, lmargin_raw: i32, layout: Layout) -> String {
     let jc = match align {
         "left" | "center" | "right" => align,
         _ => "both",
@@ -230,7 +333,19 @@ fn paragraph_props(align: &str, indent_raw: i32, lmargin_raw: i32) -> String {
         (true, false) => format!(r#"<w:ind w:left="{left}"/>"#),
         (true, true) => format!(r#"<w:ind w:left="{left}" w:firstLine="{first}"/>"#),
     };
-    format!(r#"<w:pPr><w:jc w:val="{jc}"/>{ind}</w:pPr>"#)
+    // CT_PPrBase 차례: keepNext → spacing → ind → jc.
+    let keep = if layout.keep_next {
+        "<w:keepNext/>"
+    } else {
+        ""
+    };
+    // 그림 줄 아래 20pt — 통특기 그림 줄 높이 = 그림 + 줄 사이 170u(≈20pt).
+    let spacing = if layout.single_spacing {
+        r#"<w:spacing w:after="400" w:line="240" w:lineRule="auto"/>"#
+    } else {
+        ""
+    };
+    format!(r#"<w:pPr>{keep}{spacing}{ind}<w:jc w:val="{jc}"/></w:pPr>"#)
 }
 
 fn runs(inlines: &[HmlInline], media: &mut Media<'_>) -> String {
@@ -345,7 +460,7 @@ fn table_xml(
             } else if cell.rowspan > 1 {
                 props.push_str(r#"<w:vMerge w:val="restart"/>"#);
             }
-            let para = paragraph_props(&cell.align, 0, 0);
+            let para = paragraph_props(&cell.align, 0, 0, Layout::default());
             out.push_str(&format!(
                 "<w:tc><w:tcPr>{props}</w:tcPr><w:p>{para}{}</w:p></w:tc>",
                 runs(&cell.inlines, media)

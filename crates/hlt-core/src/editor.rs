@@ -2810,8 +2810,26 @@ impl EditorSession {
     /// Word(.docx) — 지금 판을 진짜 HLT 로 굽고 의미 모델로 되돌려 쓴다. 식별번호는 싣지 않는다.
     pub fn docx(&mut self) -> Result<Vec<u8>, CoreError> {
         let real = self.materialize()?;
-        let (model, _) = crate::hml_document_from_hlt(&real)?;
+        let (mut model, _) = crate::hml_document_from_hlt(&real)?;
         let (document, _) = load(&real, self.print)?;
+        // 도면 쪽은 통특기(화면) 쪽 매김 그대로 — 표제 N+1 이 그림 N 아래로 딸려 가지 않게.
+        let (_, inflated) = inflate_hlt(&real)?;
+        let (heights, _, line_pages) = crate::page_layout(&document, &inflated);
+        let mut pages: std::collections::BTreeMap<String, (usize, usize)> =
+            std::collections::BTreeMap::new();
+        for (line, record) in document.lines.iter().enumerate() {
+            if heights.get(line) == Some(&crate::paginate::BREAK) {
+                continue;
+            }
+            let Some(&page) = line_pages.get(line) else {
+                continue;
+            };
+            pages
+                .entry(record.paragraph_id.clone())
+                .and_modify(|(_, last)| *last = page)
+                .or_insert((page, page));
+        }
+        crate::docx_write::mirror_drawing_pages(&mut model, &pages);
         let mut pngs = std::collections::BTreeMap::new();
         for image in &document.images {
             let Some(rgba) = document
