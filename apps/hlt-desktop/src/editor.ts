@@ -152,6 +152,7 @@ import {
   renderChemistry,
   renderLatex,
 } from './figure-editor';
+import { recognizeFormula } from './formula-ocr';
 
 const SCALE = 1.3;
 /** 제출 전 점검 종류 → 묶음 이름(점검 창 · 일괄 점검 표의 열). */
@@ -471,6 +472,12 @@ export function mountEditor(root: HTMLElement): void {
           <div class="figure-draw-toggle" hidden><button type="button" data-action="figure-draw">그리기 판 열기</button></div>
           <div class="figure-drawer" hidden></div>
           <textarea class="figure-input" rows="5" spellcheck="false"></textarea>
+          <div class="figure-ocr" hidden>
+            <button type="button" data-action="figure-read" title="클립보드의 수식 그림을 LaTeX 로 읽는다(그림은 이 컴퓨터 밖으로 나가지 않는다)">그림에서 읽기</button>
+            <button type="button" data-action="figure-bold" title="고른 글자를 굵게(\\boldsymbol)">굵게</button>
+            <span class="figure-ocr-note" aria-live="polite"></span>
+          </div>
+          <img class="figure-source" alt="읽은 원본 그림" hidden>
           <div class="figure-preview"></div>
           <label>크기(pt) 가로 <input class="figure-width" type="number" min="1" max="500" step="1">
             세로 <input class="figure-height" type="number" min="1" max="700" step="1"></label>
@@ -527,6 +534,43 @@ export function mountEditor(root: HTMLElement): void {
     window.clearTimeout(previewTimer);
     previewTimer = window.setTimeout(() => void preview(), 250);
   });
+  // 그림에서 읽기: 캡처한 수식 그림 → LaTeX(앱 안의 모델). 원본을 미리보기 위에 두고 사람이 대조한다 — 굵은 글씨는 자주 틀린다.
+  const figureOcr = q<HTMLDivElement>('.figure-ocr');
+  const figureNote = q<HTMLSpanElement>('.figure-ocr-note');
+  const figureSource = q<HTMLImageElement>('.figure-source');
+  const OCR_NOTE = '캡처한 수식 그림을 붙여 넣어도 됩니다 · 굵은 글씨는 틀릴 수 있으니 원본과 대조하세요';
+  /** 읽기 차례 — 읽는 사이 창을 닫거나 다시 읽으면 늦게 온 결과는 버린다. */
+  let reading = 0;
+  function resetOcr() {
+    reading++;
+    figureOcr.hidden = figureKind !== 'math';
+    figureNote.textContent = OCR_NOTE;
+    URL.revokeObjectURL(figureSource.src);
+    figureSource.removeAttribute('src');
+    figureSource.hidden = true;
+  }
+  async function readFormula(picture: Blob) {
+    const turn = ++reading;
+    URL.revokeObjectURL(figureSource.src);
+    figureSource.src = URL.createObjectURL(picture);
+    figureSource.hidden = false;
+    figureNote.textContent = '수식을 읽는 중… (처음 한 번은 10초쯤 걸립니다)';
+    try {
+      const latex = await recognizeFormula(picture);
+      if (turn !== reading) return;
+      figureInput.value = latex;
+      figureNote.textContent = OCR_NOTE;
+      await preview();
+    } catch (error) {
+      if (turn === reading) figureNote.textContent = `읽지 못했습니다 — ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+  figureInput.addEventListener('paste', (event) => {
+    const picture = [...(event.clipboardData?.files ?? [])].find((file) => file.type.startsWith('image/'));
+    if (figureKind !== 'math' || !picture) return;
+    event.preventDefault();
+    void readFormula(picture);
+  });
   // 가로를 바꾸면 세로는 비율대로.
   figureWidth.addEventListener('input', () => {
     if (figure) figureHeight.value = ((Number(figureWidth.value) * figure.heightPt) / figure.widthPt).toFixed(0);
@@ -545,6 +589,7 @@ export function mountEditor(root: HTMLElement): void {
     dialog.hidden = false;
     drawToggle.hidden = kind !== 'chemistry';
     drawer.hidden = !(kind === 'chemistry' && drawerOpen);
+    resetOcr();
     void preview();
     figureInput.focus();
   }
@@ -4547,7 +4592,22 @@ export function mountEditor(root: HTMLElement): void {
         }
         break;
       }
+      case 'figure-read': {
+        const picture = await clipboardPicture();
+        if (picture) await readFormula(picture);
+        else figureNote.textContent = '클립보드에 그림이 없습니다 — 수식을 화면 캡처로 복사한 뒤 다시 누르세요';
+        break;
+      }
+      case 'figure-bold': {
+        const { selectionStart: from, selectionEnd: to, value } = figureInput;
+        if (from === to) break;
+        figureInput.setRangeText(`\\boldsymbol{${value.slice(from, to)}}`, from, to, 'select');
+        figureInput.focus();
+        void preview();
+        break;
+      }
       case 'figure-cancel':
+        reading++;
         dialog.hidden = true;
         break;
       case 'figure-insert': {
@@ -4557,6 +4617,7 @@ export function mountEditor(root: HTMLElement): void {
         const after = selected;
         const kind = figureKind;
         const svg = figure.svg;
+        reading++;
         dialog.hidden = true;
         await run(kind === 'math' ? '수식 넣기' : '화학식 넣기', async () =>
           editorInsertFigure(after, kind, await rasterize(svg, width, height), width, height),

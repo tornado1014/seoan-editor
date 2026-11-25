@@ -15,7 +15,8 @@
     "@rdkit/rdkit": "^2026.9.1",
     "@tauri-apps/api": "2",
     "jsme-editor": "^2024.4.29",
-    "mathjax-full": "^3.2.1"
+    "mathjax-full": "^3.2.1",
+    "onnxruntime-web": "1.31.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2",

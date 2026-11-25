@@ -127,6 +127,8 @@
 | [MathJax](https://www.mathjax.org) | 수식 그리기 | Apache-2.0 |
 | [RDKit.js](https://github.com/rdkit/rdkit-js) | 화학식 그리기 | BSD-3-Clause |
 | [JSME](https://jsme-editor.github.io) | 구조식 편집기 | BSD-3-Clause |
+| [ONNX Runtime Web](https://onnxruntime.ai) | 수식 그림 읽기(모델 실행) | MIT |
+| [Pix2Text-MFR](https://huggingface.co/breezedeus/pix2text-mfr) | 수식 그림 → LaTeX 모델 | MIT |
 | [rhwp](https://github.com/edwardkim/rhwp) | 한글(.hwp · .hwpx) 원고 읽기 | MIT |
 
 ---

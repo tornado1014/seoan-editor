@@ -4,3 +4,5 @@ public/rdkit/*.wasm
 node_modules/
 dist/
 public/jsme/
+public/mfr/*.onnx
+public/mfr/*.json
