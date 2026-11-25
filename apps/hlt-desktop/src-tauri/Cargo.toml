@@ -1,6 +1,6 @@
 [package]
 name = "hlt-desktop"
-version = "0.6.62"
+version = "0.6.63"
 edition = "2024"
 license = "MIT"
 
